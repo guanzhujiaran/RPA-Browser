@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - mysql_browser_info_url=mysql+aiomysql://host.docker.internal:3306/browser_info?user=root&password=114514
+    volumes:
+      - ./user_data_dir:/app/user_data_dir
+    command: [

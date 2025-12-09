@@ -1,0 +1,35 @@
+from enum import IntEnum
+
+
+class ResponseCode(IntEnum):
+    """
+    统一响应码枚举类
+    """
+    # 成功
+    SUCCESS = 0
+    
+    # 通用错误码
+    BAD_REQUEST = 400
+    UNAUTHORIZED = 401
+    FORBIDDEN = 403
+    NOT_FOUND = 404
+    METHOD_NOT_ALLOWED = 405
+    REQUEST_TIMEOUT = 408
+    CONFLICT = 409
+    GONE = 410
+    TOO_MANY_REQUESTS = 429
+    
+    # 服务器错误
+    INTERNAL_ERROR = 500
+    NOT_IMPLEMENTED = 501
+    BAD_GATEWAY = 502
+    SERVICE_UNAVAILABLE = 503
+    GATEWAY_TIMEOUT = 504
+    
+    # 自定义业务错误码
+    BUSINESS_ERROR = 1000
+    VALIDATION_ERROR = 1001
+    DATABASE_ERROR = 1002
+    NETWORK_ERROR = 1003
+    BROWSER_TOKEN_NOT_FOUND=10004
+    BROWSER_ID_NOT_FOUND=10005
