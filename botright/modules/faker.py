@@ -49,7 +49,7 @@ class Faker(AsyncObject):
         """
         Generate fake computer-related data such as user agent, vendor, GPU information, screen dimensions, etc.
         """
-        self.fingerprint = self.fingerprint or self.botright.fingerprint_generator.generate()
+        self.fingerprint = self.botright.fingerprint or self.botright.fingerprint_generator.generate()
 
     async def get_locale(self, proxy: ProxyManager) -> None:
         """

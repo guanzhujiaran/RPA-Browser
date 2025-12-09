@@ -143,7 +143,7 @@ class Botright(AsyncObject):
                 self.flags.append("--disable-reading-from-canvas")
             else:
                 self.flags.append("--fingerprinting-canvas-image-data-noise")
-
+        self.fingerprint = fingerprint
         self.fingerprint_generator = desktop_fingerprint_generator
 
     async def new_browser(self, proxy: Optional[str] = None, **launch_arguments) -> BrowserContext:

@@ -97,7 +97,6 @@ class BaseUndetectedPlaywright:
             user_data_dir=self._user_data_dir,
             viewport=fingerprint_params.viewport,
             screen=fingerprint_params.screen,
-            executable_path=settings.chromium_executable_path or None,
         )
         # async with async_playwright() as playwright:
         #     browser = await playwright.chromium.launch_persistent_context(
