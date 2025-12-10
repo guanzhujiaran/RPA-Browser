@@ -1,0 +1,8 @@
+[
+  {
+    "browser_ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+    "download_url": "https://github.com/adryfish/fingerprint-chromium/releases/download/139.0.7258.154/ungoogled-chromium-139.0.7258.154-1-x86_64.AppImage",
+    "full_version": "139.0.7258.154",
+    "exec_name": "ungoogled-chromium-139.0.7258.154.AppImage"
+  }
+]

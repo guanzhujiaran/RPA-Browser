@@ -17,9 +17,12 @@ from app.models.response_code import ResponseCode
 from app.services.RPA_browser.plugin_db_service import PluginDBService
 from typing import Union
 
+from app.utils.decorator.retry_deorator import sql_retry
+
 
 class BrowserDBService:
     @staticmethod
+    @sql_retry
     async def create_fingerprint(
             params: UserBrowserInfoCreateParams,
             session: AsyncSession
@@ -28,7 +31,7 @@ class BrowserDBService:
         创建浏览器指纹信息
         """
         # 生成指纹数据
-        fingerprint_data: BaseFingerprintBrowserInitParams = gen_from_browserforge_fingerprint(params=params)
+        fingerprint_data: BaseFingerprintBrowserInitParams = await gen_from_browserforge_fingerprint(params=params)
 
         # 创建浏览器信息对象
         browser_info = UserBrowserInfo(browser_token=params.browser_token, **fingerprint_data.model_dump())
@@ -44,6 +47,7 @@ class BrowserDBService:
         return UserBrowserInfoCreateResp(**browser_info.model_dump())
 
     @staticmethod
+    @sql_retry
     async def read_fingerprint(
             params: UserBrowserInfoReadParams,
             session: AsyncSession
@@ -61,6 +65,7 @@ class BrowserDBService:
         return browser_info
 
     @staticmethod
+    @sql_retry
     async def update_fingerprint(
             params: UserBrowserInfoUpdateParams,
             session: AsyncSession
@@ -83,6 +88,7 @@ class BrowserDBService:
         return ResponseCode.SUCCESS, True, 'success'
 
     @staticmethod
+    @sql_retry
     async def delete_fingerprint(
             params: UserBrowserInfoDeleteParams,
             session: AsyncSession
@@ -102,6 +108,7 @@ class BrowserDBService:
         return ResponseCode.SUCCESS, True, 'success'
 
     @staticmethod
+    @sql_retry
     async def count_fingerprint(params: UserBrowserInfoCountParams, session: AsyncSession) -> int:
         stmt = select(count(1)).where(
             and_(
@@ -112,6 +119,7 @@ class BrowserDBService:
         return  res
 
     @staticmethod
+    @sql_retry
     async def list_fingerprint(params: UserBrowserInfoListParams, session: AsyncSession) -> BasePaginationResp[
         UserBrowserInfoReadResp]:
         cnt = await BrowserDBService.count_fingerprint(UserBrowserInfoCountParams(

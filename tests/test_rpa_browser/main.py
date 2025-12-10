@@ -1,11 +1,16 @@
 import asyncio
+import random
 import time
 import uuid
 import logging
 
 from patchright.async_api import Page
 
-from app.services.RPA_browser.base.base_engines import BaseUndetectedPlaywright
+from app.models.RPA_browser.browser_info_model import UserBrowserInfoListParams, UserBrowserInfoCreateParams
+from app.models.RPA_browser.browser_session_model import SessionCreateParams
+from app.services.RPA_browser.browser_db_service import BrowserDBService
+from app.services.RPA_browser.browser_session_pool.playwright_pool import get_default_session_pool
+from app.utils.depends.session_manager import DatabaseSessionManager
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +38,8 @@ class BotScan:
         'canvas': 'https://www.browserscan.net/zh/canvas',
         'bot_scan': 'https://www.browserscan.net/zh',
         'web_gpu': 'https://www.browserscan.net/zh/webgpu',
-        'fingerprint_playground': 'https://demo.fingerprint.com/playground'  # 暂时注释掉有问题的网站
+        'fingerprint_playground': 'https://demo.fingerprint.com/playground',  # 暂时注释掉有问题的网站
+        'rebrowser_bot_detector':'https://bot-detector.rebrowser.net'
     }
 
     def __init__(self, pg: Page, browser_token):
@@ -66,20 +72,45 @@ class BotScan:
         for k, v in self.test_sites_dict.items():
             task = test_site(k, v)
             tasks.append(task)
-        
+
         # 并发执行所有测试任务
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def op_browser(browser_token: uuid.UUID | str):
-    async with BaseUndetectedPlaywright(
+    async with DatabaseSessionManager.async_session() as session:
+        browser_list = await BrowserDBService.list_fingerprint(UserBrowserInfoListParams(
             browser_token=browser_token,
-            headless=True,
-    ).launch_browser_span() as browser:
-        page = await browser.new_page()
-        bot_scan = BotScan(page, browser_token)
-        await bot_scan.run_test()
-        await browser.close()
+            page=1,
+            per_page=10
+        ), session)
+
+    if browser_list.items:
+        browser_id = browser_list.items[0].id
+    else:
+        async with DatabaseSessionManager.async_session() as session:
+            created_fingerprint = await BrowserDBService.create_fingerprint(UserBrowserInfoCreateParams(
+                browser_token=browser_token,
+                fingerprint_int=random.randint(0, 9999)
+            ), session)
+            browser_id = created_fingerprint.id
+
+    # 获取会话池
+    session_pool = get_default_session_pool()
+
+    # 创建会话参数
+    session_params = SessionCreateParams(
+        browser_token=browser_token,
+        browser_id=browser_id,
+        headless=True
+    )
+
+    # 获取包含插件的会话
+    plugined_session = await session_pool.get_session(session_params)
+    page = await plugined_session.get_current_page()
+    bot_scan = BotScan(page, browser_token)
+    await bot_scan.run_test()
+    await plugined_session.close()
 
 
 async def main(browser_token: uuid.UUID | str):
@@ -87,9 +118,7 @@ async def main(browser_token: uuid.UUID | str):
 
 
 async def _test_main():
-    for i in browser_token_list:
-        await main(i)
-    # await asyncio.gather(*[main(i) for i in browser_token_list])
+    await asyncio.gather(*[main(i) for i in browser_token_list])
 
 
 if __name__ == '__main__':

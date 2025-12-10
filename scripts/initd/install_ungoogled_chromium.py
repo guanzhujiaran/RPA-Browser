@@ -1,27 +1,29 @@
 import os
 import stat
 
+import aiofiles
 import browsers
 import requests
-
+import asyncio
 from app.config import settings
+from app.utils.consts.browser_exe_info.browser_exec_info_utils import get_browse_exec_infos
 
 
-def download_file(url, filename):
+async def download_file(url, filename):
     """Download file from URL with progress indication"""
     print(f"正在从 {url} 下载 {filename}...")
     os.makedirs('/'.join(filename.split('/')[:-1]), exist_ok=True)
 
-    response = requests.get(url, stream=True, proxies={'all': settings.proxy_server_url})
+    response = await asyncio.to_thread(requests.get,url=url, stream=True, proxies={'all': settings.proxy_server_url})
     response.raise_for_status()
 
     total_size = int(response.headers.get('content-length', 0))
     downloaded_size = 0
 
-    with open(filename, 'wb') as file:
+    async with aiofiles.open(filename, 'wb') as file:
         for chunk in response.iter_content(chunk_size=8192):
             if chunk:
-                file.write(chunk)
+                await file.write(chunk)
                 downloaded_size += len(chunk)
                 if total_size > 0:
                     percent = (downloaded_size / total_size) * 100
@@ -30,42 +32,34 @@ def download_file(url, filename):
     print("\n下载完成!")
 
 
-def install_chromium():
+async def install_chromium():
     """Install ungoogled chromium browser"""
     # Check if chromium is already installed
-    browser = browsers.get("chromium")
-    if browser is not None or os.path.exists(settings.chromium_executable_path):
-        print(f"Chromium 浏览器已经安装在: {browser or settings.chromium_executable_path}")
-        return browser
-    if not settings.chromium_executable_path:
-        print(f"未找到 Chromium 浏览器可执行文件路径 {settings.chromium_executable_path}")
-        return None
-    print("检测到 Chromium 浏览器未安装，开始下载...")
+    for exec_info in await get_browse_exec_infos():
+        browser = browsers.get("chromium")
+        if browser is not None or os.path.exists(exec_info.exec_path):
+            print(f"Chromium 浏览器已经安装在: {browser or exec_info.exec_path}")
+            return browser
+        if not exec_info.exec_path:
+            print(f"未找到 Chromium 浏览器可执行文件路径 {exec_info}")
+            return None
+        print("检测到 Chromium 浏览器未安装，开始下载...")
+        # Download the AppImage
+        try:
+            await download_file(exec_info.download_url, exec_info.exec_path)
 
-    # GitHub release URL for ungoogled-chromium
-    url = 'https://github.com/adryfish/fingerprint-chromium/releases/download/139.0.7258.154/ungoogled-chromium-139.0.7258.154-1-x86_64.AppImage'
+            # Make the AppImage executable
+            st = os.stat(settings.chromium_executable_dir)
+            os.chmod(settings.chromium_executable_dir, st.st_mode | stat.S_IEXEC)
 
-    # Download the AppImage
-    try:
-        download_file(url, settings.chromium_executable_path)
+            print(f"{settings.chromium_executable_dir} 已成功下载并设置为可执行文件")
 
-        # Make the AppImage executable
-        st = os.stat(settings.chromium_executable_path)
-        os.chmod(settings.chromium_executable_path, st.st_mode | stat.S_IEXEC)
+            return os.path.abspath(settings.chromium_executable_dir)
 
-        print(f"{settings.chromium_executable_path} 已成功下载并设置为可执行文件")
-
-        # Register with browsers library
-        # Note: This is a simplified approach. In practice, you might need to
-        # register the browser with the system or the browsers library in a more complex way.
-        print("浏览器已安装完成，可以通过 ./ungoogled-chromium-139.0.7258.154-1-x86_64.AppImage 启动")
-
-        return os.path.abspath(settings.chromium_executable_path)
-
-    except Exception as e:
-        print(f"安装过程中出现错误: {e}")
-        return None
+        except Exception as e:
+            print(f"安装过程中出现错误: {e}")
+            return None
 
 
 if __name__ == "__main__":
-    install_chromium()
+    asyncio.run(install_chromium())

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Optional
 
 from hcaptcha_challenger import AgentConfig
 from hcaptcha_challenger.agent import AgentV
-
+from app.config import settings
 if TYPE_CHECKING:
     from botright.extended_typing import BrowserContext, Page
 
@@ -25,7 +25,7 @@ class hCaptcha:
         self.page = page
 
         self.retry_times = 8
-        self.hcaptcha_agent = AgentV(page=page, agent_config=AgentConfig())
+        self.hcaptcha_agent = AgentV(page=page, agent_config=AgentConfig(GEMINI_API_KEY=settings.GEMINI_API_KEY))
 
     async def mock_captcha(self, rq_data: str) -> None:
         """

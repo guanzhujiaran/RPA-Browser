@@ -1,3 +1,5 @@
+from typing import Callable
+
 from app.models.RPA_browser.plugin_model import RetryPluginModel
 from app.services.RPA_browser.notification_service import NotificationService
 from app.services.site_rpa_operation.base.base_plugin import BasePlugin, PluginMethodType
@@ -15,9 +17,10 @@ class RetryPlugin(BasePlugin):
         self.current_retry = 0
         self.original_operation = None
         self.retry_start_time = None
-        
+
         self.logger.info(f"[RETRY PLUGIN] 🔄 重试插件初始化 - 最大重试次数: {conf.retry_times}, 延迟: {conf.delay}秒")
-        self.logger.debug(f"[RETRY PLUGIN] ⚙️ 配置详情 - 错误推送: {conf.is_push_msg_on_error}, 插件描述: {conf.description}")
+        self.logger.debug(
+            f"[RETRY PLUGIN] ⚙️ 配置详情 - 错误推送: {conf.is_push_msg_on_error}, 插件描述: {conf.description}")
 
         # 添加操作到操作链
         self.add_operation(PluginMethodType.BEFORE_EXEC, self._setup_retry, "设置重试机制")
@@ -29,18 +32,18 @@ class RetryPlugin(BasePlugin):
         import time
         self.current_retry = 0
         self.retry_start_time = time.time()
-        self.logger.info(f"[RETRY PLUGIN] 🔄 初始化重试机制 - 最大重试次数: {self.conf.retry_times}, 延迟间隔: {self.conf.delay}秒")
+        self.logger.info(
+            f"[RETRY PLUGIN] 🔄 初始化重试机制 - 最大重试次数: {self.conf.retry_times}, 延迟间隔: {self.conf.delay}秒")
         self.logger.debug(f"[RETRY PLUGIN] ⏰ 重试开始时间: {self.retry_start_time:.2f}")
 
-    async def _handle_retry(self, error: Exception, operation=None, *args, **kwargs):
+    async def _handle_retry(self, error: Exception, operation: Callable | None = None, *args, **kwargs):
         """处理重试逻辑"""
         if operation:
             self.original_operation = operation
         if self.conf.is_push_msg_on_error:
-            session_generator = DatabaseSessionManager.get_db_session()
-            session = await session_generator.__anext__()
-            await NotificationService.push_msg(self.base_playwright_engine.browser_token, "重试失败",
-                                               f"第 {self.current_retry} 次重试失败\n{error}", session)
+            async with DatabaseSessionManager.async_session() as session:
+                await NotificationService.push_msg(self.base_playwright_engine.browser_token, "重试失败",
+                                                   f"第 {self.current_retry} 次重试失败\n{error}", session)
         if self.current_retry < self.conf.retry_times:
             self.current_retry += 1
 
@@ -76,10 +79,11 @@ class RetryPlugin(BasePlugin):
         import time
         if self.retry_start_time:
             total_retry_time = time.time() - self.retry_start_time
-            self.logger.info(f"[RETRY PLUGIN] ✅ 操作成功 - 总重试时间: {total_retry_time:.3f}秒, 重试次数: {self.current_retry}")
+            self.logger.info(
+                f"[RETRY PLUGIN] ✅ 操作成功 - 总重试时间: {total_retry_time:.3f}秒, 重试次数: {self.current_retry}")
         else:
             self.logger.info(f"[RETRY PLUGIN] ✅ 操作成功 - 重试次数: {self.current_retry}")
-        
+
         self.current_retry = 0
         self.retry_start_time = None
         self.logger.debug("[RETRY PLUGIN] 🔄 重试计数已重置")

@@ -5,20 +5,7 @@ from pathlib import Path
 from re import Pattern
 from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Sequence, TypedDict, Union
 
-# fmt: off
 from playwright._impl._async_base import AsyncEventContextManager
-# from undetected_playwright._impl._impl_to_api_mapping import ImplToApiMapping
-# from undetected_playwright._impl._async_base import AsyncEventContextManager
-# from undetected_playwright.async_api import Position, \
-#     Locator as PlaywrightLocator, \
-#     Page as PlaywrightPage, \
-#     CDPSession as PlaywrightCDPSession, \
-#     ElementHandle as PlaywrightElementHandle, \
-#     Error as PlaywrightError, \
-#     Route as PlaywrightRoute, \
-#     Request as PlaywrightRequest, \
-#     ConsoleMessage as PlaywrightConsoleMessage, \
-#     Worker as PlaywrightWorker
 from playwright._impl._impl_to_api_mapping import ImplToApiMapping
 from playwright.async_api import BrowserContext as PlaywrightBrowserContext
 from playwright.async_api import CDPSession as PlaywrightCDPSession
@@ -32,8 +19,6 @@ from playwright.async_api import Position
 from playwright.async_api import Request as PlaywrightRequest
 from playwright.async_api import Route as PlaywrightRoute
 from playwright.async_api import Worker as PlaywrightWorker
-from recognizer.agents.playwright import AsyncChallenger
-
 from botright.modules import Faker, hcaptcha  # , geetest
 
 # fmt: on
@@ -98,7 +83,6 @@ class Page(PlaywrightPage):
             self._keyboard = Keyboard(page.keyboard, self)
         self.cdp: Optional[PlaywrightCDPSession] = None
         self.hcaptcha_solver = hcaptcha.hCaptcha(browser, self)
-        self.recaptcha_solver = AsyncChallenger(self)
 
         # Aliases
         self._origin_close = page.close
@@ -247,17 +231,6 @@ class Page(PlaywrightPage):
         # return await geetest.solve_geetest(self, mode=mode)
         raise NotImplementedError("Geetest challenge currently unavailable!")
 
-    async def solve_recaptcha(self) -> Union[str, bool]:
-        """
-        Mocks solving a ReCaptcha challenge on a page.
-
-        Returns:
-            Union[str, bool]: The ReCaptcha token if the challenge is solved successfully, otherwise None.
-        """
-        result: Union[str, bool] = await self.recaptcha_solver.solve_recaptcha()
-        return result
-
-    visual_recaptcha = solve_recaptcha
 
     async def close(self, run_before_unload: Optional[bool] = None, reason: Optional[str] = None):
         await self._origin_close(run_before_unload=run_before_unload, reason=reason)
@@ -525,7 +498,7 @@ class Page(PlaywrightPage):
         click_count: Optional[int] = 1,
         strict: Optional[bool] = False,
         delay: Optional[float] = 20.0,
-        force: Optional[bool] = False,
+        force: Optional[bool] = True,
         modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
@@ -535,7 +508,7 @@ class Page(PlaywrightPage):
         modifiers = modifiers or []
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(selector, strict=strict, timeout=timeout)
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -569,7 +542,7 @@ class Page(PlaywrightPage):
         button: Optional[Literal["left", "middle", "right"]] = "left",
         strict: Optional[bool] = False,
         delay: Optional[float] = 20.0,
-        force: Optional[bool] = False,
+        force: Optional[bool] = True,
         modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
@@ -579,7 +552,7 @@ class Page(PlaywrightPage):
         modifiers = modifiers or []
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(selector, strict=strict, timeout=timeout)
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -610,7 +583,7 @@ class Page(PlaywrightPage):
     async def check(
         self,
         selector: str,
-        force: Optional[bool] = False,
+        force: Optional[bool] = True,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         strict: Optional[bool] = False,
@@ -619,7 +592,7 @@ class Page(PlaywrightPage):
     ) -> None:
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(selector, strict=strict, timeout=timeout)
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -649,7 +622,7 @@ class Page(PlaywrightPage):
     async def uncheck(
         self,
         selector: str,
-        force: Optional[bool] = False,
+        force: Optional[bool] = True,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         strict: Optional[bool] = False,
@@ -658,7 +631,7 @@ class Page(PlaywrightPage):
     ) -> None:
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(selector, strict=strict, timeout=timeout)
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -689,7 +662,7 @@ class Page(PlaywrightPage):
         self,
         selector: str,
         checked: Optional[bool] = False,
-        force: Optional[bool] = False,
+        force: Optional[bool] = True,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         strict: Optional[bool] = False,
@@ -698,7 +671,7 @@ class Page(PlaywrightPage):
     ) -> None:
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(selector, strict=strict, timeout=timeout)
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -728,7 +701,7 @@ class Page(PlaywrightPage):
     async def hover(
         self,
         selector: str,
-        force: Optional[bool] = False,
+        force: Optional[bool] = True,
         modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
         position: Optional[Position] = None,
         strict: Optional[bool] = False,
@@ -739,7 +712,7 @@ class Page(PlaywrightPage):
         modifiers = modifiers or []
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(selector, strict=strict, timeout=timeout)
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 

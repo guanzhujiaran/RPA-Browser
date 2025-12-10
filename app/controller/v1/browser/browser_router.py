@@ -30,7 +30,7 @@ router = new_router()
     BrowserRouterPath.gen_rand_fingerprint,
     response_model=StandardResponse[BaseFingerprintBrowserInitParams]
 )
-def gen_rand_fingerprint_router(
+async def gen_rand_fingerprint_router(
         params: UserBrowserInfoCreateParams
 ):
     """
@@ -42,7 +42,7 @@ def gen_rand_fingerprint_router(
     # 为指纹生成创建一个临时的BrowserService实例
     temp_token = uuid.uuid4()
     browser_service = BrowserService(temp_token)
-    fingerprint = browser_service.gen_rand_fingerprint(params)
+    fingerprint = await browser_service.gen_rand_fingerprint(params)
     return success_response(data=fingerprint)
 
 

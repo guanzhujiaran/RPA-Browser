@@ -365,6 +365,8 @@ class AsyncCaptchaBreaker:
             List[Tuple]: 答案坐标列表
         """
         try:
+            if not url:
+                return []
             # 使用httpx异步发送HTTP请求获取图像
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url)

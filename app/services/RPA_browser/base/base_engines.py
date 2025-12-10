@@ -7,6 +7,7 @@ from playwright.async_api import BrowserContext
 
 from app.config import settings
 from app.models.RPA_browser.browser_info_model import BaseFingerprintBrowserInitParams
+from app.utils.consts.browser_exe_info.browser_exec_info_utils import browser_exec_info_helper
 from botright.botright import Botright
 
 
@@ -84,12 +85,13 @@ class BaseUndetectedPlaywright:
         """
         if fingerprint_params:
             self.default_args.extend(fingerprint_params.fp_2_args_list())
+        browser_exec_info = await browser_exec_info_helper.get_exec_info(ua=fingerprint_params.patchright_browser_ua)
         botright_instance = await Botright(
             headless=self.headless,
             block_images=True,
             user_action_layer=True,
             fingerprint=fingerprint_params.browserforge_fingerprint_object,
-            execute_path=settings.chromium_executable_path or None
+            execute_path=browser_exec_info.exec_path
         )
         botright_instance.flags.extend(self.default_args)
         browser = await botright_instance.new_browser(

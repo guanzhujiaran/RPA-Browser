@@ -2,7 +2,6 @@ from browserforge.fingerprints import FingerprintGenerator, Screen
 
 general_conf = {
     "mock_webrtc": True,
-    "screen":Screen(min_width=1025,max_width=6000,min_height=768,max_height=6000)
 }
 
 desktop_fingerprint_generator = FingerprintGenerator(

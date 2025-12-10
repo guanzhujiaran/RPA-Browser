@@ -4,10 +4,11 @@ from dataclasses import asdict
 from app.models.RPA_browser.browser_info_model import BaseFingerprintBrowserInitParams, PlatformEnum, \
     UserBrowserInfoCreateParams, \
     BrowserEnum
+from app.utils.consts.browser_exe_info.browser_exec_info_utils import browser_exec_info_helper
 from app.utils.http.rand_headers_gen import desktop_fingerprint_generator, mobile_fingerprint_generator
 
 
-def gen_from_browserforge_fingerprint(
+async def gen_from_browserforge_fingerprint(
         *,
         params: UserBrowserInfoCreateParams
 ) -> BaseFingerprintBrowserInitParams:
@@ -15,10 +16,11 @@ def gen_from_browserforge_fingerprint(
         return BaseFingerprintBrowserInitParams(
             fingerprint=params.fingerprint_int
         )
+    ua_list = await browser_exec_info_helper.get_exec_info_ua_list()
     if params.is_desktop:
-        rand_fingerprint = desktop_fingerprint_generator.generate()
+        rand_fingerprint = desktop_fingerprint_generator.generate(user_agent=ua_list)
     else:
-        rand_fingerprint = mobile_fingerprint_generator.generate()
+        rand_fingerprint = mobile_fingerprint_generator.generate(user_agent=ua_list)
     bf_fingerprint_hashmap = {
         'Win32': PlatformEnum.windows,
         'MacIntel': PlatformEnum.macos,

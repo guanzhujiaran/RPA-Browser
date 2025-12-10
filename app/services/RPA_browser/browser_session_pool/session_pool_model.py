@@ -278,7 +278,6 @@ class PluginedSessionInfo(SessionInfo):
                 ),
                 session=session
             )
-
             plugin_configs = await PluginDBService.get_browser_info_plugins(
                 browser_token=browser_token,
                 browser_id=browser_id,

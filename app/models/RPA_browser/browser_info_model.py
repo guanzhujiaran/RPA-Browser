@@ -9,6 +9,8 @@ from playwright.async_api import ViewportSize
 from pydantic import model_validator
 from sqlalchemy import BIGINT, JSON
 from sqlmodel import Field, SQLModel, Enum, Column, Relationship
+
+from app.models.RPA_browser.browser_exec_info_model import BrowserExecInfoModel
 from app.models.base.base_sqlmodel import BaseSQLModel, BasePaginationReq
 from snowflake import SnowflakeGenerator
 from app.models.RPA_browser.plugin_model import (
@@ -17,6 +19,7 @@ from app.models.RPA_browser.plugin_model import (
     RandomWaitPluginModel,
     RetryPluginModel
 )
+from app.utils.consts.browser_exe_info.browser_exec_info_utils import get_browse_exec_infos
 
 # 初始化雪花ID生成器
 snowflake_generator = SnowflakeGenerator(1)  # 传入节点ID，可以根据需要修改
@@ -78,6 +81,10 @@ class BaseFingerprintBrowserInitParams(BaseSQLModel):
     patchright_viewport_height: int = Field(default=1080, gt=780)
     patchright_proxy_server: str | None = Field(None)
     patchright_fingerprint_dict: dict | None = Field(None, sa_column=Column(JSON))
+    patchright_browser_ua: str | None = Field(None)
+
+    async def get_browser_exec_info(self) -> BrowserExecInfoModel:
+        await get_browse_exec_infos()
 
     @property
     def browserforge_fingerprint_object(self) -> Fingerprint | None:
@@ -85,6 +92,7 @@ class BaseFingerprintBrowserInitParams(BaseSQLModel):
             return None
         screen_fingerprint = from_dict(ScreenFingerprint, self.patchright_fingerprint_dict.get('screen'))
         navigator_fingerprint = NavigatorFingerprint(**self.patchright_fingerprint_dict.get('navigator'))
+        navigator_fingerprint.userAgent = self.patchright_browser_ua or navigator_fingerprint.userAgent
         video_card = from_dict(VideoCard, self.patchright_fingerprint_dict.get('videoCard'))
         return Fingerprint(
             screen=screen_fingerprint,

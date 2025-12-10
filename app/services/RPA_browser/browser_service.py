@@ -41,7 +41,7 @@ class BrowserService:
         """
         self.browser_token = browser_token
 
-    def gen_rand_fingerprint(self, params: UserBrowserInfoCreateParams) -> BaseFingerprintBrowserInitParams:
+    async def gen_rand_fingerprint(self, params: UserBrowserInfoCreateParams) -> BaseFingerprintBrowserInitParams:
         """
         生成随机浏览器指纹
         
@@ -51,7 +51,7 @@ class BrowserService:
         Returns:
             BaseFingerprintBrowserInitParams: 生成的浏览器指纹参数
         """
-        return gen_from_browserforge_fingerprint(params=params)
+        return await gen_from_browserforge_fingerprint(params=params)
 
     async def create_log_plugin(self, params: LogPluginModel, session: AsyncSession) -> LogPluginModel:
         """
