@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     sys_pushme_token: str = ""
     sys_pushplus_token: str = ""
     GEMINI_API_KEY: str = "1234"
-
+    default_proxy_server:str = ""
 
 settings = Settings()
 

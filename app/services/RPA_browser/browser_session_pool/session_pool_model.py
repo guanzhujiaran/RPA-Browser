@@ -19,9 +19,6 @@ from app.utils.decorator import log_class_decorator
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 
-create_session_lock = asyncio.Lock()
-
-
 @dataclass
 @log_class_decorator.decorator
 class SessionInfo:
@@ -347,17 +344,16 @@ class BrowserSession:
 
     async def create_session(self, params: BrowserSessionCreateParams) -> PluginedSessionInfo:
         """添加新的会话"""
-        async with create_session_lock:
-            if sess := self.get_session(params):
-                return sess
-            session_info: PluginedSessionInfo = await PluginedSessionInfo.new(
-                browser_token=self.browser_token,
-                browser_id=params.browser_id,
-                headless=params.headless
-            )
-            # 注册插件
-            self.sessions[params.browser_id] = session_info
-            return session_info
+        if sess := self.get_session(params):
+            return sess
+        session_info: PluginedSessionInfo = await PluginedSessionInfo.new(
+            browser_token=self.browser_token,
+            browser_id=params.browser_id,
+            headless=params.headless
+        )
+        # 注册插件
+        self.sessions[params.browser_id] = session_info
+        return session_info
 
     def get_session(self, params: BrowserSessionGetParams) -> PluginedSessionInfo | None:
         """根据browser_id获取会话"""

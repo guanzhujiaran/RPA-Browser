@@ -1,16 +1,23 @@
 import asyncio
 import uuid
 from typing import Dict, Optional
-from app.models.RPA_browser.browser_session_model import SessionCreateParams, BrowserSessionBaseParams, \
-    BrowserSessionRemoveParams, SessionAllCloseResponse, SessionCloseResponse
-from app.services.RPA_browser.browser_session_pool.session_pool_model import BrowserSession, \
-    PluginedSessionInfo
+from app.models.RPA_browser.browser_session_model import (
+    SessionCreateParams,
+    BrowserSessionBaseParams,
+    BrowserSessionRemoveParams,
+    SessionAllCloseResponse,
+    SessionCloseResponse,
+)
+from app.services.RPA_browser.browser_session_pool.session_pool_model import (
+    BrowserSession,
+    PluginedSessionInfo,
+)
 
 
 class PlaywrightSessionPool:
     """
     管理 BaseUndetectedPlaywright 会话的池化系统
-    
+
     支持以下功能：
     1. 根据 browser_token 快速查找现有浏览器会话
     2. 自动创建新的浏览器实例
@@ -45,21 +52,21 @@ class PlaywrightSessionPool:
         Returns:
             (BaseUndetectedPlaywright实例, BrowserContext) 的元组
         """
-        async with self._pool_lock:
-            if browser_session := self._active_sessions.get(params.browser_token):
-                return await browser_session.create_session(params)
-            else:
-                browser_session = BrowserSession(
-                    browser_token=params.browser_token,
-                    sessions={}
-                )
-                self._active_sessions[params.browser_token] = browser_session
-                return await browser_session.create_session(params)
+        if browser_session := self._active_sessions.get(params.browser_token):
+            return await browser_session.create_session(params)
+        else:
+            browser_session = BrowserSession(
+                browser_token=params.browser_token, sessions={}
+            )
+            self._active_sessions[params.browser_token] = browser_session
+            return await browser_session.create_session(params)
 
-    async def release_all_session(self, params: BrowserSessionBaseParams) -> SessionAllCloseResponse:
+    async def release_all_session(
+        self, params: BrowserSessionBaseParams
+    ) -> SessionAllCloseResponse:
         """
         释放指定browser_token的会话资源
-        
+
         """
         async with self._pool_lock:
             if browser_session := self._active_sessions.get(params.browser_token):
@@ -77,7 +84,7 @@ class PlaywrightSessionPool:
             browser_id=params.browser_id,
             browser_token=params.browser_token,
             is_closed=False,
-            feedback="会话不存在"
+            feedback="会话不存在",
         )
 
 
@@ -88,7 +95,7 @@ _default_session_pool: Optional[PlaywrightSessionPool] = None
 def get_default_session_pool() -> PlaywrightSessionPool:
     """
     获取默认的会话池实例（单例）
-    
+
     Returns:
         PlaywrightSessionPool实例
     """

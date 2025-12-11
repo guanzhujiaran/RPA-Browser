@@ -52,7 +52,7 @@ async def gen_rand_fingerprint_router(
 )
 async def create_fingerprint_router(
         params: UserBrowserInfoCreateParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession = DatabaseSessionManager.get_dependency()
 ):
     """
     生成随机的浏览器指纹信息
@@ -67,7 +67,7 @@ async def create_fingerprint_router(
 )
 async def read_fingerprint_router(
         params: UserBrowserInfoReadParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
 ):
     """
     读取浏览器指纹信息
@@ -82,7 +82,7 @@ async def read_fingerprint_router(
 )
 async def update_fingerprint_router(
         params: UserBrowserInfoUpdateParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
 ):
     """
     更新浏览器指纹信息
@@ -100,7 +100,7 @@ async def update_fingerprint_router(
 )
 async def delete_fingerprint_router(
         params: UserBrowserInfoDeleteParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
 ):
     """
     删除浏览器指纹信息
@@ -120,7 +120,7 @@ async def delete_fingerprint_router(
 )
 async def count_fingerprint_router(
         params: UserBrowserInfoCountParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
 ):
     """
     统计浏览器指纹信息
@@ -135,7 +135,7 @@ async def count_fingerprint_router(
 )
 async def list_fingerprint_router(
         params: UserBrowserInfoListParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
 ):
     """
     列表浏览器指纹信息

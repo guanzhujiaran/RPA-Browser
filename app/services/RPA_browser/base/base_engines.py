@@ -7,7 +7,9 @@ from playwright.async_api import BrowserContext
 
 from app.config import settings
 from app.models.RPA_browser.browser_info_model import BaseFingerprintBrowserInitParams
-from app.utils.consts.browser_exe_info.browser_exec_info_utils import browser_exec_info_helper
+from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
+    browser_exec_info_helper,
+)
 from botright.botright import Botright
 
 
@@ -23,50 +25,23 @@ class BaseUndetectedPlaywright:
     def user_data_dir(self):
         return self._user_data_dir
 
-    def __init__(self,
-                 browser_token: uuid.UUID,
-                 browser_id: int,
-                 *,
-                 headless: bool = True,
-                 ):
+    def __init__(
+        self,
+        browser_token: uuid.UUID,
+        browser_id: int,
+        *,
+        headless: bool = True,
+    ):
         """
         headless测试的时候设置成False
         """
 
-        self.default_args = ['--incognito', '--accept-lang=en-US', '--lang=en-US', '--no-pings', '--mute-audio',
-                             '--no-first-run', '--no-default-browser-check', '--disable-cloud-import',
-                             '--disable-gesture-typing', '--disable-offer-store-unmasked-wallet-cards',
-                             '--disable-offer-upload-credit-cards', '--disable-print-preview', '--disable-voice-input',
-                             '--disable-wake-on-wifi', '--disable-cookie-encryption', '--ignore-gpu-blocklist',
-                             '--enable-async-dns', '--enable-simple-cache-backend', '--enable-tcp-fast-open',
-                             '--prerender-from-omnibox=disabled', '--enable-web-bluetooth',
-                             '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process,TranslateUI,BlinkGenPropertyTrees',
-                             '--aggressive-cache-discard', '--disable-extensions', '--disable-ipc-flooding-protection',
-                             '--disable-blink-features=AutomationControlled', '--test-type',
-                             '--enable-features=NetworkService,NetworkServiceInProcess,TrustTokens,TrustTokensAlwaysAllowIssuance',
-                             '--disable-component-extensions-with-background-pages',
-                             '--disable-default-apps', '--disable-breakpad', '--disable-component-update',
-                             '--disable-domain-reliability', '--disable-sync',
-                             '--disable-client-side-phishing-detection',
-                             '--disable-hang-monitor', '--disable-popup-blocking', '--disable-prompt-on-repost',
-                             '--metrics-recording-only', '--safebrowsing-disable-auto-update', '--password-store=basic',
-                             '--autoplay-policy=no-user-gesture-required', '--use-mock-keychain',
-                             '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-                             '--webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-session-crashed-bubble',
-                             '--disable-crash-reporter', '--disable-dev-shm-usage', '--force-color-profile=srgb',
-                             '--disable-translate', '--disable-background-networking',
-                             '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-                             '--disable-infobars',
-                             '--hide-scrollbars', '--disable-renderer-backgrounding', '--font-render-hinting=none',
-                             '--disable-logging', '--enable-surface-synchronization',
-                             '--run-all-compositor-stages-before-draw', '--disable-threaded-animation',
-                             '--disable-threaded-scrolling', '--disable-checker-imaging',
-                             '--disable-new-content-rendering-timeout', '--disable-image-animation-resync',
-                             '--disable-partial-raster', '--blink-settings=primaryHoverType=2,availableHoverTypes=2,'
-                                                         'primaryPointerType=4,availablePointerTypes=4',
-                             '--disable-layer-tree-host-memory-pressure']
+        self.default_args=[]
         self._base_user_data_dir = Path(
-            os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'user_data_dir'))
+            os.path.join(
+                os.path.dirname(__file__), "..", "..", "..", "..", "user_data_dir"
+            )
+        )
         self.browser_token = browser_token
         self.browser_id = browser_id  # 如果没有提供browser_id，则生成一个
         self.headless = headless
@@ -75,23 +50,26 @@ class BaseUndetectedPlaywright:
         os.makedirs(user_dir, exist_ok=True)  # 确保用户目录存在
         self._user_data_dir = os.path.join(user_dir, str(self.browser_id))
 
-    async def launch_browser_span(self, fingerprint_params: BaseFingerprintBrowserInitParams | None = None) -> \
-            AsyncGenerator[BrowserContext, Any]:
+    async def launch_browser_span(
+        self, fingerprint_params: BaseFingerprintBrowserInitParams
+    ) -> AsyncGenerator[BrowserContext, Any]:
         """
         启动浏览器会话
-        
+
         Args:
             fingerprint_params: 浏览器指纹参数，如果为None则使用默认参数
         """
         if fingerprint_params:
             self.default_args.extend(fingerprint_params.fp_2_args_list())
-        browser_exec_info = await browser_exec_info_helper.get_exec_info(ua=fingerprint_params.patchright_browser_ua)
+        browser_exec_info = await browser_exec_info_helper.get_exec_info(
+            ua=fingerprint_params.patchright_browser_ua
+        )
         botright_instance = await Botright(
             headless=self.headless,
-            block_images=True,
-            user_action_layer=True,
+            block_images=False,
+            user_action_layer=False,
             fingerprint=fingerprint_params.browserforge_fingerprint_object,
-            execute_path=browser_exec_info.exec_path
+            execute_path=browser_exec_info.exec_path,
         )
         botright_instance.flags.extend(self.default_args)
         browser = await botright_instance.new_browser(

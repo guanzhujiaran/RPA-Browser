@@ -13,6 +13,7 @@ from app.controller.v1.browser.plugin_base import new_router
 from app.models.response import StandardResponse, success_response
 from app.services.RPA_browser.browser_service import BrowserService
 from app.utils.depends.jwt_depends import get_browser_service
+from app.utils.depends.session_manager import DatabaseSessionManager
 
 router = new_router()
 
@@ -24,8 +25,8 @@ router = new_router()
 async def create_log_plugin_router(
         params: LogPluginModel,
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     创建日志插件
     """
@@ -43,8 +44,8 @@ async def create_log_plugin_router(
 async def create_page_limit_plugin_router(
         params: PageLimitPluginModel,
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     创建页面限制插件
     """
@@ -62,8 +63,8 @@ async def create_page_limit_plugin_router(
 async def create_random_wait_plugin_router(
         params: RandomWaitPluginModel,
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     创建随机等待插件
     """
@@ -81,8 +82,8 @@ async def create_random_wait_plugin_router(
 async def create_retry_plugin_router(
         params: RetryPluginModel,
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     创建重试插件
     """
@@ -100,8 +101,8 @@ async def create_retry_plugin_router(
 async def delete_plugin_router(
         plugin_id: int,
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     删除插件配置
     """

@@ -14,6 +14,7 @@ from app.models.response import StandardResponse, success_response, error_respon
 from app.models.response_code import ResponseCode
 from app.services.RPA_browser.browser_service import BrowserService
 from app.utils.depends.jwt_depends import get_browser_service
+from app.utils.depends.session_manager import DatabaseSessionManager
 
 
 router = new_router()
@@ -26,8 +27,8 @@ router = new_router()
 async def create_notify_config_router(
         config: NotificationConfigCreate,
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     创建推送通知配置
     """
@@ -41,8 +42,8 @@ async def create_notify_config_router(
 )
 async def read_notify_config_router(
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     读取推送通知配置
     """
@@ -57,8 +58,8 @@ async def read_notify_config_router(
 async def update_notify_config_router(
         config_update: NotificationConfigUpdate,
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     更新推送通知配置
     """
@@ -72,8 +73,8 @@ async def update_notify_config_router(
 )
 async def delete_notify_config_router(
         browser_service: BrowserService = Depends(get_browser_service),
-        session: AsyncSession = Depends()
-):
+        session: AsyncSession =  DatabaseSessionManager.get_dependency()
+    ):
     """
     删除推送通知配置
     """

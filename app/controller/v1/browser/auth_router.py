@@ -9,7 +9,7 @@ from app.models.RPA_browser.browser_info_model import (
 )
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 from app.services.RPA_browser.browser_service import BrowserService
-from app.services.RPA_browser.jwt_token_service import JWTTokenService
+from app.services.RPA_browser.jwt_cache_service import JWTTokenService
 from app.utils.depends.session_manager import DatabaseSessionManager
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -19,7 +19,7 @@ router = new_router()
 @router.post("/auth/token", response_model=StandardResponse[dict])
 async def generate_token_router(
         params: UserBrowserInfoCreateParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession = DatabaseSessionManager.get_dependency()
 ):
     """
     生成浏览器指纹和对应的JWT访问令牌
@@ -43,7 +43,7 @@ async def generate_token_router(
 @router.post("/auth/issue-jwt", response_model=StandardResponse[dict])
 async def issue_jwt_token_router(
         params: UserBrowserInfoReadParams,
-        session: AsyncSession = Depends(DatabaseSessionManager.get_db_session)
+        session: AsyncSession = DatabaseSessionManager.get_dependency()
 ):
     """
     根据已有的browser_token下发JWT访问令牌

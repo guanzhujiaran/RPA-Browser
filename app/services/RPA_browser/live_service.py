@@ -11,6 +11,7 @@ from app.utils.depends.session_manager import DatabaseSessionManager
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 from app.services.RPA_browser.browser_session_pool.playwright_pool import get_default_session_pool
 
+# TODO 把这个地方的代码全部和plugined_session整合在一起
 
 @dataclass
 class LiveSessionEntry:
@@ -27,14 +28,12 @@ class LiveService:
 
     @staticmethod
     async def validate_browser_token(browser_token: uuid.UUID) -> bool:
-        session_generator = DatabaseSessionManager.get_db_session()
-        session = await session_generator.__anext__()
-        record = await BrowserDBService.read_fingerprint(
-            params=UserBrowserInfoReadParams(browser_token=browser_token),
-            session=session
-        )
-        await session_generator.aclose()
-        return record is not None
+        async with DatabaseSessionManager.async_session() as session:
+            record = await BrowserDBService.read_fingerprint(
+                params=UserBrowserInfoReadParams(browser_token=browser_token),
+                session=session
+            )
+            return record is not None
 
     @staticmethod
     async def create_live_session(browser_token: uuid.UUID, browser_id: str = None, headless: bool = True) -> str:

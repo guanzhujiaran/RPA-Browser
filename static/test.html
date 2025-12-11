@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>浏览器控制测试界面</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.1);
+            border-radius: 50%;
+            border-top-color: #3b82f6;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .result-box {
+            background: #1e293b;
+            color: #e2e8f0;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .success { border-left: 4px solid #10b981; }
+        .error { border-left: 4px solid #ef4444; }
+        .info { border-left: 4px solid #3b82f6; }
+        
+        /* 截图和直播预览样式 */
+        .media-container {
+            position: relative;
+            background: #f8fafc;
+            border-radius: 0.5rem;
+            overflow: hidden;
+        }
+        .media-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+        }
+        .media-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 20;
+        }
+        .media-container:hover .media-overlay {
+            opacity: 1;
+        }
+        .media-info {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 15;
+        }
+        .live-status {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            z-index: 15;
+        }
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+            animation: pulse 2s infinite;
+        }
+        .live-dot.active {
+            background: #10b981;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .screenshot-toolbar {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            display: flex;
+            gap: 4px;
+            z-index: 15;
+        }
+        .toolbar-btn {
+            background: rgba(0,0,0,0.8);
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .toolbar-btn:hover {
+            background: rgba(0,0,0,0.9);
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">浏览器控制测试界面</h1>
+            <p class="text-gray-600">测试浏览器自动化API的各项功能</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- 左侧控制面板 -->
+            <div class="space-y-6">
+                <!-- 基础配置 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-gray-800">基础配置</h2>
+                        <button onclick="testConnection()" class="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200">
+                            测试连接
+                        </button>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Server URL</label>
+                            <input type="text" id="serverUrl" value="http://127.0.0.1:8000/rpa" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Browser Token</label>
+                            <input type="text" id="browserToken" placeholder="浏览器Token" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Browser ID</label>
+                            <input type="text" id="browserId" placeholder="浏览器ID (可选)" 
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox" id="headless" class="mr-2">
+                            <label for="headless" class="text-sm text-gray-700">无头模式</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 功能操作 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800">功能操作</h2>
+                    <div class="space-y-3">
+                        <!-- 打开URL -->
+                        <div class="border rounded-lg p-4">
+                            <h3 class="font-medium mb-2">打开URL</h3>
+                            <input type="text" id="openUrl" placeholder="https://example.com" 
+                                   class="w-full px-3 py-2 mb-2 border border-gray-300 rounded-md">
+                            <button onclick="openUrl()" 
+                                    class="w-full bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition">
+                                打开页面
+                            </button>
+                        </div>
+
+                        <!-- 截图 -->
+                        <div class="border rounded-lg p-4">
+                            <h3 class="font-medium mb-2">截图</h3>
+                            <div class="space-y-2">
+                                <div class="flex items-center mb-2">
+                                    <input type="checkbox" id="fullPage" class="mr-2">
+                                    <label for="fullPage" class="text-sm">整页截图</label>
+                                    <select id="screenshotType" class="ml-4 px-2 py-1 border rounded">
+                                        <option value="png">PNG</option>
+                                        <option value="jpeg">JPEG</option>
+                                    </select>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button onclick="screenshot()" 
+                                            class="flex-1 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 transition">
+                                        截图
+                                    </button>
+                                    <button onclick="autoScreenshot()" 
+                                            class="flex-1 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition">
+                                        自动截图
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 直播功能 -->
+                        <div class="border rounded-lg p-4">
+                            <h3 class="font-medium mb-2">直播功能</h3>
+                            <div class="space-y-2">
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button onclick="createLive()" 
+                                            class="bg-purple-500 text-white px-3 py-2 rounded hover:bg-purple-600 transition text-sm">
+                                        创建直播
+                                    </button>
+                                    <button onclick="viewLive()" 
+                                            class="bg-indigo-500 text-white px-3 py-2 rounded hover:bg-indigo-600 transition text-sm">
+                                        查看状态
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button onclick="refreshLiveStream()" 
+                                            class="bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600 transition text-sm">
+                                        刷新直播流
+                                    </button>
+                                    <button onclick="stopLive()" 
+                                            class="bg-red-500 text-white px-3 py-2 rounded hover:bg-red-600 transition text-sm">
+                                        停止直播
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 释放会话 -->
+                        <div class="border rounded-lg p-4">
+                            <h3 class="font-medium mb-2">会话管理</h3>
+                            <div class="flex items-center mb-2">
+                                <input type="checkbox" id="releaseAll" class="mr-2">
+                                <label for="releaseAll" class="text-sm">释放所有会话</label>
+                            </div>
+                            <button onclick="releaseSession()" 
+                                    class="w-full bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600 transition">
+                                释放会话
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧结果展示 -->
+            <div class="space-y-6">
+                <!-- 响应结果 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-800">API响应结果</h2>
+                    <div id="apiResult" class="result-box min-h-[200px] p-4 rounded text-sm">
+                        等待API调用...
+                    </div>
+                </div>
+
+                <!-- 图片展示 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-gray-800">截图预览</h2>
+                        <div id="screenshotStats" class="text-sm text-gray-600"></div>
+                    </div>
+                    <div id="screenshotPreview" class="media-container border-2 border-dashed border-gray-300 rounded-lg min-h-[200px] flex items-center justify-center">
+                        <span class="text-gray-400">截图将显示在这里</span>
+                    </div>
+                </div>
+
+                <!-- 直播预览 -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-semibold text-gray-800">直播预览</h2>
+                        <div id="liveStats" class="text-sm text-gray-600"></div>
+                    </div>
+                    <div id="livePreview" class="media-container border-2 border-dashed border-gray-300 rounded-lg min-h-[200px] flex items-center justify-center relative">
+                        <span class="text-gray-400">直播流将显示在这里</span>
+                        <div id="liveStatus" class="live-status hidden">
+                            <div id="liveDot" class="live-dot"></div>
+                            <span id="liveStatusText" class="text-xs text-gray-600">离线</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+            <!-- 快速测试 -->
+            <div class="mt-8 bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4 text-gray-800">快速测试场景</h2>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <button onclick="createTestBrowser()" 
+                            class="bg-green-500 text-white px-4 py-3 rounded-lg hover:bg-green-600 transition">
+                        创建测试浏览器
+                    </button>
+                    <button onclick="quickTest('bilibili')" 
+                            class="bg-pink-500 text-white px-4 py-3 rounded-lg hover:bg-pink-600 transition">
+                        测试B站页面
+                    </button>
+                    <button onclick="quickTest('google')" 
+                            class="bg-blue-500 text-white px-4 py-3 rounded-lg hover:bg-blue-600 transition">
+                        测试Google搜索
+                    </button>
+                    <button onclick="quickTest('demo')" 
+                            class="bg-gray-500 text-white px-4 py-3 rounded-lg hover:bg-gray-600 transition">
+                        演示流程
+                    </button>
+                </div>
+                <div class="text-sm text-gray-600">
+                    <p>💡 提示：如果截图或直播功能不工作，请先创建测试浏览器实例</p>
+                </div>
+            </div>
+    </div>
+
+    <script>
+        let currentLiveId = null;
+        let liveRetryInterval = null;
+        let currentScreenshotData = null;
+        let liveStreamActive = false;
+        let autoScreenshotInterval = null;
+
+        // 获取基础URL
+        function getBaseUrl() {
+            return document.getElementById('serverUrl').value;
+        }
+
+        // 获取基础参数
+        function getBaseParams() {
+            saveSettings(); // 自动保存设置
+            const browserId = document.getElementById('browserId').value;
+            return {
+                browser_token: document.getElementById('browserToken').value,
+                browser_id: browserId || null,
+                headless: document.getElementById('headless').checked
+            };
+        }
+
+        // 显示结果
+        function showResult(data, type = 'info') {
+            const resultBox = document.getElementById('apiResult');
+            resultBox.className = `result-box min-h-[200px] p-4 rounded text-sm ${type}`;
+            
+            // 如果是HTML内容，渲染HTML
+            if (typeof data === 'string' && data.includes('<span')) {
+                resultBox.innerHTML = data;
+            } else {
+                resultBox.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            }
+            
+            // 滚动到结果区域
+            resultBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // 显示加载状态
+        function showLoading() {
+            showResult('处理中<span class="loading"></span>', 'info');
+        }
+
+        // API调用
+        async function callApi(endpoint, method = 'POST', data = {}) {
+            const baseUrl = getBaseUrl();
+            const url = `${baseUrl}${endpoint}`;
+            
+            console.log(`API Call: ${method} ${url}`, data); // 调试日志
+            
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: method === 'POST' ? JSON.stringify(data) : undefined
+                });
+
+                let result;
+                try {
+                    result = await response.json();
+                } catch (parseError) {
+                    const textResult = await response.text();
+                    console.error('Response parse error:', textResult);
+                    showResult(`响应解析失败: ${textResult}`, 'error');
+                    return null;
+                }
+                
+                console.log('API Response:', result); // 调试日志
+                
+                if (response.ok) {
+                    showResult(result, result.success ? 'success' : 'error');
+                    return result;
+                } else {
+                    showResult(`错误 (${response.status}): ${result.msg || result.detail || 'Unknown error'}`, 'error');
+                    return null;
+                }
+            } catch (error) {
+                console.error('API call error:', error);
+                showResult(`请求失败: ${error.message}`, 'error');
+                return null;
+            }
+        }
+
+        // 打开URL
+        async function openUrl() {
+            const url = document.getElementById('openUrl').value;
+            if (!url) {
+                showResult('请输入URL', 'error');
+                return;
+            }
+
+            showLoading();
+            const params = {
+                ...getBaseParams(),
+                url: url
+            };
+
+            await callApi('/browser_control/open_url', 'POST', params);
+        }
+
+        // 截图
+        async function screenshot() {
+            showLoading();
+            const params = {
+                ...getBaseParams(),
+                full_page: document.getElementById('fullPage').checked,
+                type: document.getElementById('screenshotType').value
+            };
+
+            // 验证必要参数
+            if (!params.browser_token) {
+                showResult('请设置 Browser Token', 'error');
+                return;
+            }
+            if (!params.browser_id) {
+                showResult('请设置 Browser ID', 'error');
+                return;
+            }
+
+            const preview = document.getElementById('screenshotPreview');
+            const statsDiv = document.getElementById('screenshotStats');
+            
+            // 显示加载状态
+            preview.innerHTML = '<div class="media-loading"><div class="loading"></div></div>';
+            statsDiv.textContent = '正在生成截图...';
+
+            const result = await callApi('/browser_control/screenshot', 'POST', params);
+            console.log('Screenshot result:', result); // 调试信息
+            
+            if (result && result.success && result.data) {
+                currentScreenshotData = result.data;
+                
+                // 验证数据
+                if (!result.data.image_base64) {
+                    preview.innerHTML = '<div class="text-red-500 p-4">截图数据为空</div>';
+                    statsDiv.textContent = '截图数据错误';
+                    return;
+                }
+                
+                // 创建图片元素
+                const imgElement = document.createElement('img');
+                const imageType = params.type || 'png';
+                imgElement.src = `data:image/${imageType};base64,${result.data.image_base64}`;
+                imgElement.className = 'w-full rounded';
+                imgElement.alt = '浏览器截图';
+                
+                // 图片加载完成事件
+                imgElement.onload = function() {
+                    // 创建信息显示
+                    const info = document.createElement('div');
+                    info.className = 'media-info';
+                    info.textContent = `${this.naturalWidth} × ${this.naturalHeight} | ${imageType.toUpperCase()}`;
+                    
+                    // 创建工具栏
+                    const toolbar = document.createElement('div');
+                    toolbar.className = 'screenshot-toolbar';
+                    toolbar.innerHTML = `
+                        <button class="toolbar-btn" onclick="downloadScreenshot()">下载</button>
+                        <button class="toolbar-btn" onclick="viewFullscreen()">全屏</button>
+                        <button class="toolbar-btn" onclick="copyScreenshot()">复制</button>
+                    `;
+                    
+                    // 创建悬停层
+                    const overlay = document.createElement('div');
+                    overlay.className = 'media-overlay';
+                    overlay.innerHTML = '<span class="text-white text-sm">点击图片全屏查看</span>';
+                    overlay.onclick = () => viewFullscreen();
+                    
+                    // 组装预览区域
+                    preview.innerHTML = '';
+                    preview.appendChild(imgElement);
+                    preview.appendChild(info);
+                    preview.appendChild(toolbar);
+                    preview.appendChild(overlay);
+                    
+                    // 更新统计信息
+                    const timestamp = new Date().toLocaleString();
+                    const fileSize = Math.round(result.data.image_base64.length * 0.75 / 1024);
+                    statsDiv.textContent = `${timestamp} | ${fileSize}KB | ${imageType.toUpperCase()}`;
+                };
+                
+                // 图片加载错误处理
+                imgElement.onerror = function() {
+                    console.error('Image load error:', this.src.substring(0, 100));
+                    preview.innerHTML = '<div class="text-red-500 p-4">图片加载失败，请检查Base64数据</div>';
+                    statsDiv.textContent = '图片加载失败';
+                };
+                
+            } else {
+                console.error('Screenshot API error:', result);
+                preview.innerHTML = '<div class="text-red-500 p-4">截图API调用失败</div>';
+                statsDiv.textContent = '截图失败';
+            }
+        }
+
+        // 创建直播
+        async function createLive() {
+            showLoading();
+            const params = getBaseParams();
+            
+            const result = await callApi('/browser_control/live/create', 'POST', params);
+            if (result && result.success && result.data) {
+                currentLiveId = result.data.live_id;
+                showLiveStream(result.data.live_id);
+                startLiveStatusCheck();
+            }
+        }
+
+        // 查看直播状态
+        async function viewLive() {
+            if (!currentLiveId) {
+                showResult('请先创建直播', 'error');
+                return;
+            }
+
+            showLoading();
+            const result = await callApi(`/browser_control/live/view?live_id=${currentLiveId}`, 'GET');
+            if (result && result.success) {
+                updateLiveStatus(true);
+            }
+        }
+
+        // 停止直播
+        async function stopLive() {
+            if (!currentLiveId) {
+                showResult('请先创建直播', 'error');
+                return;
+            }
+
+            showLoading();
+            const result = await callApi(`/browser_control/live/stop?live_id=${currentLiveId}`, 'POST');
+            if (result && result.success) {
+                currentLiveId = null;
+                liveStreamActive = false;
+                stopLiveStatusCheck();
+                resetLivePreview();
+                showResult('直播已停止', 'success');
+            }
+        }
+
+        // 显示直播流
+        function showLiveStream(liveId) {
+            const baseUrl = getBaseUrl();
+            const preview = document.getElementById('livePreview');
+            
+            // 直播流使用MJPEG流，不是普通图片
+            const streamUrl = `${baseUrl}/browser_control/live/stream?live_id=${liveId}&t=${Date.now()}`;
+            console.log('Live stream URL:', streamUrl);
+            
+            preview.innerHTML = `
+                <img id="liveStreamImg" src="${streamUrl}" class="w-full rounded" alt="直播流" style="background: #000;">
+                <div class="media-overlay">
+                    <div class="text-white text-center">
+                        <p class="mb-2">直播流加载中...</p>
+                        <button class="toolbar-btn" onclick="refreshLiveStream()">刷新</button>
+                        <button class="toolbar-btn" onclick="testLiveUrl()">测试连接</button>
+                    </div>
+                </div>
+            `;
+            
+            // 图片加载事件处理
+            const liveImg = document.getElementById('liveStreamImg');
+            
+            // MJPEG流会持续加载，我们用超时来判断
+            const loadingTimeout = setTimeout(() => {
+                if (!liveStreamActive) {
+                    liveStreamActive = false;
+                    updateLiveStatus(false);
+                    const overlay = preview.querySelector('.media-overlay');
+                    if (overlay) {
+                        overlay.style.display = 'flex';
+                        overlay.querySelector('p').textContent = '直播流连接超时，可能需要重新创建';
+                    }
+                }
+            }, 10000); // 10秒超时
+            
+            liveImg.onload = function() {
+                clearTimeout(loadingTimeout);
+                liveStreamActive = true;
+                updateLiveStatus(true);
+                const overlay = preview.querySelector('.media-overlay');
+                if (overlay) {
+                    overlay.style.display = 'none';
+                }
+            };
+            
+            liveImg.onerror = function() {
+                clearTimeout(loadingTimeout);
+                console.error('Live stream error:', streamUrl);
+                liveStreamActive = false;
+                updateLiveStatus(false);
+                const overlay = preview.querySelector('.media-overlay');
+                if (overlay) {
+                    overlay.style.display = 'flex';
+                    overlay.querySelector('p').textContent = '直播流加载失败，请检查服务器';
+                }
+            };
+            
+            // 显示直播状态指示器
+            document.getElementById('liveStatus').classList.remove('hidden');
+            
+            // 更新统计信息
+            updateLiveStats('直播流已创建');
+        }
+        
+        // 刷新直播流
+        function refreshLiveStream() {
+            if (currentLiveId) {
+                showLiveStream(currentLiveId);
+            }
+        }
+        
+        // 测试直播URL连接
+        async function testLiveUrl() {
+            if (!currentLiveId) {
+                showResult('没有活跃的直播会话', 'error');
+                return;
+            }
+            
+            const baseUrl = getBaseUrl();
+            const testUrl = `${baseUrl}/browser_control/live/view?live_id=${currentLiveId}`;
+            
+            try {
+                const response = await fetch(testUrl);
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Live session info:', data);
+                    showResult('直播会话正常：' + JSON.stringify(data.data, null, 2), 'success');
+                } else {
+                    showResult('直播会话不存在或已过期', 'error');
+                }
+            } catch (error) {
+                showResult('连接测试失败: ' + error.message, 'error');
+            }
+        }
+        
+        // 测试服务器连接
+        async function testConnection() {
+            const baseUrl = getBaseUrl();
+            const browserToken = document.getElementById('browserToken').value;
+            const browserId = document.getElementById('browserId').value;
+            
+            showLoading();
+            
+            try {
+                // 测试服务器连通性
+                const response = await fetch(baseUrl + '/browser/list_fingerprint', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        browser_token: browserToken || '550e8400-e29b-41d4-a716-446655440000',
+                        page: 1,
+                        per_page: 10
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    showResult('服务器连接正常！\n\n' + JSON.stringify(data, null, 2), 'success');
+                } else {
+                    const errorData = await response.text();
+                    showResult(`服务器连接失败 (${response.status}): ${errorData}`, 'error');
+                }
+            } catch (error) {
+                showResult('连接测试失败: ' + error.message, 'error');
+            }
+        }
+        
+        // 创建测试浏览器实例
+        async function createTestBrowser() {
+            showLoading();
+            const baseUrl = getBaseUrl();
+            
+            try {
+                // 1. 生成浏览器指纹
+                const browserToken = generateUUID();
+                console.log('Creating browser with token:', browserToken);
+                
+                const genResponse = await fetch(baseUrl + '/browser/gen_rand_fingerprint', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        browser_token: browserToken,
+                        name: '测试浏览器_' + Date.now()
+                    })
+                });
+                
+                if (!genResponse.ok) {
+                    const errorText = await genResponse.text();
+                    showResult(`生成指纹失败: ${errorText}`, 'error');
+                    return;
+                }
+                
+                const genResult = await genResponse.json();
+                console.log('Fingerprint generated:', genResult);
+                
+                // 2. 创建浏览器实例
+                const createResponse = await fetch(baseUrl + '/browser/create_fingerprint', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        browser_token: browserToken,
+                        name: '测试浏览器_' + Date.now(),
+                        platform: 'win32',
+                        user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    })
+                });
+                
+                if (!createResponse.ok) {
+                    const errorText = await createResponse.text();
+                    showResult(`创建浏览器失败: ${errorText}`, 'error');
+                    return;
+                }
+                
+                const createResult = await createResponse.json();
+                console.log('Browser created:', createResult);
+                
+                // 3. 获取浏览器ID
+                if (createResult.success && createResult.data) {
+                    const browserId = createResult.data.id || '1';
+                    
+                    // 更新表单
+                    document.getElementById('browserToken').value = browserToken;
+                    document.getElementById('browserId').value = browserId;
+                    
+                    showResult(`✅ 测试浏览器创建成功！\n\nBrowser Token: ${browserToken}\nBrowser ID: ${browserId}\n\n已自动填入表单，可以开始测试了！`, 'success');
+                    
+                    // 保存设置
+                    saveSettings();
+                } else {
+                    showResult('创建浏览器成功但未获取到ID', 'error');
+                }
+                
+            } catch (error) {
+                console.error('Create browser error:', error);
+                showResult('创建测试浏览器失败: ' + error.message, 'error');
+            }
+        }
+        
+        // 开始直播状态检查
+        function startLiveStatusCheck() {
+            if (liveRetryInterval) {
+                clearInterval(liveRetryInterval);
+            }
+            
+            liveRetryInterval = setInterval(async () => {
+                if (currentLiveId && liveStreamActive) {
+                    try {
+                        const response = await fetch(`${getBaseUrl()}/browser_control/live/view?live_id=${currentLiveId}`);
+                        const result = await response.json();
+                        updateLiveStatus(result.success);
+                    } catch (error) {
+                        updateLiveStatus(false);
+                    }
+                }
+            }, 5000); // 每5秒检查一次
+        }
+        
+        // 停止直播状态检查
+        function stopLiveStatusCheck() {
+            if (liveRetryInterval) {
+                clearInterval(liveRetryInterval);
+                liveRetryInterval = null;
+            }
+        }
+        
+        // 更新直播状态
+        function updateLiveStatus(isActive) {
+            const dot = document.getElementById('liveDot');
+            const text = document.getElementById('liveStatusText');
+            
+            if (isActive) {
+                dot.classList.add('active');
+                text.textContent = '在线';
+                text.className = 'text-xs text-green-600';
+            } else {
+                dot.classList.remove('active');
+                text.textContent = '离线';
+                text.className = 'text-xs text-red-600';
+            }
+        }
+        
+        // 重置直播预览
+        function resetLivePreview() {
+            const preview = document.getElementById('livePreview');
+            preview.innerHTML = '<span class="text-gray-400">直播流将显示在这里</span>';
+            document.getElementById('liveStatus').classList.add('hidden');
+            document.getElementById('liveStats').textContent = '';
+        }
+        
+        // 更新直播统计信息
+        function updateLiveStats(message) {
+            const statsDiv = document.getElementById('liveStats');
+            const timestamp = new Date().toLocaleTimeString();
+            statsDiv.textContent = `${timestamp} | ${message}`;
+        }
+
+        // 释放会话
+        async function releaseSession() {
+            showLoading();
+            const params = {
+                browser_token: getBaseParams().browser_token,
+                browser_id: document.getElementById('releaseAll').checked ? null : getBaseParams().browser_id
+            };
+
+            await callApi('/browser_control/release_session', 'POST', params);
+        }
+
+        // 快速测试
+        async function quickTest(type) {
+            const browserToken = document.getElementById('browserToken').value;
+            const browserId = document.getElementById('browserId').value;
+            
+            if (!browserToken || !browserId) {
+                showResult('请先设置Browser Token和Browser ID，或点击"创建测试浏览器"', 'error');
+                return;
+            }
+
+            showResult('开始快速测试...', 'info');
+            
+            try {
+                switch(type) {
+                    case 'bilibili':
+                        document.getElementById('openUrl').value = 'https://www.bilibili.com';
+                        await openUrl();
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        await screenshot();
+                        break;
+                        
+                    case 'google':
+                        document.getElementById('openUrl').value = 'https://www.google.com';
+                        await openUrl();
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        await screenshot();
+                        break;
+                        
+                    case 'demo':
+                        // 演示完整流程
+                        showResult('开始演示完整流程...', 'info');
+                        document.getElementById('openUrl').value = 'https://www.example.com';
+                        await openUrl();
+                        showResult('页面已打开，等待加载...', 'info');
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        await screenshot();
+                        showResult('截图完成，创建直播...', 'info');
+                        await createLive();
+                        showResult('演示完成！', 'success');
+                        break;
+                }
+            } catch (error) {
+                showResult('快速测试失败: ' + error.message, 'error');
+            }
+        }
+
+        // 页面加载完成后的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 预填一些测试数据
+            showResult('🎉 浏览器控制测试界面已加载！\n\n🚀 快速开始：\n1. 点击"创建测试浏览器"按钮自动创建浏览器实例\n2. 或者手动设置Browser Token和Browser ID\n3. 使用"快速测试场景"验证功能\n\n📝 功能说明：\n- 截图：支持PNG/JPEG，可整页截图\n- 直播：实时浏览器画面直播\n- 自动截图：定时连续截图功能\n\n🎮 快捷键：\n- Ctrl+S: 截图\n- Ctrl+L: 创建/停止直播\n- Ctrl+R: 刷新直播流\n- Ctrl+D: 下载截图\n- Ctrl+F: 全屏查看截图\n- ESC: 停止所有自动操作\n\n🔧 调试功能：\n- 测试连接：检查服务器连通性\n- 控制台日志：查看详细的API调用信息\n\n⚠️ 注意事项：\n- 确保后端服务正在运行\n- 首次使用建议先创建测试浏览器\n- 遇到错误请查看浏览器控制台\n\n🚀 准备就绪，开始测试吧！', 'info');
+            
+            // 添加键盘快捷键支持
+            document.addEventListener('keydown', function(event) {
+                // Ctrl/Cmd 组合键
+                if (event.ctrlKey || event.metaKey) {
+                    switch(event.key.toLowerCase()) {
+                        case 's':
+                            event.preventDefault();
+                            screenshot();
+                            break;
+                        case 'l':
+                            event.preventDefault();
+                            if (currentLiveId) {
+                                stopLive();
+                            } else {
+                                createLive();
+                            }
+                            break;
+                        case 'r':
+                            event.preventDefault();
+                            refreshLiveStream();
+                            break;
+                        case 'd':
+                            event.preventDefault();
+                            downloadScreenshot();
+                            break;
+                        case 'f':
+                            event.preventDefault();
+                            viewFullscreen();
+                            break;
+                    }
+                }
+                
+                // ESC 键
+                if (event.key === 'Escape') {
+                    // 停止所有自动操作
+                    if (autoScreenshotInterval) {
+                        autoScreenshot();
+                    }
+                    if (currentLiveId) {
+                        stopLive();
+                    }
+                }
+            });
+            
+            // 添加URL输入框的回车支持
+            document.getElementById('openUrl').addEventListener('keypress', function(event) {
+                if (event.key === 'Enter') {
+                    openUrl();
+                }
+            });
+            
+            // 添加自动保存设置到localStorage
+            loadSettings();
+        });
+        
+        // 加载设置
+        function loadSettings() {
+            const savedToken = localStorage.getItem('browserToken');
+            const savedBrowserId = localStorage.getItem('browserId');
+            const savedServerUrl = localStorage.getItem('serverUrl');
+            
+            if (savedToken) document.getElementById('browserToken').value = savedToken;
+            if (savedBrowserId) document.getElementById('browserId').value = savedBrowserId;
+            if (savedServerUrl) document.getElementById('serverUrl').value = savedServerUrl;
+        }
+        
+        // 保存设置
+        function saveSettings() {
+            localStorage.setItem('browserToken', document.getElementById('browserToken').value);
+            localStorage.setItem('browserId', document.getElementById('browserId').value);
+            localStorage.setItem('serverUrl', document.getElementById('serverUrl').value);
+        }
+
+        // 生成UUID的辅助函数
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+        
+        // 下载截图
+        function downloadScreenshot() {
+            if (!currentScreenshotData || !currentScreenshotData.image_base64) {
+                showResult('没有可下载的截图', 'error');
+                return;
+            }
+            
+            try {
+                const link = document.createElement('a');
+                const type = document.getElementById('screenshotType').value;
+                link.download = `screenshot_${Date.now()}.${type}`;
+                link.href = `data:image/${type};base64,${currentScreenshotData.image_base64}`;
+                link.click();
+                showResult('截图已下载', 'success');
+            } catch (error) {
+                showResult(`下载失败: ${error.message}`, 'error');
+            }
+        }
+        
+        // 全屏查看截图
+        function viewFullscreen() {
+            if (!currentScreenshotData || !currentScreenshotData.image_base64) {
+                showResult('没有可查看的截图', 'error');
+                return;
+            }
+            
+            try {
+                const type = document.getElementById('screenshotType').value;
+                const imageWindow = window.open();
+                imageWindow.document.write(`
+                    <html>
+                        <head><title>截图预览</title></head>
+                        <body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;">
+                            <img src="data:image/${type};base64,${currentScreenshotData.image_base64}" 
+                                 style="max-width:100%;max-height:100%;object-fit:contain;">
+                        </body>
+                    </html>
+                `);
+            } catch (error) {
+                showResult(`无法打开全屏查看: ${error.message}`, 'error');
+            }
+        }
+        
+        // 复制截图到剪贴板
+        async function copyScreenshot() {
+            if (!currentScreenshotData || !currentScreenshotData.image_base64) {
+                showResult('没有可复制的截图', 'error');
+                return;
+            }
+            
+            try {
+                const type = document.getElementById('screenshotType').value;
+                const response = await fetch(`data:image/${type};base64,${currentScreenshotData.image_base64}`);
+                const blob = await response.blob();
+                
+                await navigator.clipboard.write([
+                    new ClipboardItem({ [`image/${type}`]: blob })
+                ]);
+                
+                showResult('截图已复制到剪贴板', 'success');
+            } catch (error) {
+                // 如果现代API不支持，使用备用方法
+                try {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = currentScreenshotData.image_base64;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    showResult('截图Base64已复制到剪贴板', 'info');
+                } catch (fallbackError) {
+                    showResult(`复制失败: ${error.message}`, 'error');
+                }
+            }
+        }
+        
+        // 自动截图功能
+        function autoScreenshot() {
+            const browserToken = document.getElementById('browserToken').value;
+            if (!browserToken) {
+                showResult('请先设置Browser Token', 'error');
+                return;
+            }
+            
+            if (autoScreenshotInterval) {
+                // 停止自动截图
+                clearInterval(autoScreenshotInterval);
+                autoScreenshotInterval = null;
+                showResult('自动截图已停止', 'info');
+                document.querySelector('button[onclick="autoScreenshot()"]').textContent = '自动截图';
+                document.querySelector('button[onclick="autoScreenshot()"]').classList.remove('bg-red-500');
+                document.querySelector('button[onclick="autoScreenshot()"]').classList.add('bg-blue-500');
+            } else {
+                // 开始自动截图
+                autoScreenshotInterval = setInterval(async () => {
+                    await screenshot();
+                }, 5000); // 每5秒截图一次
+                
+                showResult('自动截图已启动（每5秒）', 'success');
+                document.querySelector('button[onclick="autoScreenshot()"]').textContent = '停止自动截图';
+                document.querySelector('button[onclick="autoScreenshot()"]').classList.remove('bg-blue-500');
+                document.querySelector('button[onclick="autoScreenshot()"]').classList.add('bg-red-500');
+                
+                // 立即截图一次
+                screenshot();
+            }
+        }
+        
+        // 清理函数 - 页面卸载时调用
+        window.addEventListener('beforeunload', function() {
+            stopLiveStatusCheck();
+            if (autoScreenshotInterval) {
+                clearInterval(autoScreenshotInterval);
+            }
+        });
+    </script>
+</body>
+</html>
