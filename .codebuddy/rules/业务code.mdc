@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2025-12-23T16:24:46.163Z
+provider: 
+---
+
+禁止直接使用硬编码的业务code，业务code放在app/models/response_code.py里面，响应的业务代码都在这里面

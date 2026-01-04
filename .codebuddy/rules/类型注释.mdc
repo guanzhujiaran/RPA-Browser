@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2025-12-21T03:22:22.282Z
+provider: 
+---
+
+所有的类型禁止使用dict这种太灵活的类型，全部用pydantic表示基础类型，如果无法用pydantic就用dataclass

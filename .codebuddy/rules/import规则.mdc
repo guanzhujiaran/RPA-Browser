@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2025-12-25T15:00:54.431Z
+provider: 
+---
+
+禁止动态import，所有import都写在文件头上

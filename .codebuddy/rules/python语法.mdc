@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2025-12-24T04:31:43.171Z
+provider: 
+---
+
+本项目使用python3.13，优先使用该版本的语法和type hint写法

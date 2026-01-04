@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2025-12-22T03:39:21.589Z
+provider: 
+---
+
+前端 JavaScript 无法安全表示超过 Number.MAX_SAFE_INTEGER 的整数，后端使用_str的后缀property包装一下int类型，前端传递来的参数都应该是str类型，后端自行转成int

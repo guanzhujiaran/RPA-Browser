@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2025-12-21T16:19:47.719Z
+provider: 
+---
+
+用户的mid都是通过接口从header里面获取，具体获取代码在app/utils/depends/mid_depends.py的get_mid_from_header里面
