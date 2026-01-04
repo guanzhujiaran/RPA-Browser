@@ -16,7 +16,6 @@ from typing import Type
 from app.models.RPA_browser.notify_model import NotificationConfig
 from app.utils.decorator import log_class_decorator
 from app.utils.http import httpx_client
-from app.utils.http.rand_headers_gen import rand_fingerprint_generator
 import loguru
 
 
@@ -25,6 +24,7 @@ class PushMessageService:
     """
     统一推送消息服务类，整合所有推送渠道到一个类中
     """
+
     logger: Type[loguru.logger]
 
     def __init__(self, conf: NotificationConfig):
@@ -39,9 +39,9 @@ class PushMessageService:
         self.logger.info("bark 服务启动")
 
         if self.conf.bark_push.startswith("http"):
-            url = f'{self.conf.bark_push}'
+            url = f"{self.conf.bark_push}"
         else:
-            url = f'https://api.day.app/{self.conf.bark_push}'
+            url = f"https://api.day.app/{self.conf.bark_push}"
 
         bark_params = {
             "BARK_ARCHIVE": "isArchive",
@@ -67,11 +67,11 @@ class PushMessageService:
         }
 
         for pair in filter(
-                lambda pairs: pairs[0].startswith("BARK_")
-                              and pairs[0] != "BARK_PUSH"
-                              and pairs[1]
-                              and bark_params.get(pairs[0]),
-                config_dict.items(),
+            lambda pairs: pairs[0].startswith("BARK_")
+            and pairs[0] != "BARK_PUSH"
+            and pairs[1]
+            and bark_params.get(pairs[0]),
+            config_dict.items(),
         ):
             data[bark_params.get(pair[0])] = pair[1]
         headers = {"Content-Type": "application/json;charset=utf-8"}
@@ -102,7 +102,7 @@ class PushMessageService:
             secret_enc, string_to_sign_enc, digestmod=hashlib.sha256
         ).digest()
         sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
-        url = f'https://oapi.dingtalk.com/robot/send?access_token={self.conf.dd_bot_token}&timestamp={timestamp}&sign={sign}'
+        url = f"https://oapi.dingtalk.com/robot/send?access_token={self.conf.dd_bot_token}&timestamp={timestamp}&sign={sign}"
         headers = {"Content-Type": "application/json;charset=utf-8"}
         data = {"msgtype": "text", "text": {"content": f"{title}\n\n{content}"}}
 
@@ -124,7 +124,7 @@ class PushMessageService:
             return
         self.logger.info("飞书 服务启动")
 
-        url = f'https://open.feishu.cn/open-apis/bot/v2/hook/{self.conf.fskey}'
+        url = f"https://open.feishu.cn/open-apis/bot/v2/hook/{self.conf.fskey}"
         data = {"msg_type": "text", "content": {"text": f"{title}\n\n{content}"}}
 
         response = await httpx_client.post(url, data=json.dumps(data))
@@ -143,7 +143,7 @@ class PushMessageService:
             return
         self.logger.info("go-cqhttp 服务启动")
 
-        url = f'{self.conf.gobot_url}?access_token={self.conf.gobot_token}&{self.conf.gobot_qq}&message=标题:{title}\n内容:{content}'
+        url = f"{self.conf.gobot_url}?access_token={self.conf.gobot_token}&{self.conf.gobot_qq}&message=标题:{title}\n内容:{content}"
 
         response = await httpx_client.get(url)
         response_data = response.json()
@@ -161,7 +161,7 @@ class PushMessageService:
             return
         self.logger.info("gotify 服务启动")
 
-        url = f'{self.conf.gotify_url}/message?token={self.conf.gotify_token}'
+        url = f"{self.conf.gotify_url}/message?token={self.conf.gotify_token}"
         data = {
             "title": title,
             "message": content,
@@ -184,7 +184,7 @@ class PushMessageService:
             return
         self.logger.info("iGot 服务启动")
 
-        url = f'https://push.hellyw.com/{self.conf.igot_push_key}'
+        url = f"https://push.hellyw.com/{self.conf.igot_push_key}"
         data = {"title": title, "content": content}
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -209,9 +209,9 @@ class PushMessageService:
         match = re.match(r"sctp(\d+)t", self.conf.push_key)
         if match:
             num = match.group(1)
-            url = f'https://{num}.push.ft07.com/send/{self.conf.push_key}.send'
+            url = f"https://{num}.push.ft07.com/send/{self.conf.push_key}.send"
         else:
-            url = f'https://sctapi.ftqq.com/{self.conf.push_key}.send'
+            url = f"https://sctapi.ftqq.com/{self.conf.push_key}.send"
 
         response = await httpx_client.post(url, data=data)
         response_data = response.json()
@@ -290,7 +290,10 @@ class PushMessageService:
 
         code = response_data["code"]
         if code == 200:
-            self.logger.info("PUSHPLUS 推送请求成功，可根据流水号查询推送结果:" + response_data["data"])
+            self.logger.info(
+                "PUSHPLUS 推送请求成功，可根据流水号查询推送结果:"
+                + response_data["data"]
+            )
             self.logger.info(
                 "注意：请求成功并不代表推送成功，如未收到消息，请到pushplus官网使用流水号查询推送最终结果"
             )
@@ -348,7 +351,7 @@ class PushMessageService:
             return
         self.logger.info("qmsg 服务启动")
 
-        url = f'https://qmsg.zendee.cn/{self.conf.qmsg_type}/{self.conf.qmsg_key}'
+        url = f"https://qmsg.zendee.cn/{self.conf.qmsg_type}/{self.conf.qmsg_key}"
         payload = {"msg": f'{title}\n\n{content.replace("----", "-")}'.encode("utf-8")}
         response = await httpx_client.post(url=url, params=payload)
         response_data = response.json()
@@ -424,9 +427,7 @@ class PushMessageService:
         if self.conf.tg_api_host:
             url = f"{self.conf.tg_api_host}/bot{self.conf.tg_bot_token}/sendMessage"
         else:
-            url = (
-                f"https://api.telegram.org/bot{self.conf.tg_bot_token}/sendMessage"
-            )
+            url = f"https://api.telegram.org/bot{self.conf.tg_bot_token}/sendMessage"
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         payload = {
             "chat_id": str(self.conf.tg_user_id),
@@ -438,14 +439,8 @@ class PushMessageService:
             tg_proxy_auth = self.conf.tg_proxy_auth
             tg_proxy_host = self.conf.tg_proxy_host
             if tg_proxy_auth is not None and "@" not in tg_proxy_host:
-                tg_proxy_host = (
-                        tg_proxy_auth
-                        + "@"
-                        + tg_proxy_host
-                )
-            proxyStr = "http://{}:{}".format(
-                tg_proxy_host, self.conf.tg_proxy_port
-            )
+                tg_proxy_host = tg_proxy_auth + "@" + tg_proxy_host
+            proxyStr = "http://{}:{}".format(tg_proxy_host, self.conf.tg_proxy_port)
             proxies = {"http": proxyStr, "https": proxyStr}
 
         response = await httpx_client.post(
@@ -463,9 +458,9 @@ class PushMessageService:
         使用 智能微秘书 推送消息。
         """
         if (
-                not self.conf.aibotk_key
-                or not self.conf.aibotk_type
-                or not self.conf.aibotk_name
+            not self.conf.aibotk_key
+            or not self.conf.aibotk_type
+            or not self.conf.aibotk_name
         ):
             return
         self.logger.info("智能微秘书 服务启动")
@@ -475,14 +470,20 @@ class PushMessageService:
             data = {
                 "apiKey": self.conf.aibotk_key,
                 "roomName": self.conf.aibotk_name,
-                "message": {"type": 1, "content": f"【青龙快讯】\n\n{title}\n{content}"},
+                "message": {
+                    "type": 1,
+                    "content": f"【青龙快讯】\n\n{title}\n{content}",
+                },
             }
         else:
             url = "https://api-bot.aibotk.com/openapi/v1/chat/contact"
             data = {
                 "apiKey": self.conf.aibotk_key,
                 "name": self.conf.aibotk_name,
-                "message": {"type": 1, "content": f"【青龙快讯】\n\n{title}\n{content}"},
+                "message": {
+                    "type": 1,
+                    "content": f"【青龙快讯】\n\n{title}\n{content}",
+                },
             }
         body = json.dumps(data).encode(encoding="utf-8")
         headers = {"Content-Type": "application/json"}
@@ -500,11 +501,11 @@ class PushMessageService:
         使用 SMTP 邮件 推送消息。
         """
         if (
-                not self.conf.smtp_server
-                or not self.conf.smtp_ssl
-                or not self.conf.smtp_email
-                or not self.conf.smtp_password
-                or not self.conf.smtp_name
+            not self.conf.smtp_server
+            or not self.conf.smtp_ssl
+            or not self.conf.smtp_email
+            or not self.conf.smtp_password
+            or not self.conf.smtp_name
         ):
             return
         self.logger.info("SMTP 邮件 服务启动")
@@ -530,9 +531,7 @@ class PushMessageService:
                 if self.conf.smtp_ssl == "true"
                 else smtplib.SMTP(self.conf.smtp_server)
             )
-            smtp_server_conn.login(
-                self.conf.smtp_email, self.conf.smtp_password
-            )
+            smtp_server_conn.login(self.conf.smtp_email, self.conf.smtp_password)
             smtp_server_conn.sendmail(
                 self.conf.smtp_email,
                 self.conf.smtp_email,
@@ -551,11 +550,7 @@ class PushMessageService:
             return
         self.logger.info("PushMe 服务启动")
 
-        url = (
-            self.conf.pushme_url
-            if self.conf.pushme_url
-            else "https://push.i-i.me/"
-        )
+        url = self.conf.pushme_url if self.conf.pushme_url else "https://push.i-i.me/"
         data = {
             "push_key": self.conf.pushme_key,
             "title": title,
@@ -569,16 +564,18 @@ class PushMessageService:
         if response.status_code == 200 and response.text == "success":
             self.logger.info("PushMe 推送成功！")
         else:
-            self.logger.error(f"PushMe 推送失败！{response.status_code} {response.text}")
+            self.logger.error(
+                f"PushMe 推送失败！{response.status_code} {response.text}"
+            )
 
     async def chronocat(self, title: str, content: str) -> None:
         """
         使用 CHRONOCAT 推送消息。
         """
         if (
-                not self.conf.chronocat_url
-                or not self.conf.chronocat_qq
-                or not self.conf.chronocat_token
+            not self.conf.chronocat_url
+            or not self.conf.chronocat_qq
+            or not self.conf.chronocat_token
         ):
             return
 
@@ -587,10 +584,10 @@ class PushMessageService:
         user_ids = re.findall(r"user_id=(\d+)", self.conf.chronocat_qq)
         group_ids = re.findall(r"group_id=(\d+)", self.conf.chronocat_qq)
 
-        url = f'{self.conf.chronocat_url}/api/message/send'
+        url = f"{self.conf.chronocat_url}/api/message/send"
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f'Bearer {self.conf.chronocat_token}',
+            "Authorization": f"Bearer {self.conf.chronocat_token}",
         }
 
         for chat_type, ids in [(1, user_ids), (2, group_ids)]:
@@ -606,7 +603,9 @@ class PushMessageService:
                         }
                     ],
                 }
-                response = await httpx_client.post(url, headers=headers, data=json.dumps(data))
+                response = await httpx_client.post(
+                    url, headers=headers, data=json.dumps(data)
+                )
                 if response.status_code == 200:
                     if chat_type == 1:
                         self.logger.info(f"QQ个人消息:{ids}推送成功！")
@@ -642,16 +641,21 @@ class PushMessageService:
         encoded_title = encode_rfc2047(title)
 
         data = content.encode(encoding="utf-8")
-        headers = {"Title": encoded_title, "Priority": priority,
-                   "Icon": "https://qn.whyour.cn/logo.png"}  # 使用编码后的 title
+        headers = {
+            "Title": encoded_title,
+            "Priority": priority,
+            "Icon": "https://qn.whyour.cn/logo.png",
+        }  # 使用编码后的 title
         if self.conf.ntfy_token:
-            headers['Authorization'] = "Bearer " + self.conf.ntfy_token
+            headers["Authorization"] = "Bearer " + self.conf.ntfy_token
         else:
             if self.conf.ntfy_username and self.conf.ntfy_password:
                 authStr = self.conf.ntfy_username + ":" + self.conf.ntfy_password
-                headers['Authorization'] = "Basic " + base64.b64encode(authStr.encode('utf-8')).decode('utf-8')
+                headers["Authorization"] = "Basic " + base64.b64encode(
+                    authStr.encode("utf-8")
+                ).decode("utf-8")
         if self.conf.ntfy_actions:
-            headers['Actions'] = encode_rfc2047(self.conf.ntfy_actions)
+            headers["Actions"] = encode_rfc2047(self.conf.ntfy_actions)
 
         url = self.conf.ntfy_url + "/" + self.conf.ntfy_topic
 
@@ -686,14 +690,14 @@ class PushMessageService:
         uids = []
         if self.conf.wxpusher_uids:
             uids = [
-                uid.strip()
-                for uid in self.conf.wxpusher_uids.split(";")
-                if uid.strip()
+                uid.strip() for uid in self.conf.wxpusher_uids.split(";") if uid.strip()
             ]
 
         # topic_ids uids 至少有一个
         if not topic_ids and not uids:
-            self.logger.error("wxpusher 服务的 WXPUSHER_TOPIC_IDS 和 WXPUSHER_UIDS 至少设置一个!!")
+            self.logger.error(
+                "wxpusher 服务的 WXPUSHER_TOPIC_IDS 和 WXPUSHER_UIDS 至少设置一个!!"
+            )
             return
 
         self.logger.info("wxpusher 服务启动")
@@ -716,7 +720,9 @@ class PushMessageService:
         if response_data.get("code") == 1000:
             self.logger.info("wxpusher 推送成功！")
         else:
-            self.logger.error(f"wxpusher 推送失败！错误信息：{response_data.get('msg')}")
+            self.logger.error(
+                f"wxpusher 推送失败！错误信息：{response_data.get('msg')}"
+            )
 
     def get_available_methods(self):
         """
@@ -724,7 +730,11 @@ class PushMessageService:
         """
         methods = []
         for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            if not name.startswith('_') and name != 'get_available_methods' and name != 'send':
+            if (
+                not name.startswith("_")
+                and name != "get_available_methods"
+                and name != "send"
+            ):
                 methods.append(name)
         return methods
 
@@ -752,15 +762,31 @@ class PushMessageService:
             # 根据不同的推送方式检查启用条件
             if method_name == "bark" and self.conf.bark_push:
                 should_send = True
-            elif method_name == "console" and hasattr(self.conf, 'console') and self.conf.console:
+            elif (
+                method_name == "console"
+                and hasattr(self.conf, "console")
+                and self.conf.console
+            ):
                 should_send = True
-            elif method_name == "dingding_bot" and self.conf.dd_bot_token and self.conf.dd_bot_secret:
+            elif (
+                method_name == "dingding_bot"
+                and self.conf.dd_bot_token
+                and self.conf.dd_bot_secret
+            ):
                 should_send = True
             elif method_name == "feishu_bot" and self.conf.fskey:
                 should_send = True
-            elif method_name == "go_cqhttp" and self.conf.gobot_url and self.conf.gobot_qq:
+            elif (
+                method_name == "go_cqhttp"
+                and self.conf.gobot_url
+                and self.conf.gobot_qq
+            ):
                 should_send = True
-            elif method_name == "gotify" and self.conf.gotify_url and self.conf.gotify_token:
+            elif (
+                method_name == "gotify"
+                and self.conf.gotify_url
+                and self.conf.gotify_token
+            ):
                 should_send = True
             elif method_name == "iGot" and self.conf.igot_push_key:
                 should_send = True
@@ -774,29 +800,55 @@ class PushMessageService:
                 should_send = True
             elif method_name == "weplus_bot" and self.conf.we_plus_bot_token:
                 should_send = True
-            elif method_name == "qmsg_bot" and self.conf.qmsg_key and self.conf.qmsg_type:
+            elif (
+                method_name == "qmsg_bot" and self.conf.qmsg_key and self.conf.qmsg_type
+            ):
                 should_send = True
             elif method_name == "wecom_app" and self.conf.qywx_am:
                 should_send = True
             elif method_name == "wecom_bot" and self.conf.qywx_key:
                 should_send = True
-            elif method_name == "telegram_bot" and self.conf.tg_bot_token and self.conf.tg_user_id:
+            elif (
+                method_name == "telegram_bot"
+                and self.conf.tg_bot_token
+                and self.conf.tg_user_id
+            ):
                 should_send = True
-            elif method_name == "aibotk" and self.conf.aibotk_key and self.conf.aibotk_type and self.conf.aibotk_name:
+            elif (
+                method_name == "aibotk"
+                and self.conf.aibotk_key
+                and self.conf.aibotk_type
+                and self.conf.aibotk_name
+            ):
                 should_send = True
-            elif method_name == "smtp" and self.conf.smtp_server and self.conf.smtp_ssl and self.conf.smtp_email and self.conf.smtp_password and self.conf.smtp_name:
+            elif (
+                method_name == "smtp"
+                and self.conf.smtp_server
+                and self.conf.smtp_ssl
+                and self.conf.smtp_email
+                and self.conf.smtp_password
+                and self.conf.smtp_name
+            ):
                 # SMTP是同步方法，直接调用
                 if should_send:
                     self.smtp(title, content)
                 continue
             elif method_name == "pushme" and self.conf.pushme_key:
                 should_send = True
-            elif method_name == "chronocat" and self.conf.chronocat_url and self.conf.chronocat_qq and self.conf.chronocat_token:
+            elif (
+                method_name == "chronocat"
+                and self.conf.chronocat_url
+                and self.conf.chronocat_qq
+                and self.conf.chronocat_token
+            ):
                 should_send = True
             elif method_name == "ntfy" and self.conf.ntfy_topic:
                 should_send = True
-            elif method_name == "wxpusher_bot" and self.conf.wxpusher_app_token and (
-                    self.conf.wxpusher_topic_ids or self.conf.wxpusher_uids):
+            elif (
+                method_name == "wxpusher_bot"
+                and self.conf.wxpusher_app_token
+                and (self.conf.wxpusher_topic_ids or self.conf.wxpusher_uids)
+            ):
                 should_send = True
 
             # 如果启用了该推送方式，则添加到任务列表
@@ -806,7 +858,11 @@ class PushMessageService:
                     tasks.append(method(title, content))
                 else:
                     # 对于同步方法，使用线程运行
-                    tasks.append(asyncio.get_event_loop().run_in_executor(None, method, title, content))
+                    tasks.append(
+                        asyncio.get_event_loop().run_in_executor(
+                            None, method, title, content
+                        )
+                    )
 
         # 并行执行所有推送任务
         if tasks:
@@ -848,9 +904,7 @@ class WeCom:
             touser = QYWX_AM_AY[2]
             self.AGENTID = QYWX_AM_AY[3]
 
-        send_url = (
-            f"{self.ORIGIN}/cgi-bin/message/send?access_token={await self.get_access_token()}"
-        )
+        send_url = f"{self.ORIGIN}/cgi-bin/message/send?access_token={await self.get_access_token()}"
         send_values = {
             "touser": touser,
             "msgtype": "text",
@@ -870,9 +924,7 @@ class WeCom:
             touser = QYWX_AM_AY[2]
             self.AGENTID = QYWX_AM_AY[3]
 
-        send_url = (
-            f"{self.ORIGIN}/cgi-bin/message/send?access_token={await self.get_access_token()}"
-        )
+        send_url = f"{self.ORIGIN}/cgi-bin/message/send?access_token={await self.get_access_token()}"
         send_values = {
             "touser": touser,
             "msgtype": "mpnews",
@@ -908,7 +960,7 @@ async def one() -> str:
         url=url,
     )
     res = res.json()
-    return res.get('hitokoto', '') + "    ----" + res.get("from", '')
+    return res.get("hitokoto", "") + "    ----" + res.get("from", "")
 
 
 async def send(title: str, content: str, conf: NotificationConfig, **kwargs):

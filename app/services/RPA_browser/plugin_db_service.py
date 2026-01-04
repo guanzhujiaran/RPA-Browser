@@ -1,7 +1,8 @@
 from typing import Optional, Dict
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
-import uuid
+from sqlalchemy.exc import SQLAlchemyError
+from loguru import logger
 
 from app.models.RPA_browser.plugin_model import (
     LogPluginModel,
@@ -18,36 +19,100 @@ from app.services.site_rpa_operation.plugins import PluginTypeEnum
 from app.utils.plugin_utils import get_plugin_model_class
 
 
+class VirtualPluginFactory:
+    """虚拟插件对象工厂类，用于统一创建默认配置的插件对象"""
+    
+    VIRTUAL_ID = -1  # 虚拟对象的ID标识
+    
+    @staticmethod
+    def create_virtual_plugin(
+        plugin_type: PluginTypeEnum, 
+        mid: int, 
+        browser_info_id: Optional[int] = None
+    ) -> Optional[PluginBaseModel]:
+        """
+        创建虚拟插件对象
+        
+        Args:
+            plugin_type: 插件类型
+            mid: 用户ID
+            browser_info_id: 浏览器实例ID，None表示用户级别插件
+            
+        Returns:
+            虚拟插件对象，如果插件类型不支持则返回None
+        """
+        default_config = get_default_plugin_config(plugin_type)
+        model = get_plugin_model_class(plugin_type)
+        
+        if not model:
+            return None
+            
+        plugin_data = {
+            "mid": mid,
+            "browser_info_id": browser_info_id,
+            **default_config.model_dump()
+        }
+        
+        plugin = model(**plugin_data)
+        plugin.id = VirtualPluginFactory.VIRTUAL_ID  # 标记为虚拟对象
+        return plugin
+
+
 class PluginDBService:
     """
     插件设置 CRUD 服务
     """
 
     @staticmethod
+    def is_virtual_plugin(plugin: PluginBaseModel) -> bool:
+        """
+        检查插件是否为虚拟对象（非数据库对象）
+        
+        Args:
+            plugin: 插件对象
+            
+        Returns:
+            True表示虚拟对象，False表示数据库对象
+        """
+        return plugin.id == VirtualPluginFactory.VIRTUAL_ID
+
+    @staticmethod
     async def get_user_default_plugins(
-            browser_token: uuid.UUID,
+            mid: int,
             session: AsyncSession
     ) -> Dict[PluginTypeEnum, PluginBaseModel]:
         """
         获取用户的默认插件配置（browser_info_id为空的插件）
         """
         result = {}
-        for plugin_type in PluginTypeEnum:
-            model = get_plugin_model_class(plugin_type)
-            stmt = select(model).where(
-                model.browser_token == browser_token,
-                model.browser_info_id.is_(None)
-            )
-            exec_result = await session.exec(stmt)
-            plugin = exec_result.first()
-            if plugin:
-                result[plugin_type] = plugin
+        try:
+            for plugin_type in PluginTypeEnum:
+                model = get_plugin_model_class(plugin_type)
+                if not model:
+                    continue
+                    
+                stmt = select(model).where(
+                    model.mid == mid,
+                    model.browser_info_id.is_(None)
+                )
+                exec_result = await session.exec(stmt)
+                plugin = exec_result.first()
+                if plugin:
+                    result[plugin_type] = plugin
+
+        except SQLAlchemyError as e:
+            logger.error(f"获取用户默认插件配置失败: mid={mid}, error={e}")
+            # 发生数据库错误时，返回空的配置字典
+            return {}
+        except Exception as e:
+            logger.error(f"获取用户默认插件配置时发生未知错误: mid={mid}, error={e}")
+            return {}
 
         return result
 
     @staticmethod
     async def get_browser_info_plugins(
-            browser_token: uuid.UUID,
+            mid: int,
             browser_id: int,
             session: AsyncSession
     ) -> Dict[PluginTypeEnum, PluginBaseModel]:
@@ -57,45 +122,62 @@ class PluginDBService:
         如果连用户默认插件也没有，则返回默认配置的虚拟对象
         """
         result = {}
-        for plugin_type in PluginTypeEnum:
-            model = get_plugin_model_class(plugin_type)
-            # 首先尝试获取浏览器实例特定的插件
-            stmt = select(model).where(
-                model.browser_token == browser_token,
-                model.browser_info_id == browser_id
-            )
-            exec_result = await session.exec(stmt)
-            plugin = exec_result.first()
-
-            # 如果没有找到特定插件，则获取用户默认插件
-            if not plugin:
+        try:
+            for plugin_type in PluginTypeEnum:
+                model = get_plugin_model_class(plugin_type)
+                if not model:
+                    continue
+                    
+                # 首先尝试获取浏览器实例特定的插件
                 stmt = select(model).where(
-                    model.browser_token == browser_token,
-                    model.browser_info_id.is_(None)
+                    model.mid == mid,
+                    model.browser_info_id == browser_id
                 )
                 exec_result = await session.exec(stmt)
                 plugin = exec_result.first()
 
-            # 如果连用户默认插件也没有，则创建默认配置的虚拟对象
-            if not plugin:
-                default_config = get_default_plugin_config(plugin_type)
-                plugin_data = {
-                    "browser_token": browser_token,
-                    "browser_info_id": browser_id,  # 注意：这里使用browser_id而不是None
-                    **default_config
-                }
+                # 如果没有找到特定插件，则获取用户默认插件
+                if not plugin:
+                    stmt = select(model).where(
+                        model.mid == mid,
+                        model.browser_info_id.is_(None)
+                    )
+                    exec_result = await session.exec(stmt)
+                    plugin = exec_result.first()
 
-                plugin = model(**plugin_data)
-                plugin.id = -1  # 虚拟ID表示非数据库对象
+                # 如果连用户默认插件也没有，则创建默认配置的虚拟对象
+                if not plugin:
+                    plugin = VirtualPluginFactory.create_virtual_plugin(
+                        plugin_type, mid, browser_id
+                    )
 
-            result[plugin_type] = plugin
+                result[plugin_type] = plugin
+
+        except SQLAlchemyError as e:
+            logger.error(f"获取浏览器插件配置失败: mid={mid}, browser_id={browser_id}, error={e}")
+            # 发生数据库错误时，返回所有默认配置的虚拟对象
+            for plugin_type in PluginTypeEnum:
+                plugin = VirtualPluginFactory.create_virtual_plugin(
+                    plugin_type, mid, browser_id
+                )
+                if plugin:
+                    result[plugin_type] = plugin
+        except Exception as e:
+            logger.error(f"获取浏览器插件配置时发生未知错误: mid={mid}, browser_id={browser_id}, error={e}")
+            # 发生未知错误时，同样返回默认配置的虚拟对象
+            for plugin_type in PluginTypeEnum:
+                plugin = VirtualPluginFactory.create_virtual_plugin(
+                    plugin_type, mid, browser_id
+                )
+                if plugin:
+                    result[plugin_type] = plugin
 
         return result
 
     @staticmethod
     async def get_specific_plugin_for_browser_info(
             plugin_type: PluginTypeEnum,
-            browser_token: uuid.UUID,
+            mid: int,
             browser_info_id: int,
             session: AsyncSession
     ) -> Optional[PluginBaseModel]:
@@ -109,7 +191,7 @@ class PluginDBService:
 
         # 首先尝试获取浏览器实例特定的插件
         stmt = select(model).where(
-            model.browser_token == browser_token,
+            model.mid == mid,
             model.browser_info_id == browser_info_id
         )
         result = await session.exec(stmt)
@@ -118,7 +200,7 @@ class PluginDBService:
         # 如果没有找到特定插件，则获取用户默认插件
         if not plugin:
             stmt = select(model).where(
-                model.browser_token == browser_token,
+                model.mid == mid,
                 model.browser_info_id.is_(None)
             )
             result = await session.exec(stmt)
@@ -129,7 +211,7 @@ class PluginDBService:
     @staticmethod
     async def create_plugin_for_browser_info(
             plugin_type: PluginTypeEnum,
-            browser_token: uuid.UUID,
+            mid: int,
             browser_info_id: int,
             session: AsyncSession,
             **kwargs
@@ -147,9 +229,9 @@ class PluginDBService:
             # 如果配置与默认值相同，返回默认配置的模拟对象而不创建数据库记录
             default_config = get_default_plugin_config(plugin_type)
             plugin_data = {
-                "browser_token": browser_token,
+                "mid": mid,
                 "browser_info_id": browser_info_id,
-                **default_config,
+                **default_config.model_dump(),
                 **kwargs  # kwargs中的值会覆盖默认值（如果有）
             }
 
@@ -161,7 +243,7 @@ class PluginDBService:
 
         # 如果配置与默认值不同，则创建数据库记录
         plugin_data = {
-            "browser_token": browser_token,
+            "mid": mid,
             "browser_info_id": browser_info_id,
             **kwargs
         }
@@ -174,7 +256,7 @@ class PluginDBService:
 
     @staticmethod
     async def get_or_create_user_default_plugins(
-            browser_token: uuid.UUID,
+            mid: int,
             session: AsyncSession
     ) -> Dict[PluginTypeEnum, PluginBaseModel]:
         """
@@ -182,7 +264,7 @@ class PluginDBService:
         注意：此方法不再自动创建默认插件，而是返回预定义的默认配置
         """
         # 检查是否已存在用户默认插件配置
-        existing_plugins = await PluginDBService.get_user_default_plugins(browser_token, session)
+        existing_plugins = await PluginDBService.get_user_default_plugins(mid, session)
 
         # 始终返回所有类型的默认配置（无论是否存在于数据库中）
         result = {}
@@ -192,18 +274,11 @@ class PluginDBService:
                 # 如果数据库中有自定义配置，则使用它
                 result[plugin_type] = existing_plugins[plugin_type]
             else:
-                # 否则返回默认配置的模拟对象
-                default_config = get_default_plugin_config(plugin_type)
-                model = get_plugin_model_class(plugin_type)
-                if model:
-                    plugin_data = {
-                        "browser_token": browser_token,
-                        "browser_info_id": None,
-                        **default_config
-                    }
-
-                    plugin = model(**plugin_data)
-                    plugin.id = -1  # 虚拟ID表示非数据库对象
+                # 否则返回默认配置的虚拟对象
+                plugin = VirtualPluginFactory.create_virtual_plugin(
+                    plugin_type, mid, None  # None表示用户级别插件
+                )
+                if plugin:
                     result[plugin_type] = plugin
 
         return result
@@ -211,7 +286,7 @@ class PluginDBService:
     @staticmethod
     async def create_log_plugin(params: LogPluginModel, session: AsyncSession) -> LogPluginModel:
         """
-        创建日志插件
+        创建或更新日志插件（一对一关系）
         只有当配置与默认值不同时才创建数据库记录
         """
         # 提取参数用于比较
@@ -224,23 +299,45 @@ class PluginDBService:
 
         # 检查配置是否与默认值不同
         if not is_plugin_config_changed(PluginTypeEnum.LOG, plugin_params):
-            # 如果配置与默认值相同，返回默认配置的模拟对象而不创建数据库记录
-            default_config = get_default_plugin_config(PluginTypeEnum.LOG)
-            plugin_data = {
-                "browser_token": params.browser_token,
-                "browser_info_id": params.browser_info_id,
-                **default_config
-            }
+            # 如果配置与默认值相同，返回默认配置的虚拟对象而不创建数据库记录
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.LOG, params.mid, params.browser_info_id
+            )
 
-            plugin = LogPluginModel(**plugin_data)
-            plugin.id = -1  # 虚拟ID表示非数据库对象
-            return plugin
+        # 如果配置与默认值不同，则检查是否已存在同类型的插件
+        if params.browser_info_id:
+            existing_plugin = await PluginDBService.get_log_plugin_by_browser_info(
+                params.browser_info_id, session
+            )
+            if existing_plugin:
+                # 更新现有插件
+                existing_plugin.name = params.name
+                existing_plugin.description = params.description
+                existing_plugin.is_enabled = params.is_enabled
+                existing_plugin.log_level = params.log_level
+                await session.commit()
+                await session.refresh(existing_plugin)
+                return existing_plugin
 
-        # 如果配置与默认值不同，则创建数据库记录
-        session.add(params)
-        await session.commit()
-        await session.refresh(params)
-        return params
+        # 如果不存在或不是浏览器级别的插件，则创建新记录
+        try:
+            session.add(params)
+            await session.commit()
+            await session.refresh(params)
+            return params
+        except SQLAlchemyError as e:
+            logger.error(f"创建日志插件失败: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            # 创建失败时返回默认配置的虚拟对象
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.LOG, params.mid, params.browser_info_id
+            )
+        except Exception as e:
+            logger.error(f"创建日志插件时发生未知错误: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.LOG, params.mid, params.browser_info_id
+            )
 
     @staticmethod
     async def create_page_limit_plugin(params: PageLimitPluginModel, session: AsyncSession) -> PageLimitPluginModel:
@@ -258,23 +355,47 @@ class PluginDBService:
 
         # 检查配置是否与默认值不同
         if not is_plugin_config_changed(PluginTypeEnum.PAGE_LIMIT, plugin_params):
-            # 如果配置与默认值相同，返回默认配置的模拟对象而不创建数据库记录
-            default_config = get_default_plugin_config(PluginTypeEnum.PAGE_LIMIT)
-            plugin_data = {
-                "browser_token": params.browser_token,
-                "browser_info_id": params.browser_info_id,
-                **default_config
-            }
+            # 如果配置与默认值相同，返回默认配置的虚拟对象而不创建数据库记录
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.PAGE_LIMIT, params.mid, params.browser_info_id
+            )
 
-            plugin = PageLimitPluginModel(**plugin_data)
-            plugin.id = -1  # 虚拟ID表示非数据库对象
-            return plugin
+        # 如果配置与默认值不同，则检查是否已存在同类型的插件
+        if params.browser_info_id:
+            existing_plugin = await PluginDBService.get_retry_plugin_by_browser_info(
+                params.browser_info_id, session
+            )
+            if existing_plugin:
+                # 更新现有插件
+                existing_plugin.name = params.name
+                existing_plugin.description = params.description
+                existing_plugin.is_enabled = params.is_enabled
+                existing_plugin.retry_times = params.retry_times
+                existing_plugin.delay = params.delay
+                existing_plugin.is_push_msg_on_error = params.is_push_msg_on_error
+                await session.commit()
+                await session.refresh(existing_plugin)
+                return existing_plugin
 
-        # 如果配置与默认值不同，则创建数据库记录
-        session.add(params)
-        await session.commit()
-        await session.refresh(params)
-        return params
+        # 如果不存在或不是浏览器级别的插件，则创建新记录
+        try:
+            session.add(params)
+            await session.commit()
+            await session.refresh(params)
+            return params
+        except SQLAlchemyError as e:
+            logger.error(f"创建重试插件失败: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            # 创建失败时返回默认配置的虚拟对象
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RETRY, params.mid, params.browser_info_id
+            )
+        except Exception as e:
+            logger.error(f"创建随机等待插件时发生未知错误: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RANDOM_WAIT, params.mid, params.browser_info_id
+            )
 
     @staticmethod
     async def create_random_wait_plugin(params: RandomWaitPluginModel, session: AsyncSession) -> RandomWaitPluginModel:
@@ -299,23 +420,47 @@ class PluginDBService:
 
         # 检查配置是否与默认值不同
         if not is_plugin_config_changed(PluginTypeEnum.RANDOM_WAIT, plugin_params):
-            # 如果配置与默认值相同，返回默认配置的模拟对象而不创建数据库记录
-            default_config = get_default_plugin_config(PluginTypeEnum.RANDOM_WAIT)
-            plugin_data = {
-                "browser_token": params.browser_token,
-                "browser_info_id": params.browser_info_id,
-                **default_config
-            }
+            # 如果配置与默认值相同，返回默认配置的虚拟对象而不创建数据库记录
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RANDOM_WAIT, params.mid, params.browser_info_id
+            )
 
-            plugin = RandomWaitPluginModel(**plugin_data)
-            plugin.id = -1  # 虚拟ID表示非数据库对象
-            return plugin
+        # 如果配置与默认值不同，则检查是否已存在同类型的插件
+        if params.browser_info_id:
+            existing_plugin = await PluginDBService.get_retry_plugin_by_browser_info(
+                params.browser_info_id, session
+            )
+            if existing_plugin:
+                # 更新现有插件
+                existing_plugin.name = params.name
+                existing_plugin.description = params.description
+                existing_plugin.is_enabled = params.is_enabled
+                existing_plugin.retry_times = params.retry_times
+                existing_plugin.delay = params.delay
+                existing_plugin.is_push_msg_on_error = params.is_push_msg_on_error
+                await session.commit()
+                await session.refresh(existing_plugin)
+                return existing_plugin
 
-        # 如果配置与默认值不同，则创建数据库记录
-        session.add(params)
-        await session.commit()
-        await session.refresh(params)
-        return params
+        # 如果不存在或不是浏览器级别的插件，则创建新记录
+        try:
+            session.add(params)
+            await session.commit()
+            await session.refresh(params)
+            return params
+        except SQLAlchemyError as e:
+            logger.error(f"创建重试插件失败: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            # 创建失败时返回默认配置的虚拟对象
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RETRY, params.mid, params.browser_info_id
+            )
+        except Exception as e:
+            logger.error(f"创建随机等待插件时发生未知错误: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RANDOM_WAIT, params.mid, params.browser_info_id
+            )
 
     @staticmethod
     async def create_retry_plugin(params: RetryPluginModel, session: AsyncSession) -> RetryPluginModel:
@@ -335,23 +480,47 @@ class PluginDBService:
 
         # 检查配置是否与默认值不同
         if not is_plugin_config_changed(PluginTypeEnum.RETRY, plugin_params):
-            # 如果配置与默认值相同，返回默认配置的模拟对象而不创建数据库记录
-            default_config = get_default_plugin_config(PluginTypeEnum.RETRY)
-            plugin_data = {
-                "browser_token": params.browser_token,
-                "browser_info_id": params.browser_info_id,
-                **default_config
-            }
+            # 如果配置与默认值相同，返回默认配置的虚拟对象而不创建数据库记录
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RETRY, params.mid, params.browser_info_id
+            )
 
-            plugin = RetryPluginModel(**plugin_data)
-            plugin.id = -1  # 虚拟ID表示非数据库对象
-            return plugin
+        # 如果配置与默认值不同，则检查是否已存在同类型的插件
+        if params.browser_info_id:
+            existing_plugin = await PluginDBService.get_retry_plugin_by_browser_info(
+                params.browser_info_id, session
+            )
+            if existing_plugin:
+                # 更新现有插件
+                existing_plugin.name = params.name
+                existing_plugin.description = params.description
+                existing_plugin.is_enabled = params.is_enabled
+                existing_plugin.retry_times = params.retry_times
+                existing_plugin.delay = params.delay
+                existing_plugin.is_push_msg_on_error = params.is_push_msg_on_error
+                await session.commit()
+                await session.refresh(existing_plugin)
+                return existing_plugin
 
-        # 如果配置与默认值不同，则创建数据库记录
-        session.add(params)
-        await session.commit()
-        await session.refresh(params)
-        return params
+        # 如果不存在或不是浏览器级别的插件，则创建新记录
+        try:
+            session.add(params)
+            await session.commit()
+            await session.refresh(params)
+            return params
+        except SQLAlchemyError as e:
+            logger.error(f"创建重试插件失败: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            # 创建失败时返回默认配置的虚拟对象
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RETRY, params.mid, params.browser_info_id
+            )
+        except Exception as e:
+            logger.error(f"创建随机等待插件时发生未知错误: params={params.model_dump()}, error={e}")
+            await session.rollback()
+            return VirtualPluginFactory.create_virtual_plugin(
+                PluginTypeEnum.RANDOM_WAIT, params.mid, params.browser_info_id
+            )
 
     @staticmethod
     async def get_user_plugin(plugin_id: int, session: AsyncSession) -> Optional[PluginBaseModel]:
@@ -359,7 +528,7 @@ class PluginDBService:
         获取用户插件
         """
         # 虚拟ID的对象不存储在数据库中
-        if plugin_id == -1:
+        if plugin_id == VirtualPluginFactory.VIRTUAL_ID:
             return None
 
         # 尝试从所有插件表中查找
@@ -479,9 +648,9 @@ class PluginDBService:
             model = get_plugin_model_class(plugin_type)
             if model:
                 plugin_data = {
-                    "browser_token": plugin.browser_token,
+                    "mid": plugin.mid,
                     "browser_info_id": plugin.browser_info_id,
-                    **default_config
+                    **default_config.model_dump()
                 }
 
                 new_plugin = model(**plugin_data)
@@ -511,3 +680,31 @@ class PluginDBService:
         await session.delete(plugin)
         await session.commit()
         return True
+
+    @staticmethod
+    async def get_log_plugin_by_browser_info(browser_info_id: str, session: AsyncSession) -> Optional[LogPluginModel]:
+        """根据浏览器信息ID获取日志插件"""
+        stmt = select(LogPluginModel).where(LogPluginModel.browser_info_id == browser_info_id)
+        result = await session.exec(stmt)
+        return result.first()
+
+    @staticmethod
+    async def get_page_limit_plugin_by_browser_info(browser_info_id: str, session: AsyncSession) -> Optional[PageLimitPluginModel]:
+        """根据浏览器信息ID获取页面限制插件"""
+        stmt = select(PageLimitPluginModel).where(PageLimitPluginModel.browser_info_id == browser_info_id)
+        result = await session.exec(stmt)
+        return result.first()
+
+    @staticmethod
+    async def get_random_wait_plugin_by_browser_info(browser_info_id: str, session: AsyncSession) -> Optional[RandomWaitPluginModel]:
+        """根据浏览器信息ID获取随机等待插件"""
+        stmt = select(RandomWaitPluginModel).where(RandomWaitPluginModel.browser_info_id == browser_info_id)
+        result = await session.exec(stmt)
+        return result.first()
+
+    @staticmethod
+    async def get_retry_plugin_by_browser_info(browser_info_id: str, session: AsyncSession) -> Optional[RetryPluginModel]:
+        """根据浏览器信息ID获取重试插件"""
+        stmt = select(RetryPluginModel).where(RetryPluginModel.browser_info_id == browser_info_id)
+        result = await session.exec(stmt)
+        return result.first()

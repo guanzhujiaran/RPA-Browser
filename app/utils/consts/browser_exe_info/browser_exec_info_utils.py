@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass
 from typing import List
-
+from pydantic import computed_field
 from app.models.RPA_browser.browser_exec_info_model import (
     BrowserExecInfoModels,
     BrowserExecInfoModel,
@@ -40,6 +40,7 @@ class BrowserExecInfoHelper:
             await self.refresh()
         return self.ua_list
 
+    @computed_field
     @property
     def ua_list(self):
         return [info.browser_ua for info in self.browse_exec_infos]

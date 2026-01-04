@@ -8,6 +8,19 @@ import asyncio
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
+def safe_str(value):
+    """安全地将值转换为字符串，处理编码错误"""
+    try:
+        return str(value)
+    except (UnicodeDecodeError, UnicodeEncodeError, AttributeError):
+        # 如果转换失败，尝试用 repr
+        try:
+            return repr(value)
+        except Exception:
+            # 最后的回退方案
+            return f"<error: {type(value).__name__}>"
+
+
 class RetryPlugin(BasePlugin):
     """重试插件 - 实现操作失败时的自动重试机制"""
 
@@ -42,8 +55,13 @@ class RetryPlugin(BasePlugin):
             self.original_operation = operation
         if self.conf.is_push_msg_on_error:
             async with DatabaseSessionManager.async_session() as session:
-                await NotificationService.push_msg(self.base_playwright_engine.browser_token, "重试失败",
-                                                   f"第 {self.current_retry} 次重试失败\n{error}", session)
+                await NotificationService.push_msg(
+                    mid=str(self.base_playwright_engine.mid),
+                    browser_id=self.base_playwright_engine.browser_id,
+                    title="重试失败",
+                    content=f"第 {self.current_retry} 次重试失败\n{safe_str(error)}",
+                    session=session
+                )
         if self.current_retry < self.conf.retry_times:
             self.current_retry += 1
 

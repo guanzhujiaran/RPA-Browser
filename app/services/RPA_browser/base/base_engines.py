@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from playwright.async_api import BrowserContext
+from pydantic import computed_field
 
 from app.config import settings
 from app.models.RPA_browser.browser_info_model import BaseFingerprintBrowserInitParams
@@ -17,17 +18,19 @@ class BaseUndetectedPlaywright:
     default_args: list[str]
     _base_user_data_dir: os.PathLike[str]
 
+    @computed_field
     @property
     def base_user_data_dir(self):
         return self._base_user_data_dir
 
+    @computed_field
     @property
     def user_data_dir(self):
         return self._user_data_dir
 
     def __init__(
         self,
-        browser_token: uuid.UUID,
+        mid: uuid.UUID,
         browser_id: int,
         *,
         headless: bool = True,
@@ -36,17 +39,17 @@ class BaseUndetectedPlaywright:
         headless测试的时候设置成False
         """
 
-        self.default_args=[]
+        self.default_args = []
         self._base_user_data_dir = Path(
             os.path.join(
                 os.path.dirname(__file__), "..", "..", "..", "..", "user_data_dir"
             )
         )
-        self.browser_token = browser_token
+        self.mid = mid
         self.browser_id = browser_id  # 如果没有提供browser_id，则生成一个
         self.headless = headless
-        # 创建用户目录结构: browser_token/browser_id
-        user_dir = os.path.join(self.base_user_data_dir, str(self.browser_token))
+        # 创建用户目录结构: mid/browser_id
+        user_dir = os.path.join(self.base_user_data_dir, str(self.mid))
         os.makedirs(user_dir, exist_ok=True)  # 确保用户目录存在
         self._user_data_dir = os.path.join(user_dir, str(self.browser_id))
 

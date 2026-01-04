@@ -8,7 +8,7 @@ from app.services.site_rpa_operation.base.base_plugin import BasePlugin, PluginM
 class PageLimitPlugin(BasePlugin):
     """页面数量限制插件 - 限制浏览器中最大页面数量"""
 
-    def __init__(self, conf: PageLimitPluginModel = PageLimitPluginModel(), **kwargs):
+    def __init__(self, conf: PageLimitPluginModel, **kwargs):
         super().__init__(**kwargs)
         self.conf = conf
         self.current_pages = 0

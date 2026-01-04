@@ -5,7 +5,6 @@ import random
 import asyncio
 from typing import Tuple
 
-from app.models.RPA_browser.plugin_model import RandomWaitPluginModel
 from app.services.site_rpa_operation.base.base_plugin import BasePlugin, PluginMethodType
 
 
@@ -38,8 +37,7 @@ class RandomWaitPlugin(BasePlugin):
         self.logger.debug(f"[RANDOM WAIT PLUGIN] ⚙️ 配置参数 - 最小等待: {conf.min_wait}s, 中等等待: {conf.mid_wait}s, 最大等待: {conf.max_wait}s")
         self.logger.debug(f"[RANDOM WAIT PLUGIN] 🎲 概率配置 - 长等待基础概率: {conf.base_long_wait_prob:.2%}, 中等待基础概率: {conf.base_mid_wait_prob:.2%}")
 
-        # 添加操作到操作链
-        self.add_operation(PluginMethodType.BEFORE_EXEC, self._intelligent_wait_before, "智能操作前等待")
+        # 添加操作到操作链（只保留操作后等待）
         self.add_operation(PluginMethodType.AFTER_EXEC, self._intelligent_wait_after, "智能操作后等待")
 
     def _get_wait_time_range(self, wait_type: str) -> Tuple[float, float]:
@@ -101,8 +99,8 @@ class RandomWaitPlugin(BasePlugin):
                 f"中等待={self.current_mid_wait_prob:.2f}"
             )
 
-    async def _intelligent_wait_before(self):
-        """智能操作前等待"""
+    async def _intelligent_wait_after(self):
+        """智能操作后等待"""
         self.operation_count += 1
         wait_type = self._should_trigger_wait()
         min_wait, max_wait = self._get_wait_time_range(wait_type)
@@ -111,27 +109,10 @@ class RandomWaitPlugin(BasePlugin):
         self.total_wait_time += wait_time
 
         self.logger.info(
-            f"[RANDOM WAIT PLUGIN] ⏳ 操作#{self.operation_count}前{wait_type}等待 {wait_time:.2f}秒 "
+            f"[RANDOM WAIT PLUGIN] ⏳ 操作#{self.operation_count}后{wait_type}等待 {wait_time:.2f}秒 "
             f"(范围: {min_wait:.1f}-{max_wait:.1f}s)"
         )
-        self.logger.debug(f"[RANDOM WAIT PLUGIN] 📊 累计等待时间: {self.total_wait_time:.2f}秒, 当前概率: 长={self.current_long_wait_prob:.2%}, 中={self.current_mid_wait_prob:.2%}")
-
-        await asyncio.sleep(wait_time)
-        self._update_probabilities(wait_type)
-
-    async def _intelligent_wait_after(self):
-        """智能操作后等待"""
-        wait_type = self._should_trigger_wait()
-        min_wait, max_wait = self._get_wait_time_range(wait_type)
-
-        wait_time = random.uniform(min_wait, max_wait)
-        self.total_wait_time += wait_time
-
-        self.logger.info(
-            f"[RANDOM WAIT PLUGIN] ⏳ 操作后{wait_type}等待 {wait_time:.2f}秒 "
-            f"(范围: {min_wait:.1f}-{max_wait:.1f}s)"
-        )
-        self.logger.debug(f"[RANDOM WAIT PLUGIN] 📊 总等待时间: {self.total_wait_time:.2f}秒, 操作计数: {self.operation_count}")
+        self.logger.debug(f"[RANDOM WAIT PLUGIN] 📊 累计等待时间: {self.total_wait_time:.2f}秒, 操作计数: {self.operation_count}")
 
         await asyncio.sleep(wait_time)
         self._update_probabilities(wait_type)

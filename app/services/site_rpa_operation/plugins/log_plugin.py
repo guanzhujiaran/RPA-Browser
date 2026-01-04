@@ -1,6 +1,7 @@
 import os
 import time
 from urllib.parse import urlparse
+from pydantic import computed_field
 
 from app.models.RPA_browser.plugin_model import LogPluginModel
 from app.services.site_rpa_operation.base.base_plugin import BasePlugin, PluginMethodType
@@ -17,7 +18,7 @@ class LogPlugin(BasePlugin):
         self.logger.info(f"[LOG PLUGIN] 📝 日志插件初始化 - 日志级别: {conf.log_level}")
         # 向各个生命周期方法添加日志操作
         self._setup_log_operations()
-
+    @computed_field
     @property
     def screenshot_path(self):
         return os.path.join(CONF.Path.logs, "screenshots", str(self.conf.browser_token), str(self.conf.browser_info_id))
@@ -79,10 +80,6 @@ class LogPlugin(BasePlugin):
         """记录错误详情"""
         if error:
             self.logger.error(f"[LOG PLUGIN] ❌ 操作执行出错: {error}")
-            for page in self.session.pages:
-                url = urlparse(page.url)
-                await page.screenshot(path=os.path.join(self.screenshot_path,
-                                                        f"{url.hostname}_{url.path}_{url.params}_error_{int(time.time())}.png"))
         else:
             self.logger.error("[LOG PLUGIN] ❌ 操作执行出错")
 

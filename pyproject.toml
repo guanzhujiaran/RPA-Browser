@@ -37,6 +37,9 @@ dependencies = [
     "jupyterlab>=4.5.0",
     "onnxruntime>=1.23.2",
     "aiofiles>=25.1.0",
+    "websockets>=15.0.1",
+    "aiortc>=1.14.0",
+    "apscheduler>=3.10.4",
 ]
 
 [[tool.uv.index]]

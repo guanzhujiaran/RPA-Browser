@@ -1,37 +1,47 @@
+from app.models.exceptions.base_exception import BaseException as CustomBaseException
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
-import os
+from sqlalchemy.exc import OperationalError, DisconnectionError
 
 from app.controller.v1.browser import browser_router
-from app.controller.v1.browser import plugin_router
+from app.controller.v1.browser_control import (
+    session_controller,
+    browser_operation_controller,
+    plugin_controller,
+    video_stream_controller,
+    system_controller,
+    security_controller,
+)
 from app.controller.v1.browser import notify_router
-from app.controller.v1.browser import auth_router
-from app.controller.v1.browser_control import live_controller
-from app.exceptions.handlers import http_exception_handler, validation_exception_handler, global_exception_handler
+from app.controller.v1.admin import admin_router, permission_router
+from app.exceptions.handlers import (
+    http_exception_handler,
+    validation_exception_handler,
+    custom_exception_handler,
+    global_exception_handler,
+    database_connection_handler,
+)
 
 
 def setup_routes(app: FastAPI):
     """设置应用的所有路由和异常处理器"""
-    # 注册静态文件服务
-    static_dir = "/home/minato_aqua/bili-fastapi-browser-rpa/static"
-    print(f"Looking for static directory at: {static_dir}")
-    print(f"Directory exists: {os.path.exists(static_dir)}")
-    if os.path.exists(static_dir):
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
-        print("Static files mounted successfully!")
-    else:
-        print(f"Static directory not found: {static_dir}")
-    
     # 注册路由
     app.include_router(browser_router.router)
-    app.include_router(plugin_router.router)
     app.include_router(notify_router.router)
-    app.include_router(auth_router.router)
-    app.include_router(live_controller.router)
+    app.include_router(session_controller.router)
+    app.include_router(browser_operation_controller.router)
+    app.include_router(plugin_controller.router)
+    app.include_router(video_stream_controller.router)
+    app.include_router(system_controller.router)
+    app.include_router(security_controller.router)
+    app.include_router(admin_router.router)
+    app.include_router(permission_router.router)
 
     # 注册异常处理器
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(CustomBaseException, custom_exception_handler)
+    app.add_exception_handler(OperationalError, database_connection_handler)
+    app.add_exception_handler(DisconnectionError, database_connection_handler)
     app.add_exception_handler(Exception, global_exception_handler)

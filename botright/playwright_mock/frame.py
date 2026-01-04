@@ -61,7 +61,9 @@ class Frame(PlaywrightFrame):
         return Frame(self._parent_frame, self._page)
 
     # ElementHandle
-    async def query_selector(self, selector: str, strict: Optional[bool] = False) -> Optional[ElementHandle]:
+    async def query_selector(
+        self, selector: str, strict: Optional[bool] = False
+    ) -> Optional[ElementHandle]:
         from . import ElementHandle
 
         _element_handle = await self._origin_query_selector(selector, strict=strict)
@@ -84,29 +86,50 @@ class Frame(PlaywrightFrame):
         return element_handles
 
     async def wait_for_selector(
-        self, selector: str, state: Optional[Literal["attached", "detached", "hidden", "visible"]] = None, strict: Optional[bool] = False, timeout: Optional[float] = None
+        self,
+        selector: str,
+        state: Optional[Literal["attached", "detached", "hidden", "visible"]] = None,
+        strict: Optional[bool] = False,
+        timeout: Optional[float] = None,
     ) -> Optional[ElementHandle]:
         from . import ElementHandle
 
-        _element_handle = await self._origin_wait_for_selector(selector, state=state, strict=strict, timeout=timeout)
+        _element_handle = await self._origin_wait_for_selector(
+            selector, state=state, strict=strict, timeout=timeout
+        )
         if not _element_handle:
             return None
 
         element_handle = ElementHandle(_element_handle, self._page)
         return element_handle
 
-    async def add_script_tag(self, content: Optional[str] = "", path: Optional[Union[str, Path]] = "", type: Optional[str] = "", url: Optional[str] = "") -> ElementHandle:
+    async def add_script_tag(
+        self,
+        content: Optional[str] = "",
+        path: Optional[Union[str, Path]] = "",
+        type: Optional[str] = "",
+        url: Optional[str] = "",
+    ) -> ElementHandle:
         from . import ElementHandle
 
-        _element_handle = await self._origin_add_script_tag(content=content, path=path, type=type, url=url)
+        _element_handle = await self._origin_add_script_tag(
+            content=content, path=path, type=type, url=url
+        )
 
         element_handle = ElementHandle(_element_handle, self._page)
         return element_handle
 
-    async def add_style_tag(self, content: Optional[str] = "", path: Optional[Union[str, Path]] = "", url: Optional[str] = "") -> ElementHandle:
+    async def add_style_tag(
+        self,
+        content: Optional[str] = "",
+        path: Optional[Union[str, Path]] = "",
+        url: Optional[str] = "",
+    ) -> ElementHandle:
         from . import ElementHandle
 
-        _element_handle = await self._origin_add_script_tag(content=content, path=path, url=url)
+        _element_handle = await self._origin_add_script_tag(
+            content=content, path=path, url=url
+        )
 
         element_handle = ElementHandle(_element_handle, self._page)
         return element_handle
@@ -120,7 +143,9 @@ class Frame(PlaywrightFrame):
         return element_handle
 
     # JsHandle
-    async def evaluate_handle(self, expression: str, arg: Optional[Any] = None) -> Union[JSHandle, ElementHandle]:
+    async def evaluate_handle(
+        self, expression: str, arg: Optional[Any] = None
+    ) -> Union[JSHandle, ElementHandle]:
         from . import ElementHandle, JSHandle
 
         _js_handle = await self._origin_evaluate_handle(expression, arg=arg)
@@ -132,10 +157,18 @@ class Frame(PlaywrightFrame):
             js_handle = JSHandle(_js_handle, self._page)
             return js_handle
 
-    async def wait_for_function(self, expression: str, arg: Optional[Any] = None, polling: Optional[Union[float, Literal["raf"]]] = "raf", timeout: Optional[float] = None) -> JSHandle:
+    async def wait_for_function(
+        self,
+        expression: str,
+        arg: Optional[Any] = None,
+        polling: Optional[Union[float, Literal["raf"]]] = "raf",
+        timeout: Optional[float] = None,
+    ) -> JSHandle:
         from . import JSHandle
 
-        _js_handle = await self._origin_wait_for_function(expression, arg=arg, polling=polling, timeout=timeout)
+        _js_handle = await self._origin_wait_for_function(
+            expression, arg=arg, polling=polling, timeout=timeout
+        )
         js_handle = JSHandle(_js_handle, self._page)
         return js_handle
 
@@ -158,7 +191,13 @@ class Frame(PlaywrightFrame):
     ) -> Locator:
         from . import Locator
 
-        _locator = self._origin_locator(selector, has=has, has_not=has_not, has_text=has_text, has_not_text=has_not_text)
+        _locator = self._origin_locator(
+            selector,
+            has=has,
+            has_not=has_not,
+            has_text=has_text,
+            has_not_text=has_not_text,
+        )
         locator = Locator(_locator, self._page)
         return locator
 
@@ -169,7 +208,9 @@ class Frame(PlaywrightFrame):
         click_count: Optional[int] = 1,
         delay: Optional[float] = 20.0,
         force: Optional[bool] = False,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         timeout: Optional[float] = None,
@@ -179,7 +220,12 @@ class Frame(PlaywrightFrame):
         modifiers = modifiers or []
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(
+            selector,
+            state="visible" if not force else "hidden",
+            strict=strict,
+            timeout=timeout,
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -194,7 +240,12 @@ class Frame(PlaywrightFrame):
             if self._page.scroll_into_view:
                 await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -203,7 +254,9 @@ class Frame(PlaywrightFrame):
             for modifier in modifiers:
                 await self._page.keyboard.down(modifier)
 
-            await self._page.mouse.click(x, y, button=button, click_count=click_count, delay=delay)
+            await self._page.mouse.click(
+                x, y, button=button, click_count=click_count, delay=delay
+            )
 
             for modifier in modifiers:
                 await self._page.keyboard.up(modifier)
@@ -214,7 +267,9 @@ class Frame(PlaywrightFrame):
         button: Optional[Literal["left", "middle", "right"]] = "left",
         delay: Optional[float] = 20.0,
         force: Optional[bool] = False,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         timeout: Optional[float] = None,
@@ -224,7 +279,12 @@ class Frame(PlaywrightFrame):
         modifiers = modifiers or []
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(
+            selector,
+            state="visible" if not force else "hidden",
+            strict=strict,
+            timeout=timeout,
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -239,7 +299,12 @@ class Frame(PlaywrightFrame):
             if self._page.scroll_into_view:
                 await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -265,7 +330,12 @@ class Frame(PlaywrightFrame):
     ) -> None:
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(
+            selector,
+            state="visible" if not force else "hidden",
+            strict=strict,
+            timeout=timeout,
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -283,7 +353,12 @@ class Frame(PlaywrightFrame):
             if self._page.scroll_into_view:
                 await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -305,7 +380,12 @@ class Frame(PlaywrightFrame):
     ) -> None:
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(
+            selector,
+            state="visible" if not force else "hidden",
+            strict=strict,
+            timeout=timeout,
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -323,7 +403,12 @@ class Frame(PlaywrightFrame):
             if self._page.scroll_into_view:
                 await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -346,7 +431,12 @@ class Frame(PlaywrightFrame):
     ) -> None:
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(
+            selector,
+            state="visible" if not force else "hidden",
+            strict=strict,
+            timeout=timeout,
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -364,7 +454,12 @@ class Frame(PlaywrightFrame):
             if self._page.scroll_into_view:
                 await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -378,7 +473,9 @@ class Frame(PlaywrightFrame):
         self,
         selector: str,
         force: Optional[bool] = False,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         position: Optional[Position] = None,
         strict: Optional[bool] = False,
         timeout: Optional[float] = None,
@@ -388,7 +485,12 @@ class Frame(PlaywrightFrame):
         modifiers = modifiers or []
         position = position or Position(x=0, y=0)
 
-        element = await self.wait_for_selector(selector, state="visible" if not force else "hidden", strict=strict, timeout=timeout)
+        element = await self.wait_for_selector(
+            selector,
+            state="visible" if not force else "hidden",
+            strict=strict,
+            timeout=timeout,
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -403,7 +505,12 @@ class Frame(PlaywrightFrame):
             if self._page.scroll_into_view:
                 await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -417,8 +524,18 @@ class Frame(PlaywrightFrame):
             for modifier in modifiers:
                 await self._page.keyboard.up(modifier)
 
-    async def type(self, selector: str, text: str, delay: Optional[float] = 200.0, no_wait_after: Optional[bool] = False, timeout: Optional[float] = None, strict: Optional[bool] = False) -> None:
-        element = await self.wait_for_selector(selector, state="visible", strict=strict, timeout=timeout)
+    async def type(
+        self,
+        selector: str,
+        text: str,
+        delay: Optional[float] = 200.0,
+        no_wait_after: Optional[bool] = False,
+        timeout: Optional[float] = None,
+        strict: Optional[bool] = False,
+    ) -> None:
+        element = await self.wait_for_selector(
+            selector, state="visible", strict=strict, timeout=timeout
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -431,7 +548,12 @@ class Frame(PlaywrightFrame):
         if self._page.scroll_into_view:
             await element.scroll_into_view_if_needed(timeout=timeout)
 
-        x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+        x, y, width, height = (
+            bounding_box["x"],
+            bounding_box["y"],
+            bounding_box["width"],
+            bounding_box["height"],
+        )
         x, y = x + width // 2, y + height // 2
 
         await self._page.mouse.click(x, y, button="left", click_count=1, delay=20)

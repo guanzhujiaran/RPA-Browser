@@ -18,3 +18,5 @@ user_data_dir/
 .env.dev
 *.pt
 *.AppImage
+/app/data/*.json
+.VSCodeCounter

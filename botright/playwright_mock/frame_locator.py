@@ -31,7 +31,13 @@ class FrameLocator(PlaywrightFrameLocator):
     ) -> Locator:
         from . import Locator
 
-        _locator = self._origin_locator(selector_or_locator=selector_or_locator, has=has, has_text=has_text, has_not=has_not, has_not_text=has_not_text)
+        _locator = self._origin_locator(
+            selector_or_locator=selector_or_locator,
+            has=has,
+            has_text=has_text,
+            has_not=has_not,
+            has_not_text=has_not_text,
+        )
         locator = Locator(_locator, self._page)
         return locator
 
@@ -68,7 +74,9 @@ class FrameLocator(PlaywrightFrameLocator):
     def origin_last(self, value):
         self._origin_last = value
 
-    def _attach_dyn_prop(self, frame_locator: FrameLocator, prop_name: str, prop: Any) -> None:
+    def _attach_dyn_prop(
+        self, frame_locator: FrameLocator, prop_name: str, prop: Any
+    ) -> None:
         """Attach property proper to instance with name prop_name.
 
         Reference:

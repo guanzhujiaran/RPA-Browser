@@ -426,13 +426,13 @@ class AsyncCaptchaBreaker:
         tasks = [fetch_and_predict(url) for url in urls]
         return await asyncio.gather(*tasks, return_exceptions=False)
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> ModelInfo:
         """获取模型信息"""
-        return {
-            'status': '模型已加载' if self._yolo_model and self._siamese_model else '模型未加载',
-            'device': self.device,
-            'model_dir': self._model_dir
-        }
+        return ModelInfo(
+            status='模型已加载' if self._yolo_model and self._siamese_model else '模型未加载',
+            device=self.device,
+            model_dir=self._model_dir
+        )
 
     def visualize_detection_result(self, image: np.ndarray, bboxes: List[Dict[str, float]],
                                    ans_boxes: List[Dict[str, float]], question_boxes: List[Dict[str, float]],
@@ -516,7 +516,7 @@ class AsyncCaptchaBreaker:
 
         return result_image
 
-    async def predict_chinese_click_with_details(self, image: np.ndarray) -> Dict[str, Any]:
+    async def predict_chinese_click_with_details(self, image: np.ndarray) -> ChineseClickPredictionDetail:
         """
         异步预测中文点击验证码的答案坐标，并返回详细信息用于调试
         
@@ -524,7 +524,7 @@ class AsyncCaptchaBreaker:
             image: 图像数组
             
         Returns:
-            Dict: 包含坐标、边界框和匹配详情的结果
+            ChineseClickPredictionDetail: 包含坐标、边界框和匹配详情的结果
         """
         # 1. 图像预处理
         processed_image = await self.preprocess_image(image)
@@ -576,14 +576,14 @@ class AsyncCaptchaBreaker:
         # 7. 生成结果
         result_coords = self.generate_results(ans_boxes, match_indices)
 
-        return {
-            'coordinates': result_coords,
-            'all_bboxes': bboxes,
-            'answer_boxes': ans_boxes,
-            'question_boxes': question_boxes,
-            'matches': match_indices,
-            'cost_matrix': cost_matrix
-        }
+        return ChineseClickPredictionDetail(
+            coordinates=result_coords,
+            bounding_boxes=bboxes,
+            matches=match_indices,
+            ans_boxes=ans_boxes,
+            question_boxes=question_boxes,
+            debug_info={"cost_matrix": cost_matrix.tolist()}
+        )
 
 
 # 创建实例并导出

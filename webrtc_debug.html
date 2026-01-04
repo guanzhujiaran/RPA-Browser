@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC ICE Candidate 测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .sidebar {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            height: fit-content;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+        .controls input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            flex: 1;
+            min-width: 120px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #000;
+        }
+        .video-placeholder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #666;
+            text-align: center;
+        }
+        .video-placeholder svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 10px;
+            opacity: 0.5;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            background: #f8f9fa;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+        .status.connected { background: #d4edda; border-color: #c3e6cb; }
+        .status.disconnected { background: #f8d7da; border-color: #f5c6cb; }
+        .status.connecting { background: #fff3cd; border-color: #ffeaa7; }
+        .header {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin: 0;
+            font-size: 20px;
+            color: #333;
+        }
+        .connection-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e9ecef;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .connection-info strong {
+            display: inline-block;
+            min-width: 80px;
+        }
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-content">
+            <div class="header">
+                <h1>🎥 WebRTC 实时视频流</h1>
+                <div class="connection-info">
+                    <div><strong>浏览器ID:</strong> <span id="infoBrowserId">-</span></div>
+                    <div><strong>用户ID:</strong> <span id="infoMid">-</span></div>
+                    <div><strong>连接状态:</strong> <span id="infoConnectionStatus">未连接</span></div>
+                </div>
+            </div>
+
+            <div class="video-container">
+                <div class="video-placeholder" id="videoPlaceholder">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    <div>点击"连接视频流"开始观看</div>
+                </div>
+                <video id="video" autoplay playsinline muted></video>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <div class="controls">
+                <input type="number" id="browserId" placeholder="浏览器ID" value="130734684681277440">
+                <input type="text" id="mid" placeholder="用户ID" value="38">
+            </div>
+            <div class="controls">
+                <button onclick="connectWebRTC()" id="connectBtn" style="flex: 2;">连接视频流</button>
+                <button onclick="disconnectWebRTC()" id="disconnectBtn" disabled style="flex: 1;">断开</button>
+            </div>
+            <div class="controls">
+                <button onclick="getStatus()" style="flex: 1;">状态</button>
+                <button onclick="clearLog()" style="flex: 1;">清除</button>
+            </div>
+            <div class="status" id="status">等待连接...</div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1/rpa/browser_live_control';
+        let peerConnection = null;
+        let isConnected = false;
+        let candidateCount = 0;
+
+        function log(message, type = 'info') {
+            const statusElement = document.getElementById('status');
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = {
+                'info': 'ℹ️',
+                'success': '✅',
+                'error': '❌',
+                'warn': '⚠️',
+                'debug': '🔍'
+            }[type] || 'ℹ️';
+
+            statusElement.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            statusElement.scrollTop = statusElement.scrollHeight;
+
+            // 更新连接信息
+            updateConnectionInfo();
+
+            // 同时输出到浏览器控制台
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+
+        function updateConnectionInfo() {
+            document.getElementById('infoBrowserId').textContent = document.getElementById('browserId').value || '-';
+            document.getElementById('infoMid').textContent = document.getElementById('mid').value || '-';
+            document.getElementById('infoConnectionStatus').textContent = isConnected ? '已连接' : (peerConnection ? '连接中...' : '未连接');
+            document.getElementById('infoConnectionStatus').style.color = isConnected ? '#28a745' : (peerConnection ? '#ffc107' : '#6c757d');
+        }
+
+        function showVideoStream() {
+            document.getElementById('videoPlaceholder').style.display = 'none';
+        }
+
+        function hideVideoStream() {
+            document.getElementById('videoPlaceholder').style.display = 'block';
+        }
+
+        function clearLog() {
+            document.getElementById('status').textContent = '';
+        }
+
+        async function makeRequest(url, options = {}) {
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-bili-mid': document.getElementById('mid').value,
+                        ...options.headers,
+                        "Access-Control-Allow-Origin": "*"
+                    },
+                    ...options
+                });
+
+                if (!response.ok) {
+                    // 尝试读取错误详情
+                    const errorText = await response.text();
+                    console.error('Response error details:', errorText);
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('Request failed:', error);
+                throw error;
+            }
+        }
+
+        async function connectWebRTC() {
+            const browserId = document.getElementById('browserId').value;
+            const mid = document.getElementById('mid').value;
+
+            if (!browserId || !mid) {
+                alert('请输入浏览器ID和用户ID');
+                return;
+            }
+
+            clearLog();
+            candidateCount = 0;
+            log(`开始 WebRTC 连接，browser_id: ${browserId}`, 'info');
+
+            try {
+                // 1. 创建 WebRTC offer
+                log('请求后端创建 WebRTC offer...', 'info');
+                const offerResponse = await makeRequest(`${API_BASE}/webrtc/offer`, {
+                    method: 'POST',
+                    body: JSON.stringify({ browser_id: String(browserId) })  // 🔧 确保发送字符串类型
+                });
+
+                if (offerResponse.code !== 0) {
+                    throw new Error(`创建 offer 失败: ${offerResponse.msg}`);
+                }
+
+                const offer = offerResponse.data;
+                log(`收到服务器 offer，SDP 长度: ${offer.sdp.length}`, 'success');
+
+                // 2. 创建本地 PeerConnection
+                log('创建本地 RTCPeerConnection...', 'info');
+                peerConnection = new RTCPeerConnection({
+                    iceServers: []  // 局域网环境不需要 STUN
+                });
+
+                // 3. 设置远程视频流
+                peerConnection.ontrack = (event) => {
+                    const video = document.getElementById('video');
+                    video.srcObject = event.streams[0];
+                    showVideoStream();
+                    log('✅✅✅ 接收到远程视频流！', 'success');
+                };
+
+                // 🔥 关键: 监听 ICE candidates
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        candidateCount++;
+                        const candidate = event.candidate;
+
+                        log(`⚡ 收集到 ICE candidate #${candidateCount}`, 'debug');
+                        log(`   - candidate: ${candidate.candidate.substring(0, 80)}...`, 'debug');
+                        log(`   - sdpMid: ${candidate.sdpMid}, sdpMLineIndex: ${candidate.sdpMLineIndex}`, 'debug');
+
+                        // 发送到后端
+                        makeRequest(`${API_BASE}/webrtc/ice-candidate`, {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                browser_id: String(browserId),  // 🔧 确保发送字符串类型
+                                candidate: {
+                                    candidate: candidate.candidate,
+                                    sdpMid: candidate.sdpMid,
+                                    sdpMLineIndex: candidate.sdpMLineIndex
+                                }
+                            })
+                        }).then(response => {
+                            if (response.code === 0) {
+                                log(`   ✅ ICE candidate #${candidateCount} 发送成功`, 'success');
+                            } else {
+                                log(`   ❌ ICE candidate #${candidateCount} 发送失败: ${response.msg}`, 'error');
+                            }
+                        }).catch(error => {
+                            log(`   ❌ 发送 ICE candidate 失败: ${error.message}`, 'error');
+                        });
+                    } else {
+                        log(`🎉 ICE 候选收集完成，总数: ${candidateCount}`, 'success');
+                    }
+                };
+
+                // 监听 ICE 连接状态变化
+                peerConnection.oniceconnectionstatechange = () => {
+                    log(`🧊 ICE 连接状态: ${peerConnection.iceConnectionState}`, peerConnection.iceConnectionState === 'connected' ? 'success' : 'info');
+
+                    if (peerConnection.iceConnectionState === 'connected') {
+                        isConnected = true;
+                        log('🎉 WebRTC 视频连接已建立！', 'success');
+                        document.getElementById('connectBtn').disabled = true;
+                        document.getElementById('disconnectBtn').disabled = false;
+                    } else if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed') {
+                        isConnected = false;
+                        log(`❌ WebRTC 连接${peerConnection.iceConnectionState}`, 'error');
+                        hideVideoStream();
+                        document.getElementById('connectBtn').disabled = false;
+                        document.getElementById('disconnectBtn').disabled = true;
+                    }
+                };
+
+                // 监听信令状态变化
+                peerConnection.onsignalingstatechange = () => {
+                    log(`📡 Signaling 状态: ${peerConnection.signalingState}`, 'info');
+                };
+
+                // 4. 设置远程描述
+                log('设置远程 offer...', 'info');
+                await peerConnection.setRemoteDescription({
+                    type: offer.type,
+                    sdp: offer.sdp
+                });
+                log('远程 offer 设置成功', 'success');
+
+                // 5. 获取并添加服务端的 ICE candidates
+                log('📥 请求服务端的 ICE candidates...', 'info');
+                const iceCandidatesResponse = await makeRequest(`${API_BASE}/webrtc/ice-candidates?browser_id=${browserId}`);
+                if (iceCandidatesResponse.code === 0) {
+                    const serverCandidates = iceCandidatesResponse.data.candidates;
+                    log(`📦 收到 ${serverCandidates.length} 个服务端 ICE candidates`, 'info');
+                    log(`📊 服务端 ICE gathering 状态: ${iceCandidatesResponse.data.ice_gathering_state}`, 'debug');
+
+                    // 添加服务端的 ICE candidates
+                    for (const serverCandidate of serverCandidates) {
+                        try {
+                            await peerConnection.addIceCandidate(serverCandidate);
+                            log(`✅ 添加服务端 ICE candidate: ${serverCandidate.candidate.substring(0, 50)}...`, 'debug');
+                        } catch (error) {
+                            log(`❌ 添加服务端 ICE candidate 失败: ${error.message}`, 'error');
+                        }
+                    }
+                    log(`✅ 已添加 ${serverCandidates.length} 个服务端 ICE candidates`, 'success');
+                } else {
+                    log(`⚠️ 获取服务端 ICE candidates 失败: ${iceCandidatesResponse.msg}`, 'warn');
+                }
+
+                // 6. 创建 answer
+                log('创建 WebRTC answer...', 'info');
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                log('本地 answer 设置成功', 'success');
+
+                // 🔧 关键修复：等待 ICE gathering 完成
+                log(`🔍 当前 ICE gathering 状态: ${peerConnection.iceGatheringState}`, 'debug');
+
+                if (peerConnection.iceGatheringState === 'new' || peerConnection.iceGatheringState === 'gathering') {
+                    log('⏳ 等待 ICE gathering 完成...', 'info');
+
+                    // 等待 ICE gathering 完成
+                    await new Promise((resolve) => {
+                        const checkInterval = setInterval(() => {
+                            log(`🔍 ICE gathering 状态: ${peerConnection.iceGatheringState}, 已收集 ${candidateCount} 个 candidates`, 'debug');
+                            if (peerConnection.iceGatheringState === 'complete') {
+                                clearInterval(checkInterval);
+                                log('✅ ICE gathering 完成', 'success');
+                                log(`📊 总共收集到 ${candidateCount} 个 ICE candidates`, 'info');
+                                resolve();
+                            }
+                        }, 100);
+
+                        // 超时保护（15秒，增加超时时间）
+                        setTimeout(() => {
+                            clearInterval(checkInterval);
+                            if (peerConnection.iceGatheringState !== 'complete') {
+                                log(`⚠️ ICE gathering 未在预期时间内完成（当前状态: ${peerConnection.iceGatheringState}，已收集 ${candidateCount} 个 candidates），继续发送 answer`, 'warn');
+                            }
+                            resolve();
+                        }, 15000);
+                    });
+                }
+
+                // 6. 发送 answer 到服务器
+                log('发送 answer 到服务器...', 'info');
+                const answerResponse = await makeRequest(`${API_BASE}/webrtc/answer`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        browser_id: String(browserId),  // 🔧 确保发送字符串类型
+                        sdp: answer.sdp
+                    })
+                });
+
+                if (answerResponse.code !== 0) {
+                    throw new Error(`设置 answer 失败: ${answerResponse.msg}`);
+                }
+
+                log('Answer 发送成功，等待 ICE 连接建立...', 'success');
+
+            } catch (error) {
+                log(`WebRTC 连接失败: ${error.message}`, 'error');
+                console.error('WebRTC connection failed:', error);
+                hideVideoStream();
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+            }
+        }
+
+        async function disconnectWebRTC() {
+            const browserId = document.getElementById('browserId').value;
+
+            try {
+                log('关闭 WebRTC 连接...', 'info');
+
+                // 通知服务器关闭连接
+                await makeRequest(`${API_BASE}/webrtc/close`, {
+                    method: 'POST',
+                    body: JSON.stringify({ browser_id: String(browserId) })  // 🔧 确保发送字符串类型
+                });
+
+                // 关闭本地连接
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+
+                isConnected = false;
+                log('WebRTC 连接已断开', 'success');
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                hideVideoStream();
+
+                // 清除视频流
+                const video = document.getElementById('video');
+                video.srcObject = null;
+
+            } catch (error) {
+                log(`断开连接失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function getStatus() {
+            const browserId = document.getElementById('browserId').value;
+
+            try {
+                log(`获取连接状态: browser_id=${browserId}`, 'info');
+                const response = await makeRequest(`${API_BASE}/webrtc/status?browser_id=${browserId}`);
+
+                if (response.code === 0) {
+                    const status = response.data;
+                    log(`连接状态: active=${status.active}, ICE=${status.ice_connection_state}, signaling=${status.signaling_state}`, 'info');
+                } else {
+                    log(`获取状态失败: ${response.msg}`, 'error');
+                }
+
+            } catch (error) {
+                log(`获取状态失败: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>

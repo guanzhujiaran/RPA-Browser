@@ -3,9 +3,9 @@ import os
 import random
 import time
 import uuid
-import logging
 
 from playwright.async_api import Page
+from loguru import logger
 
 from app.models.RPA_browser.browser_info_model import (
     UserBrowserInfoListParams,
@@ -17,10 +17,6 @@ from app.services.RPA_browser.browser_session_pool.playwright_pool import (
     get_default_session_pool,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
-
-# 设置日志
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 start_ts = int(time.time())
 cur_dir = os.path.dirname(os.path.abspath(__file__))

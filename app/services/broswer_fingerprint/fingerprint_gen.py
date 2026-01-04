@@ -4,7 +4,7 @@ from dataclasses import asdict
 from app.models.RPA_browser.browser_info_model import (
     BaseFingerprintBrowserInitParams,
     PlatformEnum,
-    UserBrowserInfoCreateParams,
+    BrowserFingerprintCreateParams,
     UserBrowserDefaultSetting,
     BrowserEnum,
 )
@@ -19,12 +19,12 @@ from app.utils.http.rand_headers_gen import (
 
 async def gen_from_browserforge_fingerprint(
     *,
-    params: UserBrowserInfoCreateParams,
+    params: BrowserFingerprintCreateParams,
     user_default_settings: UserBrowserDefaultSetting | None = None,
 ) -> BaseFingerprintBrowserInitParams:
     if user_default_settings is None:
         user_default_settings = UserBrowserDefaultSetting()
-    
+
     ua_list = await browser_exec_info_helper.get_exec_info_ua_list()
     if params.is_desktop:
         rand_fingerprint = desktop_fingerprint_generator.generate(user_agent=ua_list)
@@ -41,15 +41,22 @@ async def gen_from_browserforge_fingerprint(
         "Linux": PlatformEnum.linux,
         "X11": PlatformEnum.linux,
     }
-    
+
     # 获取真实平台信息
     real_platform = rand_fingerprint.navigator.platform
-    platform = bf_fingerprint_hashmap.get(real_platform, PlatformEnum.linux)  # 默认Linux
-    
+    platform = bf_fingerprint_hashmap.get(
+        real_platform, PlatformEnum.linux
+    )  # 默认Linux
+
     # 如果映射失败，尝试从user agent中推断
-    if platform == PlatformEnum.linux and "Windows" in rand_fingerprint.navigator.userAgent:
+    if (
+        platform == PlatformEnum.linux
+        and "Windows" in rand_fingerprint.navigator.userAgent
+    ):
         platform = PlatformEnum.windows
-    elif platform == PlatformEnum.linux and "Mac" in rand_fingerprint.navigator.userAgent:
+    elif (
+        platform == PlatformEnum.linux and "Mac" in rand_fingerprint.navigator.userAgent
+    ):
         platform = PlatformEnum.macos
     # 直接从真实指纹中获取浏览器信息，而不是随机选择
     ua_string = rand_fingerprint.navigator.userAgent
@@ -64,10 +71,10 @@ async def gen_from_browserforge_fingerprint(
     else:
         # 默认使用Chrome
         brand = BrowserEnum.chrome
-    
+
     brand_version = rand_fingerprint.navigator.userAgentData.get("uaFullVersion")
     platform_version = rand_fingerprint.navigator.userAgentData.get("platformVersion")
-    return BaseFingerprintBrowserInitParams(
+    return BaseFingerprintBrowserInitParams.model_construct(
         fingerprint=random.randint(-2147483648, 2147483647),
         fingerprint_platform=platform,
         fingerprint_platform_version=platform_version,
@@ -82,6 +89,7 @@ async def gen_from_browserforge_fingerprint(
         patchright_screen_height=rand_fingerprint.screen.height,
         patchright_viewport_width=rand_fingerprint.screen.availWidth,
         patchright_viewport_height=rand_fingerprint.screen.availHeight,
-        patchright_proxy_server=user_default_settings.proxy_server or "",
+        proxy_server=user_default_settings.proxy_server or "",
         patchright_fingerprint_dict=asdict(rand_fingerprint),
+        patchright_browser_ua=ua_string,
     )
