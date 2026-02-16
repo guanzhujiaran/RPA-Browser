@@ -8,7 +8,6 @@ class Settings(BaseSettings):
     mysql_browser_info_url: str
     controller_base_path: str | None = "/api"
     chromium_executable_dir: str | None = os.path.join(current_dir, "chrome")
-    jwt_secret_key: str  # JWT密钥 - 必须从环境变量设置
     jwt_algorithm: str = "HS256"  # JWT算法
     jwt_expire_minutes: int = 7 * 24 * 60  # JWT过期时间（分钟），默认30分钟
     proxy_server_url: str = "http://127.0.0.1:10809"  # 可以访问外网的代理地址
@@ -29,7 +28,7 @@ class Settings(BaseSettings):
     hitokoto_api_url: str = "https://v1.hitokoto.cn"
     sys_pushme_token: str = ""
     sys_pushplus_token: str = ""
-    GEMINI_API_KEY: str  # 必须从环境变量设置
+    GEMINI_API_KEY: str = "NotNecessary"
     default_proxy_server: str = ""
     snowflake_id: int = 1
     environment: str = "development"  # 环境变量：development, production

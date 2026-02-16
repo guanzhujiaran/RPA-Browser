@@ -3,10 +3,8 @@ from loguru import logger
 from app.scheduler_manager import scheduler_manager
 from app.services.RPA_browser.background_tasks import BackgroundTasks
 
-
 def register_background_tasks():
     """注册所有后台任务"""
-
     # 1. 资源清理任务 - 每 5 分钟执行一次
     scheduler_manager.add_interval_job(
         func=BackgroundTasks.cleanup_expired_resources,

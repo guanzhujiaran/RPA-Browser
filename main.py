@@ -2,13 +2,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+import asyncio
 import fastapi_cdn_host
 import uvicorn
 import sys
-import asyncio
 from app.routes import setup_routes
 from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
+from scripts.initd.main import init_dependencies
 
 
 @asynccontextmanager
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
 
+    await init_dependencies()
     # 启动后台任务
     await start_background_tasks()
 
