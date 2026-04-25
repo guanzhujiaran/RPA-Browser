@@ -1,18 +1,18 @@
 import os
-from dataclasses import dataclass
 from typing import List
+import asyncio
 from pydantic import computed_field
 from app.models.RPA_browser.browser_exec_info_model import (
     BrowserExecInfoModels,
     BrowserExecInfoModel,
 )
 import aiofiles
-import asyncio
+
 
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
 
-async def get_browse_exec_infos() -> List[BrowserExecInfoModel]:
+async def get_browser_exec_infos() -> List[BrowserExecInfoModel]:
     async with aiofiles.open(
         os.path.join(current_dir, "browser_exec_info.json"), mode="r"
     ) as f:
@@ -24,7 +24,7 @@ class BrowserExecInfoHelper:
     browse_exec_infos: List[BrowserExecInfoModel] = []
 
     async def refresh(self):
-        self.browse_exec_infos = await get_browse_exec_infos()
+        self.browse_exec_infos = await get_browser_exec_infos()
 
     async def get_exec_info(self, ua: str | None) -> BrowserExecInfoModel:
         if not self.browse_exec_infos:
@@ -48,7 +48,4 @@ class BrowserExecInfoHelper:
 
 browser_exec_info_helper = BrowserExecInfoHelper()
 
-__all__ = ["get_browse_exec_infos", "browser_exec_info_helper"]
-
-if __name__ == "__main__":
-    print(asyncio.run(get_browse_exec_infos()))
+__all__ = ["get_browser_exec_infos", "browser_exec_info_helper"]

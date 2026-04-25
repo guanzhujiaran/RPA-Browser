@@ -4,7 +4,7 @@ from typing import Generic
 
 from sqlmodel import SQLModel, Field
 
-from app.models.response import DataT
+from app.models.common.response import DataT
 
 
 class BaseSQLModel(SQLModel):
@@ -55,4 +55,4 @@ class BasePaginationResp(SQLModel, Generic[DataT]):
         return self.page - 1 if self.has_prev else self.page
 
 
-__all__ = ["BaseSQLModel"]
+__all__ = ["BaseSQLModel", "BasePaginationReq", "BasePaginationResp"]

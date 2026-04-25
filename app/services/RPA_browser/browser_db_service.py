@@ -4,6 +4,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.RPA_browser.browser_info_model import (
     UserBrowserInfo,
     UserBrowserDefaultSetting,
+    UserBrowserDefaultSettingRequest,
+    UserBrowserDefaultSettingResponse,
     BrowserFingerprintCreateParams,
     BrowserFingerprintUpsertParams,
     BaseFingerprintBrowserInitParams,
@@ -13,6 +15,8 @@ from app.models.RPA_browser.browser_info_model import (
     BrowserFingerprintCreateResp,
     BrowserFingerprintQueryResp,
     BrowserFingerprintListParams,
+    BrowserFingerprintRenameParams,
+    BrowserFingerprintRenameResp,
 )
 from app.models.base.base_sqlmodel import BasePaginationResp
 from app.services.broswer_fingerprint.fingerprint_gen import (
@@ -201,13 +205,59 @@ class BrowserDBService:
             raise BrowserFingerprintNotFoundException()
 
         # 异步删除对应的 user_data_dir
-        user_data_dir_path = Path(__file__).parent.parent.parent.parent / "user_data_dir" / str(mid) / str(params.id)
+        user_data_dir_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "user_data_dir"
+            / str(mid)
+            / str(params.id)
+        )
         if user_data_dir_path.exists():
-            await asyncio.to_thread(shutil.rmtree, user_data_dir_path, ignore_errors=True)
+            await asyncio.to_thread(
+                shutil.rmtree, user_data_dir_path, ignore_errors=True
+            )
 
         await session.delete(browser_info)
         await session.commit()
         return ResponseCode.SUCCESS, True, "success"
+
+    @staticmethod
+    async def rename_fingerprint(
+        params: BrowserFingerprintRenameParams, mid: int, session: AsyncSession
+    ) -> BrowserFingerprintRenameResp:
+        """
+        重命名浏览器指纹
+
+        Args:
+            params: 包含指纹ID和新名称的参数
+            mid: 用户ID
+            session: 数据库会话
+
+        Returns:
+            BrowserFingerprintRenameResp: 更新结果
+        """
+        stmt = select(UserBrowserInfo).where(
+            and_(
+                UserBrowserInfo.id == params.id,
+                UserBrowserInfo.mid == mid,
+            )
+        )
+        result = await session.exec(stmt)
+        browser_info = result.one_or_none()
+
+        if browser_info is None:
+            raise BrowserFingerprintNotFoundException()
+
+        browser_info.custom_name = params.custom_name
+        session.add(browser_info)
+        await session.commit()
+        await session.refresh(browser_info)
+
+        return BrowserFingerprintRenameResp(
+            mid=mid,
+            id=browser_info.id,
+            custom_name=browser_info.custom_name,
+            is_success=True,
+        )
 
     @staticmethod
     async def count_fingerprint(mid: int, session: AsyncSession) -> int:
@@ -255,3 +305,190 @@ class BrowserDBService:
         result = await session.exec(stmt)
         res = result.one_or_none()
         return res
+
+    @staticmethod
+    async def verify_browser_info_ownership(
+        mid: int, browser_info_id: int, session: AsyncSession
+    ) -> bool:
+        """
+        验证浏览器实例是否属于指定用户
+
+        Args:
+            mid: 用户ID
+            browser_info_id: 浏览器实例ID
+            session: 数据库会话
+
+        Returns:
+            bool: 如果浏览器实例属于该用户返回True，否则返回False
+        """
+        stmt = select(UserBrowserInfo.id).where(
+            and_(
+                UserBrowserInfo.id == browser_info_id,
+                UserBrowserInfo.mid == mid,
+            )
+        )
+        result = await session.exec(stmt)
+        return result.one_or_none() is not None
+
+    # ============ UserBrowserDefaultSetting 服务方法 ============
+
+    @staticmethod
+    async def get_user_default_settings(
+        mid: int, session: AsyncSession
+    ) -> UserBrowserDefaultSetting | None:
+        """
+        获取用户的默认设置
+
+        Args:
+            mid: 用户ID
+            session: 数据库会话
+
+        Returns:
+            UserBrowserDefaultSetting: 用户的默认设置，如果不存在则返回None
+        """
+        stmt = select(UserBrowserDefaultSetting).where(
+            UserBrowserDefaultSetting.mid == mid,
+        )
+        result = await session.exec(stmt)
+        return result.one_or_none()
+
+    @staticmethod
+    async def create_or_update_user_default_settings(
+        mid: int, request: UserBrowserDefaultSettingRequest, session: AsyncSession
+    ) -> UserBrowserDefaultSettingResponse:
+        """
+        创建或更新用户的默认设置（如果存在则更新，不存在则创建）
+
+        Args:
+            mid: 用户ID
+            request: 默认设置请求
+            session: 数据库会话
+
+        Returns:
+            UserBrowserDefaultSettingResponse: 创建或更新后的默认设置响应
+        """
+        # 检查是否已存在用户的默认设置
+        existing_settings = await BrowserDBService.get_user_default_settings(
+            mid, session
+        )
+
+        if existing_settings:
+            # 更新现有设置
+            update_data = request.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                setattr(existing_settings, key, value)
+
+            session.add(existing_settings)
+            await session.commit()
+            await session.refresh(existing_settings)
+
+            # 转换为响应模型
+            response_data = existing_settings.model_dump()
+            return UserBrowserDefaultSettingResponse(**response_data)
+        else:
+            # 创建新设置
+            new_settings = UserBrowserDefaultSetting(mid=mid, **request.model_dump())
+            response_data = new_settings.model_dump()
+
+            session.add(new_settings)
+            await session.commit()
+            await session.refresh(new_settings)
+
+            # 转换为响应模型
+            return UserBrowserDefaultSettingResponse(**response_data)
+
+    @staticmethod
+    async def delete_user_default_settings(mid: int, session: AsyncSession) -> bool:
+        """
+        删除用户的默认设置
+
+        Args:
+            mid: 用户ID
+            session: 数据库会话
+
+        Returns:
+            bool: 删除成功返回True，如果设置不存在返回False
+        """
+        # 检查是否已存在用户的默认设置
+        existing_settings = await BrowserDBService.get_user_default_settings(
+            mid, session
+        )
+
+        if not existing_settings:
+            return False
+
+        await session.delete(existing_settings)
+        await session.commit()
+        return True
+
+    @staticmethod
+    async def apply_default_settings_to_browser(
+        browser_id: int, mid: int, session: AsyncSession
+    ) -> bool:
+        """
+        将用户的默认设置应用到指定的浏览器实例
+
+        Args:
+            browser_id: 浏览器实例ID
+            mid: 用户ID
+            session: 数据库会话
+
+        Returns:
+            bool: 应用成功返回True，否则返回False
+        """
+        # 获取用户的默认设置
+        default_settings = await BrowserDBService.get_user_default_settings(
+            mid, session
+        )
+
+        if not default_settings:
+            return False
+
+        # 获取浏览器实例
+        stmt = select(UserBrowserInfo).where(
+            and_(
+                UserBrowserInfo.id == browser_id,
+                UserBrowserInfo.mid == mid,
+            )
+        )
+        result = await session.exec(stmt)
+        browser_info = result.one_or_none()
+
+        if not browser_info:
+            return False
+
+        # 应用默认设置到浏览器实例
+        # 这里可以根据需要选择性地应用某些设置
+        # 例如，只更新代理设置或视口设置等
+
+        # 示例：更新代理设置
+        if default_settings.default_proxy_server:
+            # 这里需要根据实际的浏览器模型结构来更新
+            # 假设浏览器模型有 proxy_server 字段
+            if hasattr(browser_info, "proxy_server"):
+                setattr(
+                    browser_info, "proxy_server", default_settings.default_proxy_server
+                )
+
+        # 示例：更新视口设置
+        if (
+            default_settings.default_viewport_width
+            and default_settings.default_viewport_height
+        ):
+            # 假设浏览器模型有 viewport_width 和 viewport_height 字段
+            if hasattr(browser_info, "viewport_width"):
+                setattr(
+                    browser_info,
+                    "viewport_width",
+                    default_settings.default_viewport_width,
+                )
+            if hasattr(browser_info, "viewport_height"):
+                setattr(
+                    browser_info,
+                    "viewport_height",
+                    default_settings.default_viewport_height,
+                )
+
+        session.add(browser_info)
+        await session.commit()
+        return True

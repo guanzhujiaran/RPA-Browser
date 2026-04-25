@@ -24,37 +24,37 @@ class PermissionConfigService:
             level_name="level0",
             level_value=0,
             permissions=[0, 1, 2, 3, 4, 5, 6],
-            max_fingerprints=3,
+            max_fingerprints=0,
         ),
         PermissionLevelConfig(
             level_name="level1",
             level_value=1,
             permissions=[1, 2, 3, 4, 5, 6],
-            max_fingerprints=10,
+            max_fingerprints=1,
         ),
         PermissionLevelConfig(
             level_name="level2",
             level_value=2,
             permissions=[2, 3, 4, 5, 6],
-            max_fingerprints=20,
+            max_fingerprints=2,
         ),
         PermissionLevelConfig(
             level_name="level3",
             level_value=3,
             permissions=[3, 4, 5, 6],
-            max_fingerprints=50,
+            max_fingerprints=3,
         ),
         PermissionLevelConfig(
             level_name="level4",
             level_value=4,
             permissions=[4, 5, 6],
-            max_fingerprints=100,
+            max_fingerprints=4,
         ),
         PermissionLevelConfig(
-            level_name="level5", level_value=5, permissions=[5, 6], max_fingerprints=200
+            level_name="level5", level_value=5, permissions=[5, 6], max_fingerprints=5
         ),
         PermissionLevelConfig(
-            level_name="level6", level_value=6, permissions=[6], max_fingerprints=500
+            level_name="level6", level_value=6, permissions=[6], max_fingerprints=100
         ),
         PermissionLevelConfig(
             level_name="root", level_value=99, permissions=[6], max_fingerprints=999999
@@ -114,7 +114,7 @@ class PermissionConfigService:
             return True
         except Exception as e:
             logger.error(f"更新权限配置失败: {e}")
-            return False
+            raise e
 
     @classmethod
     async def reset_to_default(cls) -> bool:
@@ -125,7 +125,7 @@ class PermissionConfigService:
             return True
         except Exception as e:
             logger.error(f"重置权限配置失败: {e}")
-            return False
+            raise e
 
     @classmethod
     async def get_permissions_by_level(cls, level_name: str) -> List[int] | None:

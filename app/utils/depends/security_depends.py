@@ -3,6 +3,11 @@
 用于验证浏览器ID是否属于特定用户MID
 """
 
+from typing import Callable
+
+from fastapi import Depends
+from sqlmodel.ext.asyncio.session import AsyncSession
+
 from app.models.exceptions.base_exception import (
     BrowserIdNotBeloneToUserException,
     BrowserIdIsNoneExeception,
@@ -11,27 +16,25 @@ from app.models.exceptions.base_exception import (
     FingerprintLimitExceededException,
 )
 from app.models.RPA_browser.browser_api_models import BrowserFingerprintQueryParams
-from fastapi import Depends
-from sqlmodel.ext.asyncio.session import AsyncSession
-from app.services.RPA_browser.browser_db_service import BrowserDBService
-from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
-from app.utils.depends.session_manager import DatabaseSessionManager
-from app.services.RPA_browser.plugin_db_service import PluginDBService
-from app.services.RPA_browser.permission_config_service import PermissionConfigService
 from app.models.RPA_browser.depends_models import (
     VerifyBrowserDependsReq,
-    BrowserReqInfo,
+    BrowserReqAuthInfo,
     VerifyPluginDependsReq,
     BrowserPluginReqInfo,
     VerifyFingerprintDependsReq,
 )
+from app.services.RPA_browser.browser_db_service import BrowserDBService
+from app.services.RPA_browser.permission_config_service import PermissionConfigService
+from app.services.RPA_browser.plugin_db_service import PluginDBService
+from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
+from app.utils.depends.session_manager import DatabaseSessionManager
 
 
 async def verify_browser_ownership(
     body: VerifyBrowserDependsReq,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
-) -> BrowserReqInfo:
+) -> BrowserReqAuthInfo:
     """
     验证浏览器ID是否属于当前用户MID
 
@@ -41,7 +44,7 @@ async def verify_browser_ownership(
         session: 数据库会话
 
     Returns:
-        BrowserReqInfo: 验证通过的浏览器请求信息
+        BrowserReqAuthInfo: 验证通过的浏览器请求信息
 
     Raises:
         HTTPException: 当浏览器不属于用户或不存在时抛出
@@ -60,7 +63,7 @@ async def verify_browser_ownership(
     if not fingerprint_info:
         raise BrowserIdNotBeloneToUserException(browser_id=browser_id)
 
-    return BrowserReqInfo(mid=auth_info.mid, browser_id=browser_id)
+    return BrowserReqAuthInfo(auth_info=auth_info, browser_id=browser_id)
 
 
 async def verify_plugin_ownership(
@@ -105,7 +108,7 @@ async def verify_fingerprint_ownership(
     body: VerifyFingerprintDependsReq,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
-) -> BrowserReqInfo:
+) -> BrowserReqAuthInfo:
     """
     验证浏览器指纹是否属于当前用户MID
 
@@ -115,7 +118,7 @@ async def verify_fingerprint_ownership(
         session: 数据库会话
 
     Returns:
-        BrowserReqInfo: 验证通过的浏览器请求信息
+        BrowserReqAuthInfo: 验证通过的浏览器请求信息
 
     Raises:
         BrowserIdIsNoneExeception: 当浏览器ID为空时抛出
@@ -126,8 +129,6 @@ async def verify_fingerprint_ownership(
         raise BrowserIdIsNoneExeception()
 
     # 验证浏览器指纹是否存在且属于当前用户
-    from app.models.RPA_browser.browser_info_model import BrowserFingerprintQueryParams
-
     fingerprint_info = await BrowserDBService.read_fingerprint(
         params=BrowserFingerprintQueryParams(id=browser_id),
         mid=auth_info.mid,
@@ -137,7 +138,7 @@ async def verify_fingerprint_ownership(
     if not fingerprint_info:
         raise BrowserIdNotBeloneToUserException(browser_id=browser_id)
 
-    return BrowserReqInfo(mid=auth_info.mid, browser_id=browser_id)
+    return BrowserReqAuthInfo(auth_info=auth_info, browser_id=browser_id)
 
 
 async def verify_fingerprint_limit(
@@ -167,6 +168,7 @@ async def verify_fingerprint_limit(
 
     # 检查是否超出限制
     if current_count >= max_fingerprints:
-        raise FingerprintLimitExceededException(max_fingerprints=max_fingerprints)
+        raise FingerprintLimitExceededException(
+            max_fingerprints=max_fingerprints)
 
     return auth_info

@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
-import asyncio
 import fastapi_cdn_host
 import uvicorn
 import sys
@@ -10,6 +9,7 @@ from app.routes import setup_routes
 from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
 from scripts.initd.main import init_dependencies
+import asyncio
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
                 pass
 
     await init_dependencies()
+
     # 启动后台任务
     await start_background_tasks()
 
@@ -65,7 +66,7 @@ app = create_app()
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=8000,
         reload=False,
     )

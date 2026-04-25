@@ -5,10 +5,11 @@ import asyncio
 
 
 async def init_dependencies():
-
-    download()
-    create_tables()
-    await install_chromium()
+    await asyncio.gather(
+        asyncio.to_thread(download),
+        asyncio.to_thread(create_tables),
+        install_chromium()
+    )
 
 
 if __name__ == "__main__":

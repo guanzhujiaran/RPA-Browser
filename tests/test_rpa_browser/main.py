@@ -106,7 +106,7 @@ async def op_browser(browser_token: uuid.UUID):
 
     # 创建会话参数
     session_params = SessionCreateParams(
-        browser_token=browser_token, browser_id=browser_id, headless=True
+        browser_token=browser_token, browser_id=browser_id, headless=False
     )
     print(f'session_params: {session_params}')
     # 获取包含插件的会话

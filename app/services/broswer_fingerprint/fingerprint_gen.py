@@ -5,7 +5,7 @@ from app.models.RPA_browser.browser_info_model import (
     BaseFingerprintBrowserInitParams,
     PlatformEnum,
     BrowserFingerprintCreateParams,
-    UserBrowserDefaultSetting,
+    UserBrowserServerSideDefaultSetting,
     BrowserEnum,
 )
 from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
@@ -20,10 +20,9 @@ from app.utils.http.rand_headers_gen import (
 async def gen_from_browserforge_fingerprint(
     *,
     params: BrowserFingerprintCreateParams,
-    user_default_settings: UserBrowserDefaultSetting | None = None,
+    user_default_settings: UserBrowserServerSideDefaultSetting | None = None,
 ) -> BaseFingerprintBrowserInitParams:
-    if user_default_settings is None:
-        user_default_settings = UserBrowserDefaultSetting()
+    default_browser_setting = UserBrowserServerSideDefaultSetting(mid=-1)
 
     ua_list = await browser_exec_info_helper.get_exec_info_ua_list()
     if params.is_desktop:
@@ -74,6 +73,33 @@ async def gen_from_browserforge_fingerprint(
 
     brand_version = rand_fingerprint.navigator.userAgentData.get("uaFullVersion")
     platform_version = rand_fingerprint.navigator.userAgentData.get("platformVersion")
+
+    # 应用用户默认设置（如果存在）
+    lang = (
+        user_default_settings
+        and user_default_settings.default_lang
+        or default_browser_setting.default_lang
+        or rand_fingerprint.navigator.language
+    )
+    timezone = (
+        user_default_settings
+        and user_default_settings.default_timezone
+        or default_browser_setting.default_timezone
+        or "Asia/Shanghai"
+    )
+    viewport_width = (
+        user_default_settings
+        and user_default_settings.default_viewport_width
+        or default_browser_setting.default_viewport_width
+        or rand_fingerprint.screen.availWidth
+    )
+    viewport_height = (
+        user_default_settings
+        and user_default_settings.default_viewport_height
+        or default_browser_setting.default_viewport_height
+        or rand_fingerprint.screen.availHeight
+    )
+    proxy_server = user_default_settings and user_default_settings.default_proxy_server or default_browser_setting.default_proxy_server or ""
     return BaseFingerprintBrowserInitParams.model_construct(
         fingerprint=random.randint(-2147483648, 2147483647),
         fingerprint_platform=platform,
@@ -83,13 +109,14 @@ async def gen_from_browserforge_fingerprint(
         fingerprint_hardware_concurrency=rand_fingerprint.navigator.hardwareConcurrency,
         fingerprint_gpu_vendor=rand_fingerprint.videoCard.vendor,
         fingerprint_gpu_renderer=rand_fingerprint.videoCard.renderer,
-        lang=rand_fingerprint.navigator.language,
+        lang=lang,
         accept_lang=",".join(rand_fingerprint.navigator.languages),
+        timezone=timezone,
         patchright_screen_width=rand_fingerprint.screen.width,
         patchright_screen_height=rand_fingerprint.screen.height,
-        patchright_viewport_width=rand_fingerprint.screen.availWidth,
-        patchright_viewport_height=rand_fingerprint.screen.availHeight,
-        proxy_server=user_default_settings.proxy_server or "",
+        patchright_viewport_width=viewport_width,
+        patchright_viewport_height=viewport_height,
+        proxy_server=proxy_server,
         patchright_fingerprint_dict=asdict(rand_fingerprint),
         patchright_browser_ua=ua_string,
     )

@@ -40,7 +40,7 @@ async def test_plugined_browser():
     session_params = SessionCreateParams(
         browser_token=browser_token,
         browser_id=browser_id,
-        headless=True  # 在测试环境中通常使用无头模式
+        headless=False
     )
 
     # 获取包含插件的浏览器会话

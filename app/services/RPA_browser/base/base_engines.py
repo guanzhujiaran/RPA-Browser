@@ -33,7 +33,7 @@ class BaseUndetectedPlaywright:
         mid: uuid.UUID,
         browser_id: int,
         *,
-        headless: bool = True,
+        headless: bool = False,
     ):
         """
         headless测试的时候设置成False

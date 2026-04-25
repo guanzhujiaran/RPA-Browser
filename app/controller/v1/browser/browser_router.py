@@ -12,25 +12,27 @@ from app.models.RPA_browser.browser_info_model import (
     BrowserFingerprintDeleteResp,
     UserBrowserInfo,
     BrowserFingerprintListParams,
-    BrowserFingerprintCreateParams
+    BrowserFingerprintCreateParams,
+    BrowserFingerprintRenameParams,
+    BrowserFingerprintRenameResp,
 )
 from app.models.RPA_browser.depends_models import BrowserReqInfo
 from app.utils.depends.security_depends import verify_fingerprint_ownership, verify_fingerprint_limit
 from app.models.base.base_sqlmodel import BasePaginationResp
-from app.models.router.router_prefix import BrowserRouterPath
-from app.utils.depends.session_manager import DatabaseSessionManager
-from .base import new_router
+from app.models.router.router_prefix import BrowserFingerprintRouterPath
+from .base import new_fingerprint_router
 from app.models.response import StandardResponse, success_response
 from app.services.RPA_browser.browser_service import BrowserService
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 from app.utils.depends.mid_depends import get_auth_info_from_header
+from app.utils.depends.session_manager import DatabaseSessionManager
 from typing import Union
 
-router = new_router()
+router = new_fingerprint_router()
 
 
 @router.post(
-    BrowserRouterPath.gen_rand_fingerprint,
+    BrowserFingerprintRouterPath.gen_rand_fingerprint,
     response_model=StandardResponse[BaseFingerprintBrowserInitParams],
     response_model_by_alias=False
 )
@@ -58,7 +60,7 @@ async def gen_rand_fingerprint_router(params: BrowserFingerprintCreateParams):
 
 
 @router.post(
-    BrowserRouterPath.upsert_fingerprint,
+    BrowserFingerprintRouterPath.upsert_fingerprint,
     response_model=StandardResponse[BrowserFingerprintCreateResp],
 )
 async def upsert_fingerprint_router(
@@ -93,7 +95,7 @@ async def upsert_fingerprint_router(
 
 
 @router.post(
-    BrowserRouterPath.read_fingerprint,
+    BrowserFingerprintRouterPath.read_fingerprint,
     response_model=StandardResponse[Union[BrowserFingerprintQueryResp, None]],
     response_model_by_alias=False
 )
@@ -128,7 +130,7 @@ async def read_fingerprint_router(
 
 
 @router.post(
-    BrowserRouterPath.delete_fingerprint,
+    BrowserFingerprintRouterPath.delete_fingerprint,
     response_model=StandardResponse[BrowserFingerprintDeleteResp],
 )
 async def delete_fingerprint_router(
@@ -164,7 +166,7 @@ async def delete_fingerprint_router(
     )
 
 
-@router.post(BrowserRouterPath.count_fingerprint, response_model=StandardResponse[int])
+@router.post(BrowserFingerprintRouterPath.count_fingerprint, response_model=StandardResponse[int])
 async def count_fingerprint_router(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
@@ -189,7 +191,7 @@ async def count_fingerprint_router(
 
 
 @router.post(
-    BrowserRouterPath.list_fingerprint,
+    BrowserFingerprintRouterPath.list_fingerprint,
     response_model=StandardResponse[BasePaginationResp[UserBrowserInfo]],
     response_model_by_alias=False
 )
@@ -216,4 +218,35 @@ async def list_fingerprint_router(
         只返回属于当前用户的浏览器指纹信息，按创建时间倒序排列
     """
     result = await BrowserDBService.list_fingerprint(params, auth_info.mid, session)
+    return success_response(data=result)
+
+
+@router.post(
+    BrowserFingerprintRouterPath.rename_fingerprint,
+    response_model=StandardResponse[BrowserFingerprintRenameResp],
+)
+async def rename_fingerprint_router(
+    params: BrowserFingerprintRenameParams,
+    auth_info: AuthInfo = Depends(get_auth_info_from_header),
+    session: AsyncSession = DatabaseSessionManager.get_dependency(),
+):
+    """
+    重命名浏览器指纹
+
+    更新指定浏览器指纹的自定义名称。支持设置新名称或清除名称（传入 null）。
+    只能修改属于当前用户的浏览器指纹信息。
+
+    Args:
+        params: 重命名参数，包含指纹ID和新名称
+        auth_info: 认证信息，从请求头中自动获取
+        session: 数据库会话
+
+    Returns:
+        BrowserFingerprintRenameResp: 更新结果，包含指纹ID和新名称
+
+    Note:
+        只能修改属于当前用户的浏览器指纹信息
+        设置 custom_name 为 null 可清除名称
+    """
+    result = await BrowserDBService.rename_fingerprint(params, auth_info.mid, session)
     return success_response(data=result)

@@ -4,5 +4,17 @@
     "download_url": "https://github.com/adryfish/fingerprint-chromium/releases/download/139.0.7258.154/ungoogled-chromium-139.0.7258.154-1-x86_64.AppImage",
     "full_version": "139.0.7258.154",
     "exec_name": "ungoogled-chromium-139.0.7258.154.AppImage"
+  },
+  {
+    "browser_ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+    "download_url": "https://github.com/adryfish/fingerprint-chromium/releases/download/144.0.7559.132/ungoogled-chromium-144.0.7559.132-1-x86_64.AppImage",
+    "full_version": "144.0.7559.132",
+    "exec_name": "ungoogled-chromium-144.0.7559.132.AppImage"
+  },
+  {
+    "browser_ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+    "download_url": "https://github.com/adryfish/fingerprint-chromium/releases/download/142.0.7444.175/ungoogled-chromium-142.0.7444.175-1-x86_64.AppImage",
+    "full_version": "142.0.7444.175",
+    "exec_name": "ungoogled-chromium-142.0.7444.175.AppImage"
   }
 ]

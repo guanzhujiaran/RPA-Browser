@@ -1,21 +1,16 @@
-import os
-from typing import List
-from app.config import settings
-from pydantic import TypeAdapter
-from sqlmodel import SQLModel
-from pydantic import computed_field
+"""
+Browser Exec Info Model - 向后兼容模块
 
+此文件保留用于向后兼容。
+请使用 app.models.core.browser_exec 中的模型。
+"""
 
-class BrowserExecInfoModel(SQLModel):
-    browser_ua: str
-    download_url: str
-    full_version: str
-    exec_name: str
+from app.models.core.browser_exec import (
+    BrowserExecInfoModel,
+    BrowserExecInfoModels,
+)
 
-    @computed_field
-    @property
-    def exec_path(self) -> str:
-        return os.path.join(settings.chromium_executable_dir, self.exec_name)
-
-
-BrowserExecInfoModels = TypeAdapter(List[BrowserExecInfoModel])
+__all__ = [
+    "BrowserExecInfoModel",
+    "BrowserExecInfoModels",
+]

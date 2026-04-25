@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"  # JWT算法
     jwt_expire_minutes: int = 7 * 24 * 60  # JWT过期时间（分钟），默认30分钟
     proxy_server_url: str = "http://127.0.0.1:10809"  # 可以访问外网的代理地址
+    github_proxy_url: str = "https://gh-proxy.com/"
 
     admin_base_path: str = "/admin_api"
 

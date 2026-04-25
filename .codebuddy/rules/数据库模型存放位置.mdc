@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-09T06:44:14.318Z
+provider: 
+---
+
+数据库的模型都放在app.models.RPA_browser.xxx_model里面,xxx可以自定义名称,继承`from app.models.base.base_sqlmodel import BaseSQLModel`,写完了之后修改scripts/initd/init_database.py,将数据库模型导入,方便一键创建

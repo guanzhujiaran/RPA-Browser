@@ -1,0 +1,57 @@
+"""
+Response Code 模块 - 统一响应码定义
+"""
+
+from enum import IntEnum
+
+
+class ResponseCode(IntEnum):
+    """
+    统一响应码枚举类
+    """
+    # 成功
+    SUCCESS = 0
+
+    # 通用错误码
+    BAD_REQUEST = 400
+    UNAUTHORIZED = 401
+    FORBIDDEN = 403
+    NOT_FOUND = 404
+    METHOD_NOT_ALLOWED = 405
+    REQUEST_TIMEOUT = 408
+    CONFLICT = 409
+    GONE = 410
+    TOO_MANY_REQUESTS = 429
+
+    # 服务器错误
+    INTERNAL_ERROR = 500
+    NOT_IMPLEMENTED = 501
+    BAD_GATEWAY = 502
+    SERVICE_UNAVAILABLE = 503
+    GATEWAY_TIMEOUT = 504
+
+    # 自定义业务错误码
+    BUSINESS_ERROR = 1000
+    VALIDATION_ERROR = 1001
+    DATABASE_ERROR = 1002
+    NETWORK_ERROR = 1003
+    MID_NOT_FOUND = 10004
+    BROWSER_ID_NOT_FOUND = 10005
+
+    # WebRTC 相关错误码
+    WEBRTC_OFFER_FAILED = 20001
+    WEBRTC_ANSWER_FAILED = 20002
+    WEBRTC_ICE_CANDIDATE_FAILED = 20003
+    WEBRTC_CLOSE_FAILED = 20004
+    WEBRTC_CONNECTION_FAILED = 20005
+    WEBRTC_STATUS_FAILED = 20006
+
+    # 截图相关错误码
+    SCREENSHOT_FAILED = 20007
+    PAGE_CLOSED = 20007
+
+    # 指纹数量限制错误码
+    FINGERPRINT_LIMIT_EXCEEDED = 20008
+
+
+__all__ = ["ResponseCode"]

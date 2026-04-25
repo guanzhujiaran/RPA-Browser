@@ -2,7 +2,6 @@
 from loguru import logger
 from fastapi import APIRouter
 
-from app.config import settings
 from app.models.response_code import ResponseCode
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_tag import RouterTag
@@ -14,7 +13,7 @@ from app.models.RPA_browser.admin_models import (
 from app.services.RPA_browser.live_service import LiveService
 from app.services.RPA_browser.webrtc_service import WebRTCService
 
-router = APIRouter(prefix=settings.admin_base_path, tags=[RouterTag.admin_management])
+router = APIRouter(tags=[RouterTag.admin_management])
 
 
 @router.post("/sessions/all", response_model=StandardResponse[AdminAllSessionsResponse])

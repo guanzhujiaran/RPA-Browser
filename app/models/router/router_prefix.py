@@ -3,51 +3,85 @@ from app.config import settings
 
 
 class RouterPrefix(StrEnum):
-    browser = "/browser"
-    browser_live_control = "/browser_live_control"
-    admin = settings.admin_base_path
+    # === 核心资源层 ===
+    BROWSER = "/browser"  # 浏览器指纹/插件/通知配置管理
+    BROWSER_SESSION = "/browser/session"  # 浏览器会话管理（动态实例）
+
+    # === 操作控制层 ===
+    BROWSER_CONTROL = "/browser/control"  # 浏览器实时控制总入口
+
+    # === 系统管理层 ===
+    ADMIN = settings.admin_base_path  # 管理员接口
+    SYSTEM = "/system"  # 系统级接口（健康检查等）
 
 
-class BrowserRouterPath(StrEnum):
+class BrowserFingerprintRouterPath(StrEnum):
+    """浏览器指纹管理路由路径 - prefix: /browser"""
+
     gen_rand_fingerprint = "/gen_rand_fingerprint"
     upsert_fingerprint = "/upsert_fingerprint"
     read_fingerprint = "/read_fingerprint"
     delete_fingerprint = "/delete_fingerprint"
     count_fingerprint = "/count_fingerprint"
     list_fingerprint = "/list_fingerprint"
+    rename_fingerprint = "/rename_fingerprint"
+
+
+class BrowserSessionRouterPath(StrEnum):
+    """会话管理路由路径 - prefix: /browser/session"""
+
+    heartbeat = "/heartbeat"
+    create = "/create"
+    status = "/status"
 
 
 class BrowserControlRouterPath(StrEnum):
-    # 基础路径
-    base = "/browser"
-    stream_base = "/stream"
+    # === 浏览器操作信息 ===
+    browser_info = "/browser/info"
 
-    # 心跳和会话管理
-    heartbeat = "/browser/heartbeat"
-    session_create = "/browser/session/create"
-    session_status = "/browser/session/status"
+    # === 操作管理 ===
+    actions_registered = "/actions/registered"
+    actions_execute = "/actions/execute"
+    actions_batch = "/actions/batch"
+    actions_preview = "/actions/preview"
+    actions_validate = "/actions/validate"
+    actions_execute_step = "/actions/execute-step"
 
-    # 操作控制
-    manual_stop = "/browser/manual/stop"
-    operation_status = "/browser/operation/status"
-    control = "/browser/control"
+    # === 自定义操作 ===
+    custom_actions_list = "/custom-actions/list"
+    custom_actions_reload = "/custom-actions/reload"
+    custom_actions_get = "/custom-actions/get"
+    custom_actions_create = "/custom-actions/create"
+    custom_actions_update = "/custom-actions/update"
+    custom_actions_delete = "/custom-actions/delete"
 
-    # 插件管理
-    plugins_pause = "/browser/plugins/pause"
-    plugins_status = "/browser/plugins/status"
+    # === 插件管理 ===
+    plugins_registered = "/plugins/registered"
+    plugins_get = "/plugins/get"
+    plugins_list_user = "/plugins/list-user"
+    plugins_create = "/plugins/create"
+    plugins_update = "/plugins/update"
+    plugins_delete = "/plugins/delete"
 
-    # 浏览器信息
-    info = "/browser/info"
-    status = "/browser/status"
-    navigate = "/browser/navigate"
-    evaluate = "/browser/evaluate"
+    # === 工作流管理 ===
+    workflows_list = "/workflows/list"
+    workflows_get = "/workflows/get"
+    workflows_create = "/workflows/create"
+    workflows_update = "/workflows/update"
+    workflows_delete = "/workflows/delete"
+    workflows_duplicate = "/workflows/duplicate"
+    workflows_execute = "/workflows/execute"
 
-    # 视频流
-    stream_status = "/browser/stream/status"
+    # === 插件运行时控制 ===
+    plugins_pause = "/plugins/pause"
+    plugins_resume = "/plugins/resume"
+    plugins_status = "/plugins/status"
+
+    # === 视频流 ===
+    stream_status = "/stream/status"
     stream_mjpeg = "/stream/mjpeg"
-    screenshot = "/stream/screenshot"
 
-    # WebRTC 视频流
+    # === WebRTC 视频流 ===
     webrtc_offer = "/webrtc/offer"
     webrtc_answer = "/webrtc/answer"
     webrtc_ice_candidate = "/webrtc/ice-candidate"
@@ -55,39 +89,14 @@ class BrowserControlRouterPath(StrEnum):
     webrtc_status = "/webrtc/status"
     webrtc_close = "/webrtc/close"
 
-    # 操作执行
-    click = "/browser/click"
-    execute = "/browser/execute"
-    safe_execute = "/browser/safe_execute"
-
-    # 资源管理
-    cleanup_policy = "/browser/cleanup/policy"
-    force_release = "/browser/force/release"
-
-    # 系统管理
     system_statistics = "/system/statistics"
+    cleanup_policy = "/system/cleanup"
     system_cleanup = "/system/cleanup"
     system_health = "/system/health"
 
-    # 管理员管理
-    admin_all_sessions = "/admin/sessions/all"
-    admin_all_streams = "/admin/streams/all"
-    admin_all_stats = "/admin/stats/all"
-
-    # 安全检查
-    security_check = "/security/check"
-
-    # 兼容性路由
-    screenshot_legacy = "/screenshot"
-    live_create = "/live/create"
-    live_view = "/live/view"
-    live_stream = "/live/stream"
-    live_ws = "/live/ws"
-    live_stop = "/live/stop"
-
 
 class PluginRouterPath(StrEnum):
-    """插件管理路由路径"""
+    """插件管理路由路径 - prefix: /browser"""
 
     create_plugin = "/plugin"
     update_plugin = "/plugin"
@@ -96,8 +105,17 @@ class PluginRouterPath(StrEnum):
     delete_plugin = "/plugin/delete"
 
 
+class UserBrowserDefaultSettingRouterPath(StrEnum):
+    """用户浏览器默认设置路由路径 - prefix: /browser"""
+
+    get_settings = "/default-settings/get"
+    create_or_update_settings = "/default-settings/create-or-update"
+    delete_settings = "/default-settings/delete"
+    apply_settings = "/default-settings/apply"
+    get_server_user_setting_defaults = "/default-settings/server-defaults/get"
+
 class NotifyRouterPath(StrEnum):
-    """通知管理路由路径"""
+    """通知管理路由路径 - prefix: /browser"""
 
     upsert_notify_config = "/notify/conf/upsert"
     read_notify_config = "/notify/conf/read"

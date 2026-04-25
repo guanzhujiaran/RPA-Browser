@@ -15,12 +15,21 @@ from app.models.RPA_browser.default_plugin_config import (
     get_default_plugin_config,
     is_plugin_config_changed
 )
+from app.models.RPA_browser.browser_database_models import (
+    UserBrowserDefaultSetting,
+)
 from app.services.site_rpa_operation.plugins import PluginTypeEnum
 from app.utils.plugin_utils import get_plugin_model_class
 
 
 class VirtualPluginFactory:
-    """虚拟插件对象工厂类，用于统一创建默认配置的插件对象"""
+    """虚拟插件对象工厂类，用于统一创建默认配置的插件对象
+
+    配置映射关系:
+    - PAGE_LIMIT: default_max_pages -> max_pages
+    - RETRY: default_retry_times -> retry_times, default_retry_delay -> delay
+    - RANDOM_WAIT: default_min_wait -> min_wait, default_max_wait -> max_wait
+    """
     
     VIRTUAL_ID = -1  # 虚拟对象的ID标识
     
@@ -28,7 +37,8 @@ class VirtualPluginFactory:
     def create_virtual_plugin(
         plugin_type: PluginTypeEnum, 
         mid: int, 
-        browser_info_id: Optional[int] = None
+        browser_info_id: Optional[int] = None,
+        user_default_settings: Optional[UserBrowserDefaultSetting] = None,
     ) -> Optional[PluginBaseModel]:
         """
         创建虚拟插件对象
@@ -37,21 +47,44 @@ class VirtualPluginFactory:
             plugin_type: 插件类型
             mid: 用户ID
             browser_info_id: 浏览器实例ID，None表示用户级别插件
+            user_default_settings: 用户默认设置，用于应用用户自定义的默认插件配置
             
         Returns:
             虚拟插件对象，如果插件类型不支持则返回None
         """
-        default_config = get_default_plugin_config(plugin_type)
         model = get_plugin_model_class(plugin_type)
         
         if not model:
             return None
-            
-        plugin_data = {
-            "mid": mid,
-            "browser_info_id": browser_info_id,
-            **default_config.model_dump()
-        }
+        
+        # 获取基础默认配置
+        default_config = get_default_plugin_config(plugin_type)
+        plugin_data = default_config.model_dump()
+        
+        # 从用户默认设置中获取配置（如果存在）
+        # 这些配置项定义在 UserBrowserDefaultSetting 中，作为各插件的默认参数
+        if user_default_settings:
+            if plugin_type == PluginTypeEnum.PAGE_LIMIT:
+                # default_max_pages 作为 PageLimitPluginModel.max_pages 的默认值
+                if user_default_settings.default_max_pages is not None:
+                    plugin_data["max_pages"] = user_default_settings.default_max_pages
+            elif plugin_type == PluginTypeEnum.RETRY:
+                # default_retry_times 作为 RetryPluginModel.retry_times 的默认值
+                if user_default_settings.default_retry_times is not None:
+                    plugin_data["retry_times"] = user_default_settings.default_retry_times
+                # default_retry_delay 作为 RetryPluginModel.delay 的默认值
+                if user_default_settings.default_retry_delay is not None:
+                    plugin_data["delay"] = user_default_settings.default_retry_delay
+            elif plugin_type == PluginTypeEnum.RANDOM_WAIT:
+                # default_min_wait 作为 RandomWaitPluginModel.min_wait 的默认值
+                if user_default_settings.default_min_wait is not None:
+                    plugin_data["min_wait"] = user_default_settings.default_min_wait
+                # default_max_wait 作为 RandomWaitPluginModel.max_wait 的默认值
+                if user_default_settings.default_max_wait is not None:
+                    plugin_data["max_wait"] = user_default_settings.default_max_wait
+        
+        plugin_data["mid"] = mid
+        plugin_data["browser_info_id"] = browser_info_id
         
         plugin = model(**plugin_data)
         plugin.id = VirtualPluginFactory.VIRTUAL_ID  # 标记为虚拟对象
@@ -114,12 +147,19 @@ class PluginDBService:
     async def get_browser_info_plugins(
             mid: int,
             browser_id: int,
-            session: AsyncSession
+            session: AsyncSession,
+            user_default_settings: Optional[UserBrowserDefaultSetting] = None,
     ) -> Dict[PluginTypeEnum, PluginBaseModel]:
         """
         获取浏览器实例的插件配置
         如果没有特定插件，则使用用户默认插件
         如果连用户默认插件也没有，则返回默认配置的虚拟对象
+        
+        Args:
+            mid: 用户ID
+            browser_id: 浏览器实例ID
+            session: 数据库会话
+            user_default_settings: 用户默认设置，用于应用用户自定义的默认插件配置
         """
         result = {}
         try:
@@ -148,7 +188,7 @@ class PluginDBService:
                 # 如果连用户默认插件也没有，则创建默认配置的虚拟对象
                 if not plugin:
                     plugin = VirtualPluginFactory.create_virtual_plugin(
-                        plugin_type, mid, browser_id
+                        plugin_type, mid, browser_id, user_default_settings
                     )
 
                 result[plugin_type] = plugin
@@ -158,7 +198,7 @@ class PluginDBService:
             # 发生数据库错误时，返回所有默认配置的虚拟对象
             for plugin_type in PluginTypeEnum:
                 plugin = VirtualPluginFactory.create_virtual_plugin(
-                    plugin_type, mid, browser_id
+                    plugin_type, mid, browser_id, user_default_settings
                 )
                 if plugin:
                     result[plugin_type] = plugin
@@ -167,7 +207,7 @@ class PluginDBService:
             # 发生未知错误时，同样返回默认配置的虚拟对象
             for plugin_type in PluginTypeEnum:
                 plugin = VirtualPluginFactory.create_virtual_plugin(
-                    plugin_type, mid, browser_id
+                    plugin_type, mid, browser_id, user_default_settings
                 )
                 if plugin:
                     result[plugin_type] = plugin
@@ -257,11 +297,17 @@ class PluginDBService:
     @staticmethod
     async def get_or_create_user_default_plugins(
             mid: int,
-            session: AsyncSession
+            session: AsyncSession,
+            user_default_settings: Optional[UserBrowserDefaultSetting] = None,
     ) -> Dict[PluginTypeEnum, PluginBaseModel]:
         """
         获取用户默认插件配置
         注意：此方法不再自动创建默认插件，而是返回预定义的默认配置
+        
+        Args:
+            mid: 用户ID
+            session: 数据库会话
+            user_default_settings: 用户默认设置，用于应用用户自定义的默认插件配置
         """
         # 检查是否已存在用户默认插件配置
         existing_plugins = await PluginDBService.get_user_default_plugins(mid, session)
@@ -274,9 +320,9 @@ class PluginDBService:
                 # 如果数据库中有自定义配置，则使用它
                 result[plugin_type] = existing_plugins[plugin_type]
             else:
-                # 否则返回默认配置的虚拟对象
+                # 否则返回默认配置的虚拟对象，应用用户自定义的默认设置
                 plugin = VirtualPluginFactory.create_virtual_plugin(
-                    plugin_type, mid, None  # None表示用户级别插件
+                    plugin_type, mid, None, user_default_settings  # None表示用户级别插件
                 )
                 if plugin:
                     result[plugin_type] = plugin
@@ -541,6 +587,41 @@ class PluginDBService:
                 return plugin
 
         return None
+
+    @staticmethod
+    async def verify_plugin_ownership(
+        plugin_id: int, mid: int, session: AsyncSession
+    ) -> bool:
+        """
+        验证插件是否属于指定用户
+        
+        Args:
+            plugin_id: 插件ID
+            mid: 用户ID
+            session: 数据库会话
+            
+        Returns:
+            bool: 如果插件属于该用户返回True，否则返回False
+        """
+        # 虚拟ID的插件不属于任何用户
+        if plugin_id == VirtualPluginFactory.VIRTUAL_ID:
+            return False
+
+        # 尝试从所有插件表中查找并验证归属
+        for plugin_type in PluginTypeEnum:
+            model = get_plugin_model_class(plugin_type)
+            stmt = select(model).where(
+                and_(
+                    model.id == plugin_id,
+                    model.mid == mid
+                )
+            )
+            result = await session.exec(stmt)
+            plugin = result.one_or_none()
+            if plugin:
+                return True
+
+        return False
 
     @staticmethod
     async def update_user_plugin(

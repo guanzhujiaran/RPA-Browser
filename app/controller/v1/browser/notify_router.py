@@ -1,3 +1,4 @@
+from app.models.response_code import ResponseCode
 from app.models.RPA_browser.depends_models import VerifyBrowserDependsReq
 from app.utils.depends.security_depends import verify_browser_ownership
 from fastapi import Depends
@@ -13,15 +14,15 @@ from app.models.RPA_browser.notify_model import (
     TestNotificationResponse,
 )
 from app.models.router.router_prefix import NotifyRouterPath
-from app.controller.v1.browser.notify_base import new_router
-from app.models.response import StandardResponse, success_response
+from .base import new_notify_router
+from app.models.response import StandardResponse, success_response, error_response
 from app.services.RPA_browser.browser_service import BrowserService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.bigint_utils import str_to_int
 import loguru
 
-router = new_router()
+router = new_notify_router()
 
 
 @router.post(
@@ -80,7 +81,7 @@ async def upsert_notify_config_router(
         # 配置不存在，创建新配置
         await browser_service.create_notification_config(config, session)
 
-    return success_response(data=NotificationConfigUpsertResp(mid=str(mid)))
+    return success_response(data=NotificationConfigUpsertResp(mid=str(auth_info.mid)))
 
 
 @router.post(
@@ -155,7 +156,9 @@ async def delete_notify_config_router(
     )
     result = await browser_service.delete_notification_config(session, browser_id_int)
     return success_response(
-        data=NotificationConfigDeleteResp(mid=str(mid), is_success=bool(result))
+        data=NotificationConfigDeleteResp(
+            mid=str(auth_info.mid), is_success=bool(result)
+        )
     )
 
 
@@ -195,7 +198,7 @@ async def test_notify_router(
     # 如果提供了browser_id，需要验证所有权
     if browser_id_int:
         await verify_browser_ownership(
-            VerifyBrowserDependsReq(browser_id=browser_id_int), mid, session
+            VerifyBrowserDependsReq(browser_id=browser_id_int), auth_info.mid, session
         )
 
     # 获取有效的通知配置
@@ -220,7 +223,7 @@ async def test_notify_router(
         # 创建NotificationConfig对象
         # 从effective_config创建配置对象，但需要补充必要的字段
         config_dict = effective_config.model_dump()
-        config_dict["mid"] = str(mid)
+        config_dict["mid"] = str(auth_info.mid)
         # 确保有browser_id字段
         if "browser_id" not in config_dict or config_dict["browser_id"] is None:
             config_dict["browser_id"] = browser_id_int
@@ -275,7 +278,8 @@ async def test_notify_router(
     except Exception as e:
 
         loguru.logger.error(f"测试推送通知失败: {str(e)}")
-        return success_response(
+        return error_response(
+            code=ResponseCode.INTERNAL_ERROR,
             data=TestNotificationResponse(
                 success=False,
                 message=f"测试通知发送失败: {str(e)}",
@@ -287,5 +291,5 @@ async def test_notify_router(
                 ),
                 config_source=effective_config.config_source,
                 sent_channels=[],
-            )
+            ),
         )

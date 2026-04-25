@@ -17,9 +17,9 @@ from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.security_depends import verify_browser_ownership
 from app.models.RPA_browser.depends_models import BrowserReqInfo
-from app.controller.v1.browser_control.base import new_router
+from ..base import new_system_router
 
-router = new_router()
+router = new_system_router()
 
 
 @router.post(

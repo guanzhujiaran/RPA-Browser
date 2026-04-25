@@ -1,0 +1,353 @@
+# RPA 浏览器可视化调试面板需求文档
+
+## 概述
+
+本文档描述了基于 WebRTC 视频流的前端可视化调试面板需求，用于在浏览器页面上实时调试 RPA 操作。
+
+## 目标
+
+1. 在观看浏览器视频流的同时进行操作调试
+2. 支持单步执行和参数预览
+3. 实时查看执行结果和日志
+
+## 页面布局
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        RPA 浏览器调试器                               │
+├────────────────────────────────────┬────────────────────────────────┤
+│                                    │                                │
+│                                    │   ┌──────────────────────────┐  │
+│                                    │   │     操作选择器            │  │
+│                                    │   │  [▼ 选择操作或自定义操作]  │  │
+│                                    │   └──────────────────────────┘  │
+│         浏览器视频流区域             │                                │
+│         (WebRTC/MJPEG)             │   ┌──────────────────────────┐  │
+│                                    │   │     参数输入表单          │  │
+│                                    │   │  url: [_______________]   │  │
+│                                    │   │  selector: [___________] │  │
+│                                    │   │  delay: [___] ms         │  │
+│                                    │   └──────────────────────────┘  │
+│                                    │                                │
+│                                    │   [预览参数] [验证] [执行]      │
+├────────────────────────────────────┴────────────────────────────────┤
+│  ┌────────────────────────────────────────────────────────────────┐ │
+│  │                       预览结果区域                               │ │
+│  │  步骤1: navigate                                               │ │
+│  │    原始: { "url": "{{url}}" }                                   │ │
+│  │    替换: { "url": "https://example.com" }                      │ │
+│  │  ─────────────────────────────────────────────────────────────  │ │
+│  │  步骤2: click                                                   │ │
+│  │    原始: { "selector": ".btn" }                                │ │
+│  │    替换: { "selector": ".btn" }                                │ │
+│  └────────────────────────────────────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────────────┤
+│  ┌────────────────────────────────────────────────────────────────┐ │
+│  │                       执行日志区域                               │ │
+│  │  [1] ✅ navigate     → 成功 (0.52s)  URL: https://example.com  │ │
+│  │  [2] ✅ wait         → 成功 (1.00s)  等待元素: .btn             │ │
+│  │  [3] ❌ click        → 失败 (0.32s)  元素未找到: .btn           │ │
+│  │  [4] ⏭️ 跳过         → 条件不满足                               │ │
+│  └────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## 功能模块
+
+### 1. 操作选择器
+
+**功能描述**：下拉选择要执行的操作
+
+**数据来源**：
+```javascript
+POST /browser/actions/registered
+```
+
+**响应格式**：
+```json
+{
+  "code": 0,
+  "data": [
+    {
+      "id": "navigate",
+      "name": "导航",
+      "type": "navigation",
+      "description": "导航到指定URL",
+      "parameters": [
+        { "name": "url", "type": "str", "required": true, "description": "目标URL" },
+        { "name": "timeout", "type": "int", "required": false, "default": 30000 }
+      ]
+    }
+  ]
+}
+```
+
+**自定义操作**：
+```javascript
+POST /browser/custom-actions/list
+```
+
+### 2. 参数输入表单
+
+**功能描述**：根据选择的操作动态生成参数输入表单
+
+**表单生成逻辑**：
+1. 根据 `action_id` 获取操作元数据
+2. 根据 `parameters` 数组动态生成表单项
+3. 支持的参数类型：string, number, boolean, select
+
+**示例**：
+```javascript
+// 选择 navigate 操作后，生成：
+const form = [
+  { name: 'url', type: 'text', required: true, label: 'URL' },
+  { name: 'timeout', type: 'number', required: false, default: 30000, label: '超时(毫秒)' }
+];
+```
+
+### 3. 预览功能
+
+**功能描述**：执行前预览参数替换结果
+
+**API**：
+```javascript
+POST /browser/actions/preview
+{
+  "action_id": "custom_login",
+  "params": {
+    "username": "test123",
+    "password": "pass123"
+  }
+}
+```
+
+**响应格式**：
+```json
+{
+  "code": 0,
+  "data": {
+    "action_id": "custom_login",
+    "action_name": "自定义登录",
+    "is_composite": true,
+    "steps_preview": [
+      {
+        "step_index": 0,
+        "action_id": "navigate",
+        "original_params": { "url": "https://example.com/login" },
+        "replaced_params": { "url": "https://example.com/login" }
+      },
+      {
+        "step_index": 1,
+        "action_id": "input",
+        "original_params": { "selector": "#username", "value": "{{username}}" },
+        "replaced_params": { "selector": "#username", "value": "test123" }
+      }
+    ],
+    "found_params": ["username", "password"]
+  }
+}
+```
+
+### 4. 参数验证
+
+**功能描述**：执行前验证参数合法性
+
+**API**：
+```javascript
+POST /browser/actions/validate
+{
+  "action_id": "navigate",
+  "params": {
+    "url": "https://example.com"
+  }
+}
+```
+
+**响应格式**：
+```json
+{
+  "code": 0,
+  "data": {
+    "valid": true,
+    "action_id": "navigate",
+    "action_name": "导航",
+    "missing_params": [],
+    "invalid_params": [],
+    "errors": []
+  }
+}
+```
+
+**错误示例**：
+```json
+{
+  "code": 0,
+  "data": {
+    "valid": false,
+    "action_id": "navigate",
+    "action_name": "导航",
+    "missing_params": ["url"],
+    "invalid_params": [],
+    "errors": ["缺少必需参数: url"]
+  }
+}
+```
+
+### 5. 单步执行
+
+**功能描述**：执行复合操作的指定步骤
+
+**API**：
+```javascript
+POST /browser/actions/execute-step
+{
+  "action_id": "custom_login",
+  "params": { "username": "test", "password": "123" },
+  "step_index": 1,
+  "plugin_ids": []
+}
+```
+
+**响应格式**：
+```json
+{
+  "code": 0,
+  "data": {
+    "step_index": 1,
+    "action_id": "input",
+    "action_name": "输入",
+    "result": {
+      "success": true,
+      "data": { "selector": "#username", "value_length": 4 },
+      "error": null,
+      "execution_time": 0.52,
+      "action_id": "input",
+      "action_name": "输入"
+    }
+  }
+}
+```
+
+### 6. 执行日志
+
+**功能描述**：显示操作执行历史和结果
+
+**日志项数据结构**：
+```javascript
+{
+  index: 1,
+  action_id: "navigate",
+  action_name: "导航",
+  status: "success" | "failed" | "skipped",
+  execution_time: 0.52,
+  message: "URL: https://example.com",
+  error: null | "元素未找到"
+}
+```
+
+**状态图标**：
+- ✅ success - 绿色勾
+- ❌ failed - 红色叉
+- ⏭️ skipped - 灰色跳过
+
+### 7. 实时截图
+
+**功能描述**：操作执行后自动截图显示
+
+**实现方式**：
+```javascript
+// 在每个操作执行后调用截图 API
+POST /browser/stream/screenshot
+```
+
+## 技术实现建议
+
+### 框架选择
+- 原生 HTML/CSS/JavaScript
+- 或 Vue.js / React（根据项目技术栈）
+
+### 组件结构
+```
+DebugPanel/
+├── VideoStream      # 视频流组件
+├── ActionSelector   # 操作选择器
+├── ParamForm        # 参数表单
+├── PreviewArea      # 预览区域
+├── ExecutionLog      # 执行日志
+└── ScreenshotView   # 截图预览
+```
+
+### 状态管理
+```javascript
+const state = {
+  // 视频流
+  streamUrl: "",
+  streamStatus: "disconnected",
+
+  // 当前操作
+  selectedAction: null,
+  params: {},
+
+  // 执行状态
+  isExecuting: false,
+  currentStep: -1,
+  executionLog: [],
+
+  // 截图
+  screenshots: []
+};
+```
+
+### 事件处理
+```javascript
+// 操作选择变更
+onActionChange(actionId) {
+  // 1. 获取操作元数据
+  // 2. 动态生成参数表单
+  // 3. 清空预览区域
+}
+
+// 预览按钮点击
+onPreview() {
+  // 1. 调用 preview API
+  // 2. 显示替换后的参数
+}
+
+// 执行按钮点击
+onExecute() {
+  // 1. 验证参数
+  // 2. 执行操作
+  // 3. 记录日志
+  // 4. 显示截图
+}
+```
+
+## 快捷操作
+
+| 功能 | 快捷键 |
+|------|--------|
+| 预览参数 | `Ctrl + P` |
+| 执行操作 | `Ctrl + Enter` |
+| 单步执行 | `F10` |
+| 停止执行 | `Escape` |
+
+## 注意事项
+
+1. **参数模板**：支持 `{{param_name}}` 语法进行参数替换
+2. **错误处理**：网络异常时显示重试按钮
+3. **执行超时**：可设置操作超时时间
+4. **截图保存**：支持右键保存截图到本地
+5. **日志导出**：支持导出执行日志为 JSON
+
+## 附录：完整 API 列表
+
+| API | 方法 | 描述 |
+|-----|------|------|
+| `/browser/stream/status` | POST | 获取视频流状态 |
+| `/browser/actions/registered` | POST | 获取注册操作列表 |
+| `/browser/actions/preview` | POST | 预览参数替换结果 |
+| `/browser/actions/validate` | POST | 验证操作参数 |
+| `/browser/actions/execute` | POST | 执行单个操作 |
+| `/browser/actions/execute-step` | POST | 单步执行操作 |
+| `/browser/custom-actions/list` | POST | 获取自定义操作列表 |
+| `/browser/stream/screenshot` | GET | 获取截图 |

@@ -1,0 +1,9 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-04-09T14:55:46.877Z
+provider: 
+---
+
+对于前端界面的需求写在docs/frontend_requirements这个文件夹底下,用markdown格式记录需求.

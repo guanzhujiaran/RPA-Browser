@@ -35,7 +35,7 @@ class BackgroundTaskService:
             logger.info(f"开始后台导航任务: {task_key}, URL: {url}")
             
             # 获取浏览器会话
-            plugined_session = await LiveService.get_plugined_session(mid, browser_id, headless=True)
+            plugined_session = await LiveService.get_plugined_session(mid, browser_id, headless=False)
             page = await plugined_session.get_current_page()
             
             if url:
@@ -75,7 +75,7 @@ class BackgroundTaskService:
             logger.info(f"开始后台JavaScript执行任务: {task_key}")
             
             # 获取浏览器会话
-            plugined_session = await LiveService.get_plugined_session(mid, browser_id, headless=True)
+            plugined_session = await LiveService.get_plugined_session(mid, browser_id, headless=False)
             page = await plugined_session.get_current_page()
             
             if code:
@@ -124,7 +124,7 @@ class BackgroundTaskService:
             logger.info(f"开始后台点击任务: {task_key}, params: {click_params}")
             
             # 获取浏览器会话
-            plugined_session = await LiveService.get_plugined_session(mid, browser_id, headless=True)
+            plugined_session = await LiveService.get_plugined_session(mid, browser_id, headless=False)
             page = await plugined_session.get_current_page()
             
             # 获取页面视口大小

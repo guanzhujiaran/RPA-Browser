@@ -2,14 +2,13 @@
 from loguru import logger
 from fastapi import APIRouter
 
-from app.config import settings
 from app.models.response_code import ResponseCode
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_tag import RouterTag
 from app.models.RPA_browser.permission_models import PermissionConfigList
 from app.services.RPA_browser.permission_config_service import PermissionConfigService
 
-router = APIRouter(prefix=settings.admin_base_path, tags=[RouterTag.admin_management])
+router = APIRouter(tags=[RouterTag.admin_management])
 
 
 @router.post("/permissions/get", response_model=StandardResponse[PermissionConfigList])

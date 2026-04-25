@@ -23,15 +23,17 @@ from app.models.RPA_browser.plugin_request_model import (
 )
 from app.models.router.router_prefix import PluginRouterPath
 from app.services.site_rpa_operation.plugins import PluginTypeEnum
-from app.controller.v1.browser.plugin_base import new_router
+from .base import new_plugin_router
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.response_code import ResponseCode
 from app.services.RPA_browser.browser_service import BrowserService
+from app.services.RPA_browser.browser_db_service import BrowserDBService
+from app.services.RPA_browser.plugin_db_service import PluginDBService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
-router = new_router()
+router = new_plugin_router()
 
 
 @router.post(PluginRouterPath.create_plugin, response_model=StandardResponse[PluginResponse])
@@ -177,7 +179,7 @@ async def create_or_update_plugin_router(
         )
 
 
-@router.put(PluginRouterPath.update_plugin, response_model=StandardResponse[PluginResponse])
+@router.post(PluginRouterPath.update_plugin, response_model=StandardResponse[PluginResponse])
 async def update_plugin_router(
     params: PluginUpdateRequest,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
@@ -287,71 +289,74 @@ async def get_plugins_router(
     Note:
         如果没有配置特定插件，会返回虚拟插件配置（is_virtual=true）作为默认配置
     """
-    try:
-        # 直接使用int类型的mid
-        browser_service = BrowserService(auth_info.mid)
+    # 直接使用int类型的mid
+    browser_service = BrowserService(auth_info.mid)
 
-        if request.browser_info_id is not None:
-            # 获取特定浏览器实例的插件配置
-            plugins = await browser_service.get_browser_info_plugins(
-                int(request.browser_info_id), session
+    if request.browser_info_id is not None:
+        # 验证 browser_info_id 是否属于当前用户，防止越权
+        is_owner = await BrowserDBService.verify_browser_info_ownership(
+            auth_info.mid, int(request.browser_info_id), session
+        )
+        if not is_owner:
+            return error_response(
+                code=ResponseCode.FORBIDDEN,
+                msg="无权访问该浏览器实例的插件配置"
+            )
+        # 获取特定浏览器实例的插件配置
+        plugins = await browser_service.get_browser_info_plugins(
+            int(request.browser_info_id), session
+        )
+    else:
+        # 获取用户默认插件配置
+        plugins = await browser_service.get_user_default_plugins(session)
+
+    # 将插件对象转换为字典格式，并添加插件类型信息
+    result_data = {}
+    for plugin_type, plugin in plugins.items():
+        plugin_dict = plugin.model_dump()
+        
+        # 基础字段
+        base_data = {
+            "id": plugin_dict["id"],
+            "mid": str(plugin_dict["mid"]),
+            "browser_info_id": str(plugin_dict.get("browser_info_id")) if plugin_dict.get("browser_info_id") is not None else None,
+            "is_enabled": plugin_dict["is_enabled"],
+            "name": plugin_dict["name"],
+            "description": plugin_dict["description"],
+            "plugin_type": plugin_type.value,
+            "is_virtual": plugin.id == -1
+        }
+        
+        # 根据插件类型创建对应的响应模型
+        if plugin_type == PluginTypeEnum.LOG:
+            plugin_response = LogPluginResponse(
+                **base_data,
+                config=plugin
+            )
+        elif plugin_type == PluginTypeEnum.PAGE_LIMIT:
+            plugin_response = PageLimitPluginResponse(
+                **base_data,
+                config=plugin
+            )
+        elif plugin_type == PluginTypeEnum.RANDOM_WAIT:
+            plugin_response = RandomWaitPluginResponse(
+                **base_data,
+                config=plugin
+            )
+        elif plugin_type == PluginTypeEnum.RETRY:
+            plugin_response = RetryPluginResponse(
+                **base_data,
+                config=plugin
             )
         else:
-            # 获取用户默认插件配置
-            plugins = await browser_service.get_user_default_plugins(session)
+            # 默认情况，理论上不会到达这里
+            plugin_response = PluginResponse(**base_data)
+        
+        result_data[plugin_type.value] = plugin_response
 
-        # 将插件对象转换为字典格式，并添加插件类型信息
-        result_data = {}
-        for plugin_type, plugin in plugins.items():
-            plugin_dict = plugin.model_dump()
-            
-            # 基础字段
-            base_data = {
-                "id": plugin_dict["id"],
-                "mid": plugin_dict["mid"],
-                "browser_info_id": plugin_dict.get("browser_info_id"),
-                "is_enabled": plugin_dict["is_enabled"],
-                "name": plugin_dict["name"],
-                "description": plugin_dict["description"],
-                "plugin_type": plugin_type.value,
-                "is_virtual": plugin.id == -1
-            }
-            
-            # 根据插件类型创建对应的响应模型
-            if plugin_type == PluginTypeEnum.LOG:
-                plugin_response = LogPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            elif plugin_type == PluginTypeEnum.PAGE_LIMIT:
-                plugin_response = PageLimitPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            elif plugin_type == PluginTypeEnum.RANDOM_WAIT:
-                plugin_response = RandomWaitPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            elif plugin_type == PluginTypeEnum.RETRY:
-                plugin_response = RetryPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            else:
-                # 默认情况，理论上不会到达这里
-                plugin_response = PluginResponse(**base_data)
-            
-            result_data[plugin_type.value] = plugin_response
+    result = PluginDictResponse(**result_data)
+    return success_response(data=result)
 
-        result = PluginDictResponse(**result_data)
-        return success_response(data=result)
-
-    except Exception as e:
-        return error_response(
-            code=ResponseCode.INTERNAL_ERROR,
-            msg=f"获取插件配置失败: {str(e)}"
-        )
 
 
 @router.post(PluginRouterPath.get_plugin, response_model=StandardResponse[PluginResponse])
@@ -378,80 +383,83 @@ async def get_specific_plugin_router(
     Note:
         如果插件不存在且没有提供browser_info_id，会返回虚拟插件配置（is_virtual=true）
     """
+    # 验证插件类型
     try:
-        # 验证插件类型
-        try:
-            plugin_enum = PluginTypeEnum(request.plugin_type)
-        except ValueError:
-            return error_response(
-                code=ResponseCode.BAD_REQUEST,
-                msg=f"不支持的插件类型: {request.plugin_type}"
-            )
-
-        # 直接使用int类型的mid
-        browser_service = BrowserService(auth_info.mid)
-
-        if request.browser_info_id is not None:
-            plugin = await browser_service.get_specific_plugin_for_browser_info(
-                plugin_enum, int(request.browser_info_id), session
-            )
-        else:
-            # 获取用户默认插件
-            user_plugins = await browser_service.get_user_default_plugins(session)
-            plugin = user_plugins.get(plugin_enum)
-
-        if plugin:
-            plugin_dict = plugin.model_dump()
-            
-            # 基础字段
-            base_data = {
-                "id": plugin_dict["id"],
-                "mid": plugin_dict["mid"],
-                "browser_info_id": plugin_dict.get("browser_info_id"),
-                "is_enabled": plugin_dict["is_enabled"],
-                "name": plugin_dict["name"],
-                "description": plugin_dict["description"],
-                "plugin_type": request.plugin_type,
-                "is_virtual": plugin.id == -1
-            }
-            
-            # 根据插件类型创建对应的响应模型
-            if plugin_enum == PluginTypeEnum.LOG:
-                response_data = LogPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            elif plugin_enum == PluginTypeEnum.PAGE_LIMIT:
-                response_data = PageLimitPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            elif plugin_enum == PluginTypeEnum.RANDOM_WAIT:
-                response_data = RandomWaitPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            elif plugin_enum == PluginTypeEnum.RETRY:
-                response_data = RetryPluginResponse(
-                    **base_data,
-                    config=plugin
-                )
-            else:
-                # 默认情况，理论上不会到达这里
-                response_data = PluginResponse(**base_data)
-            
-            return success_response(data=response_data)
-        else:
-            return error_response(
-                code=ResponseCode.NOT_FOUND,
-                msg=f"未找到插件配置: {request.plugin_type}"
-            )
-
-    except Exception as e:
+        plugin_enum = PluginTypeEnum(request.plugin_type)
+    except ValueError:
         return error_response(
-            code=ResponseCode.INTERNAL_ERROR,
-            msg=f"获取插件配置失败: {str(e)}"
+            code=ResponseCode.BAD_REQUEST,
+            msg=f"不支持的插件类型: {request.plugin_type}"
         )
+
+    # 直接使用int类型的mid
+    browser_service = BrowserService(auth_info.mid)
+
+    if request.browser_info_id is not None:
+        # 验证 browser_info_id 是否属于当前用户，防止越权
+        is_owner = await BrowserDBService.verify_browser_info_ownership(
+            auth_info.mid, int(request.browser_info_id), session
+        )
+        if not is_owner:
+            return error_response(
+                code=ResponseCode.FORBIDDEN,
+                msg="无权访问该浏览器实例的插件配置"
+            )
+        plugin = await browser_service.get_specific_plugin_for_browser_info(
+            plugin_enum, int(request.browser_info_id), session
+        )
+    else:
+        # 获取用户默认插件
+        user_plugins = await browser_service.get_user_default_plugins(session)
+        plugin = user_plugins.get(plugin_enum)
+
+    if plugin:
+        plugin_dict = plugin.model_dump()
+        
+        # 基础字段
+        base_data = {
+            "id": plugin_dict["id"],
+            "mid": str(plugin_dict["mid"]),
+            "browser_info_id": str(plugin_dict.get("browser_info_id")) if plugin_dict.get("browser_info_id") is not None else None,
+            "is_enabled": plugin_dict["is_enabled"],
+            "name": plugin_dict["name"],
+            "description": plugin_dict["description"],
+            "plugin_type": request.plugin_type,
+            "is_virtual": plugin.id == -1
+        }
+        
+        # 根据插件类型创建对应的响应模型
+        if plugin_enum == PluginTypeEnum.LOG:
+            response_data = LogPluginResponse(
+                **base_data,
+                config=plugin
+            )
+        elif plugin_enum == PluginTypeEnum.PAGE_LIMIT:
+            response_data = PageLimitPluginResponse(
+                **base_data,
+                config=plugin
+            )
+        elif plugin_enum == PluginTypeEnum.RANDOM_WAIT:
+            response_data = RandomWaitPluginResponse(
+                **base_data,
+                config=plugin
+            )
+        elif plugin_enum == PluginTypeEnum.RETRY:
+            response_data = RetryPluginResponse(
+                **base_data,
+                config=plugin
+            )
+        else:
+            # 默认情况，理论上不会到达这里
+            response_data = PluginResponse(**base_data)
+        
+        return success_response(data=response_data)
+    else:
+        return error_response(
+            code=ResponseCode.NOT_FOUND,
+            msg=f"未找到插件配置: {request.plugin_type}"
+        )
+
 
 
 @router.post(PluginRouterPath.delete_plugin, response_model=StandardResponse[bool])
@@ -482,6 +490,17 @@ async def delete_plugin_router(
         browser_service = BrowserService(auth_info.mid)
         # 将plugin_id从str转换为int
         plugin_id_int = int(request.plugin_id)
+        
+        # 验证插件是否属于当前用户，防止越权
+        is_owner = await PluginDBService.verify_plugin_ownership(
+            plugin_id_int, auth_info.mid, session
+        )
+        if not is_owner:
+            return error_response(
+                code=ResponseCode.FORBIDDEN,
+                msg="无权删除该插件"
+            )
+        
         result = await browser_service.delete_plugin(plugin_id_int, session)
         
         if result:

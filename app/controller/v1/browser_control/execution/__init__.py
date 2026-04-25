@@ -1,5 +1,10 @@
-"""操作执行模块"""
+"""执行模块"""
 
-from app.controller.v1.browser_control.execution.router import router
+from fastapi import APIRouter
+from app.controller.v1.browser_control.execution.execution_router import (
+    router as action_router,
+)
 
+router = APIRouter()
+router.include_router(action_router)
 __all__ = ["router"]

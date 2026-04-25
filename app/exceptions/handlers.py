@@ -92,7 +92,7 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
         "is_database_error": is_database_error,
         "is_connection_lost": is_connection_lost,
     }
-    status_code = 200
+    status_code = 500
 
     # 根据错误类型设置不同的响应
     if is_connection_lost:

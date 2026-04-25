@@ -4,17 +4,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import OperationalError, DisconnectionError
 
-from app.controller.v1.browser import browser_router
-from app.controller.v1.browser_control import (
-    session_controller,
-    browser_operation_controller,
-    plugin_controller,
-    video_stream_controller,
-    system_controller,
-    security_controller,
-)
-from app.controller.v1.browser import notify_router
-from app.controller.v1.admin import admin_router, permission_router
+# 导入 controller 包（自动收集路由）
+from app.controller.v1 import browser, browser_control, system, admin
 from app.exceptions.handlers import (
     http_exception_handler,
     validation_exception_handler,
@@ -26,17 +17,16 @@ from app.exceptions.handlers import (
 
 def setup_routes(app: FastAPI):
     """设置应用的所有路由和异常处理器"""
-    # 注册路由
-    app.include_router(browser_router.router)
-    app.include_router(notify_router.router)
-    app.include_router(session_controller.router)
-    app.include_router(browser_operation_controller.router)
-    app.include_router(plugin_controller.router)
-    app.include_router(video_stream_controller.router)
-    app.include_router(system_controller.router)
-    app.include_router(security_controller.router)
-    app.include_router(admin_router.router)
-    app.include_router(permission_router.router)
+    # 注册路由 - 按层级顺序
+    # 1. 配置管理层
+    app.include_router(browser.router)  # /api/v1/browser/*
+
+    # 2. 运行时管理层
+    app.include_router(browser_control.router)  # /api/v1/browser/session/*
+
+    # 3. 系统管理层
+    app.include_router(system.router)  # /api/v1/system/*
+    app.include_router(admin.router)  # /api/{admin_base_path}/*
 
     # 注册异常处理器
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)

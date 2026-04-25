@@ -351,7 +351,7 @@ class PluginedSessionInfo(SessionInfo):
         return self.browser_context.pages[0]
 
     @classmethod
-    async def _initialize_session(cls, mid, browser_id, headless=True):
+    async def _initialize_session(cls, mid, browser_id, headless=False):
         """初始化会话的公共方法"""
         # 获取浏览器指纹信息
         async with DatabaseSessionManager.async_session() as session:
@@ -398,7 +398,7 @@ class PluginedSessionInfo(SessionInfo):
         self.browser_generator = init_data["browser_generator"]
 
     @classmethod
-    async def new(cls, mid, browser_id, headless=True):
+    async def new(cls, mid, browser_id, headless=False):
         """
         创建新的浏览器实例，并且自动查询插件配置进行初始化
         """

@@ -1,7 +1,16 @@
 from abc import ABC
 from dataclasses import dataclass
 from typing import Optional, Callable
-from enum import StrEnum
+from enum import Enum
+
+
+# 兼容 Python 3.10 的 StrEnum
+class StrEnum(str, Enum):
+    """字符串枚举，兼容 Python 3.10"""
+    def __str__(self):
+        return str(self.value)
+
+
 
 import loguru
 from playwright.async_api import BrowserContext

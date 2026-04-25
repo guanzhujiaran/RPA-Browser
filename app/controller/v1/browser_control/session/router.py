@@ -10,18 +10,18 @@ from app.models.RPA_browser.simplified_models import (
     SimplifiedCreateSessionRequest,
 )
 from app.models.response import StandardResponse, success_response, error_response
-from app.models.router.router_prefix import BrowserControlRouterPath
+from app.models.router.router_prefix import BrowserSessionRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.security_depends import verify_browser_ownership
 from app.models.RPA_browser.depends_models import BrowserReqInfo
-from app.controller.v1.browser_control.base import new_router
+from ..base import new_session_router
 
-router = new_router()
+router = new_session_router()
 
 
 @router.post(
-    BrowserControlRouterPath.heartbeat,
+    BrowserSessionRouterPath.heartbeat,
     response_model=StandardResponse[HeartbeatResponse],
 )
 async def send_heartbeat(
@@ -42,7 +42,9 @@ async def send_heartbeat(
         HeartbeatResponse: 心跳响应，包含下次心跳间隔和状态信息
     """
     # 处理心跳
-    response = await LiveService.handle_heartbeat(auth_info.mid, browser_info.browser_id, request)
+    response = await LiveService.handle_heartbeat(
+        auth_info.mid, browser_info.browser_id, request
+    )
 
     # 根据心跳结果决定返回成功还是错误响应
     if response.success:
@@ -57,7 +59,7 @@ async def send_heartbeat(
 
 
 @router.post(
-    BrowserControlRouterPath.session_create,
+    BrowserSessionRouterPath.create,
     response_model=StandardResponse[CreateSessionResponse],
 )
 async def create_browser_session(
@@ -122,7 +124,7 @@ async def create_browser_session(
 
 
 @router.post(
-    BrowserControlRouterPath.session_status,
+    BrowserSessionRouterPath.status,
     response_model=StandardResponse[BrowserSessionStatus],
 )
 async def browser_session_status(
@@ -138,7 +140,9 @@ async def browser_session_status(
     Returns:
         BrowserSessionStatus: 会话状态信息
     """
-    status_data = LiveService.get_browser_session_status(auth_info.mid, browser_info.browser_id)
+    status_data = LiveService.get_browser_session_status(
+        auth_info.mid, browser_info.browser_id
+    )
 
     # 确定状态码
     if not status_data.session_exists:
@@ -148,11 +152,7 @@ async def browser_session_status(
         code = 403  # 会话存在但浏览器未运行
         msg = "浏览器会话存在但未运行"
     else:
-        code = 0  # 正常状态
-        msg = "success"
+        code = 200
+        msg = "获取会话状态成功"
 
-    return (
-        success_response(data=status_data)
-        if code == 0
-        else error_response(code=code, msg=msg)
-    )
+    return StandardResponse(code=code, msg=msg, data=status_data)
