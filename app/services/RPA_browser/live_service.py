@@ -44,7 +44,6 @@ from app.models.RPA_browser.browser_info_model import (
 )
 from app.models.RPA_browser.live_service_models import (
     BrowserSessionEntry,
-    VideoStreamInfo,
     LiveStreamingEntry,
     LiveServiceState,
 )
@@ -1074,7 +1073,7 @@ class LiveService:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
                 else:
-                    logger.error(
+                    logger.exception(
                         f"后台创建浏览器会话失败，已达最大重试次数 "
                         f"(mid={mid}, browser_id={browser_id}): {e}"
                     )

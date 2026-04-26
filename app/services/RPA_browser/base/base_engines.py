@@ -67,7 +67,7 @@ class BaseUndetectedPlaywright:
         browser_exec_info = await browser_exec_info_helper.get_exec_info(
             ua=fingerprint_params.patchright_browser_ua
         )
-        botright_instance = await Botright(
+        botright_instance: Botright = await Botright(
             headless=self.headless,
             block_images=False,
             user_action_layer=False,
@@ -81,14 +81,5 @@ class BaseUndetectedPlaywright:
             viewport=fingerprint_params.viewport,
             screen=fingerprint_params.screen,
         )
-        # async with async_playwright() as playwright:
-        #     browser = await playwright.chromium.launch_persistent_context(
-        #         user_data_dir=self._user_data_dir,
-        #         headless=self.headless,
-        #         executable_path=settings.chromium_executable_path or None,
-        #         args=self.default_args,
-        #         viewport=fingerprint_params.viewport,
-        #         screen=fingerprint_params.screen,
-        #     )
         yield browser
         await browser.close()

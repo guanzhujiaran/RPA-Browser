@@ -49,7 +49,9 @@ class BrowserService:
         Returns:
             BaseFingerprintBrowserInitParams: 生成的浏览器指纹参数
         """
-        return await gen_from_browserforge_fingerprint(params=params)
+        res = await gen_from_browserforge_fingerprint(params=params)
+        res.proxy_server = None  # 清除代理服务器配置
+        return res
 
     async def create_log_plugin(
         self, params: LogPluginModel, session: AsyncSession
@@ -105,7 +107,9 @@ class BrowserService:
         获取推送通知配置
         优先获取browser特定的配置，如果不存在则返回全局配置
         """
-        return await NotificationService.get_notification_config(str(self.mid), session, browser_id)
+        return await NotificationService.get_notification_config(
+            str(self.mid), session, browser_id
+        )
 
     async def get_effective_notification_config(
         self, session: AsyncSession, browser_id: int | None = None
@@ -114,7 +118,9 @@ class BrowserService:
         获取有效的通知配置（包含优先级逻辑）
         返回浏览器特定配置或全局配置，并指明配置来源
         """
-        return await NotificationService.get_effective_notification_config(str(self.mid), session, browser_id)
+        return await NotificationService.get_effective_notification_config(
+            str(self.mid), session, browser_id
+        )
 
     async def create_notification_config(
         self, config_create: NotificationConfigCreate, session: AsyncSession
@@ -136,19 +142,31 @@ class BrowserService:
             config_update, session
         )
 
-    async def delete_notification_config(self, session: AsyncSession, browser_id: int | None = None) -> bool:
+    async def delete_notification_config(
+        self, session: AsyncSession, browser_id: int | None = None
+    ) -> bool:
         """
         删除推送通知配置
         如果提供了browser_id，删除特定browser的配置；否则删除全局配置
         """
-        return await NotificationService.delete_notification_config(str(self.mid), session, browser_id)
+        return await NotificationService.delete_notification_config(
+            str(self.mid), session, browser_id
+        )
 
-    async def push_notification(self, title: str, content: str, session: AsyncSession, browser_id: int | None = None):
+    async def push_notification(
+        self,
+        title: str,
+        content: str,
+        session: AsyncSession,
+        browser_id: int | None = None,
+    ):
         """
         发送推送通知
         优先使用browser特定的配置，如果不存在则使用全局配置
         """
-        return await NotificationService.push_msg(str(self.mid), title, content, session, browser_id)
+        return await NotificationService.push_msg(
+            str(self.mid), title, content, session, browser_id
+        )
 
     async def get_jwt_token(self) -> str:
         """
@@ -212,7 +230,6 @@ class BrowserService:
             plugin_type, self.mid, browser_info_id, session, **kwargs
         )
 
-
     async def send_msg(
         self,
         browser_id,
@@ -220,7 +237,9 @@ class BrowserService:
         content: str,
     ) -> None:
         async with DatabaseSessionManager.async_session() as session:
-            conf = await self.get_notification_config(session=session, browser_id=browser_id)
+            conf = await self.get_notification_config(
+                session=session, browser_id=browser_id
+            )
         if not conf:
             return
         await send(title=title, content=content, conf=conf)

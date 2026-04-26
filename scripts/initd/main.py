@@ -1,4 +1,3 @@
-from scripts.initd.download_browser_forge import download
 from scripts.initd.init_database import create_tables
 from scripts.initd.install_ungoogled_chromium import install_chromium
 import asyncio
@@ -6,7 +5,6 @@ import asyncio
 
 async def init_dependencies():
     await asyncio.gather(
-        asyncio.to_thread(download),
         asyncio.to_thread(create_tables),
         install_chromium()
     )

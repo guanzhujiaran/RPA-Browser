@@ -43,7 +43,7 @@ async def validation_exception_handler(
     _: Request, exc: RequestValidationError
 ) -> JSONResponse:
     """处理请求验证异常"""
-    logger.error(f"Request validation failed: {exc.errors()}")
+    logger.exception(f"Request validation failed: {exc.errors()}")
     response = StandardResponse(
         code=ResponseCode.BAD_REQUEST,
         data=None,

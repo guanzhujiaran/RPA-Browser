@@ -3,10 +3,9 @@ RPA 操作服务 - 处理浏览器自动化操作
 
 此模块提供各种 RPA 操作，如点击、填充、滚动、截图等。
 """
+
 import base64
 from playwright.async_api import Page, BrowserContext
-from loguru import logger
-
 from app.models.RPA_browser.browser_info_model import (
     RPAClickParams,
     RPAFillParams,

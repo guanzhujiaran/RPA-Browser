@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     sys_pushme_token: str = ""
     sys_pushplus_token: str = ""
     GEMINI_API_KEY: str = "NotNecessary"
-    default_proxy_server: str = ""
+    default_proxy_server: str = "" # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128
     snowflake_id: int = 1
     environment: str = "development"  # 环境变量：development, production
 

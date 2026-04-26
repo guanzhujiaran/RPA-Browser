@@ -1,5 +1,6 @@
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
+from app.models.common.depends import BrowserReqAuthInfo
 from app.utils.depends.mid_depends import AuthInfo
 
 from app.models.RPA_browser.browser_info_model import (
@@ -16,8 +17,10 @@ from app.models.RPA_browser.browser_info_model import (
     BrowserFingerprintRenameParams,
     BrowserFingerprintRenameResp,
 )
-from app.models.RPA_browser.depends_models import BrowserReqInfo
-from app.utils.depends.security_depends import verify_fingerprint_ownership, verify_fingerprint_limit
+from app.utils.depends.security_depends import (
+    verify_fingerprint_ownership,
+    verify_fingerprint_limit,
+)
 from app.models.base.base_sqlmodel import BasePaginationResp
 from app.models.router.router_prefix import BrowserFingerprintRouterPath
 from .base import new_fingerprint_router
@@ -34,7 +37,7 @@ router = new_fingerprint_router()
 @router.post(
     BrowserFingerprintRouterPath.gen_rand_fingerprint,
     response_model=StandardResponse[BaseFingerprintBrowserInitParams],
-    response_model_by_alias=False
+    response_model_by_alias=False,
 )
 async def gen_rand_fingerprint_router(params: BrowserFingerprintCreateParams):
     """
@@ -97,7 +100,7 @@ async def upsert_fingerprint_router(
 @router.post(
     BrowserFingerprintRouterPath.read_fingerprint,
     response_model=StandardResponse[Union[BrowserFingerprintQueryResp, None]],
-    response_model_by_alias=False
+    response_model_by_alias=False,
 )
 async def read_fingerprint_router(
     params: BrowserFingerprintQueryParams,
@@ -125,16 +128,12 @@ async def read_fingerprint_router(
     return success_response(data=result)
 
 
-
-
-
-
 @router.post(
     BrowserFingerprintRouterPath.delete_fingerprint,
     response_model=StandardResponse[BrowserFingerprintDeleteResp],
 )
 async def delete_fingerprint_router(
-    browser_info: BrowserReqInfo = Depends(verify_fingerprint_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_fingerprint_ownership),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ):
     """
@@ -155,18 +154,20 @@ async def delete_fingerprint_router(
     """
     await BrowserDBService.delete_fingerprint(
         BrowserFingerprintDeleteParams(id=browser_info.browser_id),
-        browser_info.mid,
+        browser_info.auth_info.mid,
         session,
     )
     return success_response(
         data=BrowserFingerprintDeleteResp(
-            id=browser_info.browser_id, mid=browser_info.mid, is_success=True
+            id=browser_info.browser_id, mid=browser_info.auth_info.mid, is_success=True
         ),
         msg="success",
     )
 
 
-@router.post(BrowserFingerprintRouterPath.count_fingerprint, response_model=StandardResponse[int])
+@router.post(
+    BrowserFingerprintRouterPath.count_fingerprint, response_model=StandardResponse[int]
+)
 async def count_fingerprint_router(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
@@ -193,7 +194,7 @@ async def count_fingerprint_router(
 @router.post(
     BrowserFingerprintRouterPath.list_fingerprint,
     response_model=StandardResponse[BasePaginationResp[UserBrowserInfo]],
-    response_model_by_alias=False
+    response_model_by_alias=False,
 )
 async def list_fingerprint_router(
     params: BrowserFingerprintListParams,

@@ -7,7 +7,6 @@ Core 模块 - 浏览器指纹模型
 from typing import Annotated
 from enum import StrEnum
 from sqlmodel import Field, SQLModel, Column, JSON
-from app.config import settings
 from browserforge.fingerprints import (
     Fingerprint,
     ScreenFingerprint,
@@ -18,7 +17,7 @@ from dacite import from_dict
 from playwright.async_api import ViewportSize
 from pydantic import model_validator
 from pydantic import computed_field
-
+import sys
 
 Int32 = Annotated[int, Field(ge=-2147483648, le=2147483647)]
 

@@ -4,12 +4,15 @@ Runtime 模块 - 浏览器 API 模型
 定义浏览器指纹和操作的 API 请求/响应模型。
 """
 
+from typing import List
+
 from pydantic import computed_field, field_validator
 from sqlmodel import SQLModel
 
 from app.models.base.base_sqlmodel import BasePaginationReq
 from app.models.core.fingerprint import Int32
 from app.models.core.browser_info import UserBrowserInfoWithoutPlugin
+from botright.modules.proxy_manager import ProxyManager, SplitError
 
 
 # ========================
@@ -74,6 +77,43 @@ class BrowserFingerprintUpsertParams(SQLModel):
         if v is not None and isinstance(v, str):
             return int(v)
         return v
+
+    @field_validator("proxy_server", mode="before")
+    @classmethod
+    def validate_proxy_server(cls, v: str):
+        if v is not None:
+            split_proxy = v.split(":")
+            if len(split_proxy) == 2:
+                pass
+            elif len(split_proxy) == 3:
+                if "@" in v:
+                    helper = [_.split(":") for _ in v.split("@")]
+                    split_proxy = [x for y in helper for x in y]
+                    cls.split_helper(split_proxy, v)
+                else:
+                    raise SplitError(f"Proxy Format ({v}) isnt supported")
+            elif len(split_proxy) == 4:
+                cls.split_helper(split_proxy, v)
+            else:
+                raise SplitError(f"Proxy Format ({v}) isnt supported")
+        return v
+
+    @classmethod
+    def split_helper(cls, split_proxy: List[str], proxy: str) -> None:
+        """
+        Helper function to split and parse the proxy string into its components.
+
+        Args:
+            split_proxy (List[str]): A list containing the components of the proxy string.
+        """
+        if not any([_.isdigit() for _ in split_proxy]):
+            raise SplitError("No ProxyPort could be detected")
+        if split_proxy[1].isdigit():
+            pass
+        elif split_proxy[3].isdigit():
+            pass
+        else:
+            raise SplitError(f"Proxy Format ({proxy}) isnt supported")
 
 
 class BrowserFingerprintQueryParams(SQLModel):

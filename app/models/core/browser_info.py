@@ -121,8 +121,6 @@ class UserBrowserDefaultSetting(UserBrowserServerSideDefaultSetting, table=True)
         ..., ge=1000, description="默认超时时间(毫秒)"
     )
 
-
-
 class UserBrowserInfoWithoutPlugin(
     UserBrowserInfoBase, BaseFingerprintBrowserInitParams
 ):
