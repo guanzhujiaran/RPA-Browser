@@ -16,7 +16,7 @@ from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_system_router
 
 router = new_system_router()
@@ -58,7 +58,7 @@ async def get_system_statistics():
 async def set_cleanup_policy(
     request: SimplifiedBrowserCleanupPolicyRequest,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
     设置清理策略

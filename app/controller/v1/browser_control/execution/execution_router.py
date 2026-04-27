@@ -13,7 +13,7 @@ from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from fastapi import APIRouter
 from app.services.execution.action_registry import action_registry
 from app.services.execution.execution_engine import execution_engine
@@ -98,17 +98,17 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
 @router.post(BrowserControlRouterPath.actions_execute)
 async def execute_action(
     req: ActionExecuteRequest,
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ActionResultResponse]:
     """执行单个操作"""
     session_key = LiveService._get_session_key(
-        browser_info.mid, browser_info.browser_id
+        browser_info.auth_info.mid, browser_info.browser_id
     )
     entry = LiveService.browser_sessions.get(session_key)
     if not entry:
         return error_response("浏览器不存在或未运行")
 
-    mid = str(browser_info.mid)
+    mid = str(browser_info.auth_info.mid)
     page = await entry.plugined_session.get_current_page()
     browser = entry.plugined_session.browser_context.browser
     result = await execution_engine.execute_action(
@@ -136,17 +136,17 @@ async def execute_action(
 @router.post(BrowserControlRouterPath.actions_batch)
 async def batch_execute(
     req: BatchActionRequest,
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[List[ActionResultResponse]]:
     """批量执行操作"""
     session_key = LiveService._get_session_key(
-        browser_info.mid, browser_info.browser_id
+        browser_info.auth_info.mid, browser_info.browser_id
     )
     entry = LiveService.browser_sessions.get(session_key)
     if not entry:
         return error_response("浏览器不存在或未运行")
 
-    mid = str(browser_info.mid)
+    mid = str(browser_info.auth_info.mid)
     page = await entry.plugined_session.get_current_page()
     browser = entry.plugined_session.browser_context.browser
     actions = [{"action_id": a.action_id, "params": a.params} for a in req.actions]
@@ -510,7 +510,7 @@ async def duplicate_workflow(
 @router.post(BrowserControlRouterPath.workflows_execute)
 async def execute_workflow(
     req: WorkflowExecuteRequest,
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[WorkflowExecuteResponse]:
     """执行工作流
 
@@ -519,7 +519,7 @@ async def execute_workflow(
     from app.services.execution.execution_engine import Workflow, WorkflowStep
 
     session_key = LiveService._get_session_key(
-        browser_info.mid, browser_info.browser_id
+        browser_info.auth_info.mid, browser_info.browser_id
     )
     entry = LiveService.browser_sessions.get(session_key)
     if not entry:
@@ -554,7 +554,7 @@ async def execute_workflow(
     user_data = req.user_data or {}
 
     # 执行
-    mid = str(browser_info.mid)
+    mid = str(browser_info.auth_info.mid)
     page = await entry.plugined_session.get_current_page()
     browser = entry.plugined_session.browser_context.browser
     results = await execution_engine.execute_workflow(
@@ -591,47 +591,6 @@ async def execute_workflow(
         )
     )
 
-    # 生成执行ID并记录
-    execution_id = str(uuid.uuid4())
-
-    # 执行
-    mid = str(browser_info.mid)
-    page = await entry.plugined_session.get_current_page()
-    browser = entry.plugined_session.browser_context.browser
-    results = await execution_engine.execute_workflow(
-        session_id=browser_info.browser_id,
-        browser_id=browser_info.browser_id,
-        page=page,
-        browser=browser,
-        workflow=workflow,
-        plugin_ids=req.plugin_ids or None,
-        mid=mid,
-    )
-
-    results_response = [
-        ActionResultResponse(
-            success=r.success,
-            data=r.data,
-            error=r.error,
-            execution_time=r.execution_time,
-            action_id=r.action_id,
-            action_name=r.action_name,
-        )
-        for r in results
-    ]
-
-    return success_response(
-        WorkflowExecuteResponse(
-            execution_id=execution_id,
-            results=results_response,
-            summary={
-                "total": len(results),
-                "success": sum(1 for r in results if r.success),
-                "failed": sum(1 for r in results if not r.success),
-            },
-        )
-    )
-
 
 # ============ 调试相关 API ============
 
@@ -639,7 +598,7 @@ async def execute_workflow(
 @router.post(BrowserControlRouterPath.actions_preview)
 async def preview_action_params(
     req: ActionPreviewRequest,
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ActionPreviewResponse]:
     """
     预览参数替换结果
@@ -715,7 +674,7 @@ async def preview_action_params(
 @router.post(BrowserControlRouterPath.actions_validate)
 async def validate_action_params(
     req: ActionValidateRequest,
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ActionValidateResponse]:
     """
     验证操作参数
@@ -779,7 +738,7 @@ async def validate_action_params(
 @router.post(BrowserControlRouterPath.actions_execute_step)
 async def execute_action_step(
     req: ExecuteStepRequest,
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ExecuteStepResponse]:
     """
     单步执行操作
@@ -789,13 +748,13 @@ async def execute_action_step(
     - 如果 action_id 是普通操作，执行该操作
     """
     session_key = LiveService._get_session_key(
-        browser_info.mid, browser_info.browser_id
+        browser_info.auth_info.mid, browser_info.browser_id
     )
     entry = LiveService.browser_sessions.get(session_key)
     if not entry:
         return error_response("浏览器不存在或未运行")
 
-    mid = str(browser_info.mid)
+    mid = str(browser_info.auth_info.mid)
     page = await entry.plugined_session.get_current_page()
     browser = entry.plugined_session.browser_context.browser
 

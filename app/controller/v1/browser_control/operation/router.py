@@ -5,7 +5,7 @@ from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_operation_router
 
 router = new_operation_router()
@@ -17,7 +17,7 @@ router = new_operation_router()
 )
 async def pause_plugins(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
     暂停插件执行
@@ -38,7 +38,7 @@ async def pause_plugins(
 )
 async def get_plugin_status(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
     获取插件状态

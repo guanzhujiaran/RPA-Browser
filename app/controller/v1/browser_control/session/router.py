@@ -14,7 +14,7 @@ from app.models.router.router_prefix import BrowserSessionRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_session_router
 
 router = new_session_router()
@@ -27,7 +27,7 @@ router = new_session_router()
 async def send_heartbeat(
     request: SimplifiedHeartbeatRequest,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
     发送心跳信号
@@ -66,7 +66,7 @@ async def create_browser_session(
     request: SimplifiedCreateSessionRequest,
     background_tasks: BackgroundTasks,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
     创建浏览器会话
@@ -129,7 +129,7 @@ async def create_browser_session(
 )
 async def browser_session_status(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    browser_info: BrowserReqInfo = Depends(verify_browser_ownership),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
     获取浏览器会话状态
