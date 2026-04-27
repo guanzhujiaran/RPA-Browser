@@ -7,7 +7,7 @@ from playwright.async_api import BrowserContext
 from pydantic import computed_field
 
 from app.config import settings
-from app.models.RPA_browser.browser_info_model import BaseFingerprintBrowserInitParams
+from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
 from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
     browser_exec_info_helper,
 )

@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from app.models.response_code import ResponseCode
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_tag import RouterTag
-from app.models.RPA_browser.admin_models import (
+from app.models.system.admin import (
     AdminAllSessionsResponse,
     AdminAllStreamsResponse,
     AdminAllStatsResponse,

@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -28,10 +28,8 @@ async def lifespan(app: FastAPI):
                 except Exception:
                     asyncio.set_event_loop(asyncio.SelectorEventLoop())
         except Exception:
-            try:
+            with suppress(Exception):
                 asyncio.set_event_loop(asyncio.SelectorEventLoop())
-            except Exception:
-                pass
 
     await init_dependencies()
 

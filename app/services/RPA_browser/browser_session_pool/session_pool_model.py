@@ -6,20 +6,19 @@ from typing import AsyncGenerator, Any, Dict, List
 import uuid
 import loguru
 from playwright.async_api import BrowserContext, Page
-from app.models.RPA_browser.browser_session_model import (
+from app.models.runtime.session import (
     SessionCloseResponse,
     BrowserSessionCreateParams,
     BrowserSessionGetParams,
     BrowserSessionRemoveParams,
     SessionAllCloseResponse,
 )
-from app.models.RPA_browser.browser_info_model import (
+from app.models.runtime.api import (
     BrowserFingerprintQueryParams,
-    BaseFingerprintBrowserInitParams,
 )
-from app.models.RPA_browser.plugin_model import PluginBaseModel
+from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
+from app.models.core.plugin.models import PluginBaseModel
 from app.services.RPA_browser.base.base_engines import BaseUndetectedPlaywright
-from app.services.RPA_browser.plugin_db_service import PluginDBService
 from app.services.site_rpa_operation.base.base_plugin import (
     BasePlugin,
     PluginMethodType,
@@ -99,57 +98,6 @@ class PluginedSessionInfo(SessionInfo):
         "query_selector",
         "query_selector_all",
     ]
-
-    def reg_plugins(self):
-        """注册插件，将插件实例化，但是还没有注入到页面"""
-        if not self.plugin_configs:
-            self.logger.info("[PLUGIN MANAGER] 📦 没有配置插件")
-            return
-
-        self.logger.info(
-            f"[PLUGIN MANAGER] 🚀 开始注册插件 - 总配置数: {len(self.plugin_configs)}"
-        )
-
-        # 实例化插件并设置共享资源
-        self.plugin_instances = []
-        enabled_count = 0
-
-        for plugin_type, plugin_config in self.plugin_configs.items():
-            # 获取插件类
-            plugin_class = plugin_type.str_2_class
-            if plugin_class and plugin_config.is_enabled:
-                try:
-                    self.logger.debug(
-                        f"[PLUGIN MANAGER] 🔧 正在注册插件: {plugin_type.value} - {plugin_config.name}"
-                    )
-                    plugin = plugin_class(
-                        base_playwright_engine=self.playwright_instance,
-                        session=self.browser_context,
-                        logger=self.logger,
-                        conf=plugin_config,
-                    )
-                    self.plugin_instances.append(plugin)
-                    enabled_count += 1
-                    self.logger.info(
-                        f"[PLUGIN MANAGER] ✅ 插件注册成功: {plugin_type.value} - {plugin_config.name}"
-                    )
-                except Exception as e:
-                    self.logger.error(
-                        f"[PLUGIN MANAGER] ❌ 插件注册失败: {plugin_type.value} - {plugin_config.name}, 错误: {e}"
-                    )
-            else:
-                if not plugin_config.is_enabled:
-                    self.logger.debug(
-                        f"[PLUGIN MANAGER] ⏸️ 插件已禁用: {plugin_type.value} - {plugin_config.name}"
-                    )
-                else:
-                    self.logger.warning(
-                        f"[PLUGIN MANAGER] ⚠️ 插件类未找到: {plugin_type.value}"
-                    )
-
-        self.logger.info(
-            f"[PLUGIN MANAGER] 📊 插件注册完成 - 启用: {enabled_count}/{len(self.plugin_configs)}"
-        )
 
     def pause_plugins(self) -> None:
         """暂停插件自动操作"""
@@ -360,12 +308,11 @@ class PluginedSessionInfo(SessionInfo):
                 mid=mid,
                 session=session,
             )
-            plugin_configs = await PluginDBService.get_browser_info_plugins(
-                mid=mid, browser_id=browser_id, session=session
-            )
 
         if not fingerprint_info:
             raise ValueError("浏览器指纹信息不存在")
+
+        plugin_configs = {}
 
         fingerprint_params = BaseFingerprintBrowserInitParams(
             **fingerprint_info.model_dump(exclude_none=True)
@@ -410,8 +357,6 @@ class PluginedSessionInfo(SessionInfo):
             browser_generator=init_data["browser_generator"],
             _headless=headless,
         )
-        result.plugin_configs = init_data["plugin_configs"]
-        result.reg_plugins()
 
         return result
 

@@ -3,12 +3,14 @@ from app.models.exceptions.base_exception import BrowserNotifyConfNotFoundExcept
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.RPA_browser.notify_model import (
+from app.models.core.notify.models import (
     NotificationConfig,
+)
+from app.models.notify.models import (
     NotificationConfigCreate,
     NotificationConfigUpdate,
-    NotificationConfigEffectiveResp,
 )
+from app.models.notify.response_models import NotificationConfigEffectiveResp
 from app.services.notify import push_msg
 
 

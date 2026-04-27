@@ -15,7 +15,7 @@ class StrEnum(str, Enum):
 import loguru
 from playwright.async_api import BrowserContext
 
-from app.models.RPA_browser.plugin_model import PluginBaseModel
+from app.models.core.plugin.models import PluginBaseModel
 from app.services.RPA_browser.base.base_engines import BaseUndetectedPlaywright
 
 

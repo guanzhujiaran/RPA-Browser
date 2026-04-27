@@ -13,15 +13,14 @@ from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.RPA_browser.depends_models import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo
 from fastapi import APIRouter
 from app.services.execution.action_registry import action_registry
-from app.services.execution import plugin_registry
 from app.services.execution.execution_engine import execution_engine
-from app.services.execution.crud_service import action_crud, plugin_crud, workflow_crud
+from app.services.execution.crud_service import action_crud, workflow_crud
 
-# 导入自定义执行模型（SQLModel）
-from app.models.RPA_browser.custom_execution_models import (
+# 导入自定义执行模型（直接从源文件导入）
+from app.models.workflow.models import (
     # 操作执行
     ActionExecuteRequest,
     BatchActionRequest,
@@ -31,13 +30,6 @@ from app.models.RPA_browser.custom_execution_models import (
     CustomActionUpdateRequest,
     CustomActionDetailResponse,
     CustomActionListItemResponse,
-    # 插件
-    PluginCreateRequest,
-    PluginUpdateRequest,
-    PluginDetailResponse,
-    PluginListItemResponse,
-    PluginMetadataResponse,
-    PluginCreateResponse,
     # 工作流
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
@@ -126,7 +118,6 @@ async def execute_action(
         browser=browser,
         action_id=req.action_id,
         params=req.params,
-        plugin_ids=req.plugin_ids or None,
         mid=mid,
     )
 
@@ -330,144 +321,6 @@ async def delete_custom_action(
         return error_response("操作不存在")
 
     await action_crud.delete(req.id)
-    return success_response("删除成功")
-
-
-# ============ 插件操作（全 POST） ============
-
-
-@router.post(BrowserControlRouterPath.plugins_registered)
-async def list_registered_plugins() -> StandardResponse[List[PluginMetadataResponse]]:
-    """获取系统预注册插件列表（公开，只读）"""
-    plugins = plugin_registry.get_all_metadata()
-    response = []
-    for p in plugins:
-        response.append(
-            PluginMetadataResponse(
-                id=p.id,
-                name=p.name,
-                version=getattr(p, "version", "1.0.0"),
-                author=getattr(p, "author", ""),
-                description=p.description,
-                hooks=list(getattr(p, "hooks", [])),
-                priority=getattr(p, "priority", 100),
-                config_schema=getattr(p, "config_schema", None),
-            )
-        )
-    return success_response(response)
-
-
-@router.post(BrowserControlRouterPath.plugins_get)
-async def get_plugin(
-    req: IdRequest,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[PluginDetailResponse]:
-    """获取单个插件"""
-    model = await plugin_crud.get_by_id(req.id)
-    if not model or model.mid != auth.mid:
-        return error_response("插件不存在")
-    return success_response(
-        PluginDetailResponse(
-            id=model.id,
-            plugin_id=model.plugin_id,
-            name=model.name,
-            hooks=model.get_hooks(),
-            description=model.description,
-            priority=model.priority,
-            user_data=model.get_user_data(),
-            is_enabled=model.is_enabled,
-            created_at=model.created_at,
-        )
-    )
-
-
-@router.post(BrowserControlRouterPath.plugins_list_user)
-async def list_user_plugins(
-    req: IdListRequest,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[List[PluginListItemResponse]]:
-    """获取用户插件列表"""
-    models = await plugin_crud.list_by_user(
-        mid=auth.mid, skip=req.skip, limit=req.limit
-    )
-    response = [
-        PluginListItemResponse(
-            id=m.id,
-            plugin_id=m.plugin_id,
-            name=m.name,
-            description=m.description,
-            is_enabled=m.is_enabled,
-            created_at=m.created_at,
-        )
-        for m in models
-    ]
-    return success_response(response)
-
-
-@router.post(BrowserControlRouterPath.plugins_create)
-async def create_plugin(
-    req: PluginCreateRequest,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[PluginCreateResponse]:
-    """创建插件"""
-    # 自动生成 plugin_id
-    plugin_id = f"plugin_{uuid.uuid4().hex[:8]}"
-
-    model = await plugin_crud.create(
-        plugin_id=plugin_id,
-        name=req.name,
-        description=req.description,
-        mid=auth.mid,
-        hooks=req.hooks,
-        code=req.code,
-    )
-    return success_response(
-        PluginCreateResponse(
-            id=model.id,
-            plugin_id=model.plugin_id,
-        )
-    )
-
-
-@router.post(BrowserControlRouterPath.plugins_update)
-async def update_plugin(
-    req: PluginUpdateRequest,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[str]:
-    """更新插件"""
-    model = await plugin_crud.get_by_id(req.id)
-    if not model or model.mid != auth.mid:
-        return error_response("插件不存在")
-
-    await plugin_crud.update(
-        id=req.id,
-        name=req.name,
-        description=req.description,
-        hooks=req.hooks,
-        code=req.code,
-        priority=req.priority,
-    )
-
-    if req.is_enabled is not None:
-        if req.is_enabled:
-            await plugin_crud.enable(req.id)
-        else:
-            await plugin_crud.disable(req.id)
-
-    return success_response("更新成功")
-
-
-@router.post(BrowserControlRouterPath.plugins_delete)
-async def delete_plugin(
-    req: IdRequest,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[str]:
-    """删除插件"""
-    model = await plugin_crud.get_by_id(req.id)
-    if not model or model.mid != auth.mid:
-        return error_response("插件不存在")
-
-    await plugin_crud.delete(req.id)
     return success_response("删除成功")
 
 
@@ -710,7 +563,6 @@ async def execute_workflow(
         page=page,
         browser=browser,
         workflow=workflow,
-        plugin_ids=req.plugin_ids,
         user_data=user_data,
         mid=mid,
     )
@@ -976,7 +828,6 @@ async def execute_action_step(
             browser=browser,
             action_id=step["action_id"],
             params=step_params,
-            plugin_ids=req.plugin_ids or None,
             mid=mid,
         )
 
@@ -1004,7 +855,6 @@ async def execute_action_step(
             browser=browser,
             action_id=req.action_id,
             params=req.params,
-            plugin_ids=req.plugin_ids or None,
             mid=mid,
         )
 

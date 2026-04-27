@@ -1,7 +1,8 @@
 """
 页面数量限制插件 - 限制浏览器中最大页面数量
 """
-from app.models.RPA_browser.plugin_model import PageLimitPluginModel
+from contextlib import suppress
+from app.models.core.plugin.models import PageLimitPluginModel
 from app.services.site_rpa_operation.base.base_plugin import BasePlugin, PluginMethodType
 
 
@@ -45,10 +46,8 @@ class PageLimitPlugin(BasePlugin):
             oldest_page = self.session.pages[0]
             page_url = "未知URL"
             
-            try:
+            with suppress(Exception):
                 page_url = oldest_page.url
-            except:
-                pass
 
             # 检查页面是否已经关闭
             if not oldest_page.is_closed():
@@ -67,10 +66,8 @@ class PageLimitPlugin(BasePlugin):
                     if len(self.session.pages) > 1:
                         next_oldest = self.session.pages[1]
                         next_url = "未知URL"
-                        try:
+                        with suppress(Exception):
                             next_url = next_oldest.url
-                        except:
-                            pass
                             
                         if not next_oldest.is_closed():
                             try:

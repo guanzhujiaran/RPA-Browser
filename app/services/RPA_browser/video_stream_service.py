@@ -6,13 +6,13 @@
 import asyncio
 import io
 import time
-from typing import Dict, Optional
+from typing import Dict
 
 from playwright.async_api import Page
 from loguru import logger
 
-from app.models.RPA_browser.live_control_models import VideoStreamParams, VideoStreamStatusData
-from app.models.RPA_browser.live_service_models import VideoStreamInfo
+from app.models.runtime.control import VideoStreamParams, VideoStreamStatusData
+from app.models.runtime.live_service import VideoStreamInfo
 from app.models.exceptions.base_exception import GetBrowserSessionFailedException
 
 
@@ -203,7 +203,7 @@ class VideoStreamService:
     @staticmethod
     def get_video_stream_status(
         mid: int, browser_id: int
-    ) -> Optional[VideoStreamStatusData]:
+    ) -> VideoStreamStatusData | None:
         """获取视频流状态
 
         Args:
@@ -231,7 +231,7 @@ class VideoStreamService:
         return None
 
     @staticmethod
-    async def get_latest_frame(mid: int, browser_id: int) -> Optional[bytes]:
+    async def get_latest_frame(mid: int, browser_id: int) -> bytes | None:
         """获取最新帧
 
         Args:

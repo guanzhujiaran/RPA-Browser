@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from loguru import logger
 from typing import List
-from app.models.RPA_browser.permission_models import (
+from app.models.system.permission import (
     PermissionLevelConfig,
     PermissionConfigList,
     PermissionConfigData,

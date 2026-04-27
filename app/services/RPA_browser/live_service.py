@@ -4,13 +4,19 @@ LiveService - 核心业务逻辑服务
 此模块包含浏览器会话管理、心跳检测、人工操作干预等核心业务逻辑。
 同时维护对 RPAOperationService 和 VideoStreamService 的引用以保持向后兼容。
 """
+
 import time
 import asyncio
+import contextlib
 from typing import Dict, Optional
-
+from app.config import settings
+from app.models.consts.enums import ConfigRunningModeEnum
 from loguru import logger
-from app.models.exceptions.base_exception import BrowserNotStartedException
-from app.models.RPA_browser.live_control_models import (
+from app.models.exceptions.base_exception import (
+    BrowserNotStartedException,
+    GetBrowserInfoFailedException,
+)
+from app.models.runtime.control import (
     BrowserStatusEnum,
     OperationPriority,
     BrowserStatus,
@@ -32,7 +38,8 @@ from app.models.RPA_browser.live_control_models import (
     BrowserSessionStatusData,
     VideoStreamParams,
 )
-from app.models.RPA_browser.browser_info_model import (
+from app.models.runtime.session import BrowserSessionRemoveParams
+from app.models.runtime.operations import (
     RPAClickParams,
     RPAFillParams,
     RPAScrollParams,
@@ -42,11 +49,11 @@ from app.models.RPA_browser.browser_info_model import (
     RPANavigateParams,
     RPAResponse,
 )
-from app.models.RPA_browser.live_service_models import (
+from app.models.runtime.live_service import (
     BrowserSessionEntry,
     LiveStreamingEntry,
-    LiveServiceState,
 )
+from app.models.runtime.session import SessionCreateParams
 from app.services.RPA_browser.browser_session_pool.playwright_pool import (
     get_default_session_pool,
 )
@@ -66,10 +73,6 @@ class LiveService:
     browser_sessions: Dict[str, BrowserSessionEntry] = {}  # key: f"{mid}_{browser_id}"
     # 维护直播流状态
     live_streams: Dict[str, LiveStreamingEntry] = {}  # key: f"{mid}_{browser_id}"
-    # 全局状态
-    state = LiveServiceState(
-        browser_sessions={}, video_streams={}, auto_streams={}, live_streams={}
-    )
     # 默认配置
     DEFAULT_SESSION_TIMEOUT = 3600  # 1小时
     DEFAULT_HEARTBEAT_INTERVAL = 30  # 心跳间隔30秒
@@ -99,176 +102,211 @@ class LiveService:
             raise
 
     @staticmethod
-    async def start_background_tasks():
-        """启动后台任务"""
-        if not LiveService.state.cleanup_task or LiveService.state.cleanup_task.done():
-            LiveService.state.cleanup_task = asyncio.create_task(
-                LiveService._cleanup_task_loop()
-            )
-
-        if (
-            not LiveService.state.heartbeat_monitor_task
-            or LiveService.state.heartbeat_monitor_task.done()
-        ):
-            LiveService.state.heartbeat_monitor_task = asyncio.create_task(
-                LiveService._heartbeat_monitor_loop()
-            )
-
-        if (
-            not LiveService.state.stream_monitor_task
-            or LiveService.state.stream_monitor_task.done()
-        ):
-            LiveService.state.stream_monitor_task = asyncio.create_task(
-                LiveService._live_stream_monitor_loop()
-            )
-
-    @staticmethod
-    async def stop_background_tasks():
-        """停止后台任务"""
-        if LiveService.state.cleanup_task and not LiveService.state.cleanup_task.done():
-            LiveService.state.cleanup_task.cancel()
-
-        if (
-            LiveService.state.heartbeat_monitor_task
-            and not LiveService.state.heartbeat_monitor_task.done()
-        ):
-            LiveService.state.heartbeat_monitor_task.cancel()
-
-        if (
-            LiveService.state.stream_monitor_task
-            and not LiveService.state.stream_monitor_task.done()
-        ):
-            LiveService.state.stream_monitor_task.cancel()
-
-    @staticmethod
-    async def _cleanup_task_loop():
-        """清理任务循环"""
-        while True:
-            try:
-                await asyncio.sleep(LiveService.DEFAULT_CLEANUP_INTERVAL)
-                await LiveService.cleanup_expired_sessions()
-                await LiveService._cleanup_idle_browsers()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"清理任务执行失败: {str(e)}")
-
-    @staticmethod
-    async def _heartbeat_monitor_loop():
-        """心跳监控循环"""
-        while True:
-            try:
-                await asyncio.sleep(LiveService.DEFAULT_HEARTBEAT_INTERVAL)
-                await LiveService._check_heartbeat_timeouts()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"心跳监控任务执行失败: {str(e)}")
-
-    @staticmethod
-    async def _live_stream_monitor_loop():
-        """直播流监控循环"""
-        while True:
-            try:
-                await asyncio.sleep(LiveService.DEFAULT_HEARTBEAT_INTERVAL)
-                await LiveService._check_live_stream_timeouts()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"直播流监控任务执行失败: {str(e)}")
-
-    @staticmethod
     async def _check_heartbeat_timeouts():
-        """检查心跳超时"""
+        """检查心跳超时 - 使用状态机判断会话清理"""
         current_time = int(time.time())
-        timeout_sessions = []
+        sessions_to_cleanup = []
 
-        for session_key, entry in LiveService.browser_sessions.items():
-            policy = entry.cleanup_policy
-            max_no_heartbeat = policy.max_no_heartbeat_time
+        for session_key, entry in list(LiveService.browser_sessions.items()):
+            # 使用状态机评估会话状态
+            cleanup_decision = LiveService._evaluate_session_cleanup(
+                entry, current_time
+            )
+            
+            if cleanup_decision.should_cleanup:
+                logger.warning(
+                    f"会话 {session_key} 需要清理 - 原因: {cleanup_decision.reason}, "
+                    f"状态: {entry.lifecycle_state.value} -> {cleanup_decision.next_state.value}"
+                )
+                sessions_to_cleanup.append((session_key, cleanup_decision))
+            elif cleanup_decision.next_state != entry.lifecycle_state:
+                # 状态转换但不需要清理
+                old_state = entry.lifecycle_state
+                entry.lifecycle_state = cleanup_decision.next_state
+                logger.debug(
+                    f"会话 {session_key} 状态转换: {old_state.value} -> {entry.lifecycle_state.value}"
+                )
 
-            # 检查所有客户端的心跳
-            active_clients = []
-            for client_id, last_heartbeat in entry.heartbeat_clients.items():
-                if current_time - last_heartbeat <= max_no_heartbeat:
-                    active_clients.append(client_id)
-
-            # 更新活跃客户端列表
-            entry.heartbeat_clients = {
-                client_id: entry.heartbeat_clients[client_id]
-                for client_id in active_clients
-            }
-
-            # 如果没有活跃客户端
-            if not active_clients:
-                # 处于人工操作模式，自动恢复自动化
-                if entry.is_manual_mode:
-                    logger.info(f"会话 {session_key} 无活跃心跳，自动恢复自动化模式")
-                    await LiveService.resume_automation(entry.mid, entry.browser_id)
-
-                # 检查最后一次心跳时间，如果超时则清理会话
-                time_since_last_heartbeat = current_time - entry.last_heartbeat
-                if time_since_last_heartbeat > max_no_heartbeat:
-                    logger.warning(
-                        f"会话 {session_key} 心跳超时 (距离上次心跳: {time_since_last_heartbeat}秒)，准备清理"
-                    )
-                    timeout_sessions.append(session_key)
-                elif (
-                    entry.status == BrowserStatusEnum.IDLE
-                    and current_time - entry.last_activity
-                    > LiveService.DEFAULT_SESSION_TIMEOUT
-                ):
-                    # 闲置会话超时
-                    timeout_sessions.append(session_key)
-
-        # 清理超时会话
-        for session_key in timeout_sessions:
+        # 执行清理
+        for session_key, decision in sessions_to_cleanup:
             try:
                 mid, browser_id = LiveService._parse_session_key(session_key)
+                entry = LiveService.browser_sessions[session_key]
+                
+                # 更新为终止中状态
+                entry.lifecycle_state = SessionLifecycleState.TERMINATING
+                
+                # 根据清理原因执行不同的清理策略
+                await LiveService._execute_cleanup_strategy(entry, decision)
+                
+                # 释放浏览器会话
                 await LiveService.release_browser_session(mid, browser_id)
-                logger.warning(f"清理无心跳会话: {session_key}")
+                logger.info(f"已清理会话: {session_key}, 原因: {decision.reason}")
             except Exception as e:
                 logger.error(f"清理会话失败: {session_key}, error: {e}")
 
     @staticmethod
+    def _evaluate_session_cleanup(
+        entry: "BrowserSessionEntry", current_time: int
+    ) -> "CleanupDecision":
+        """
+        评估会话是否需要清理 - 状态机核心逻辑
+        
+        优先级顺序（从高到低）:
+        1. 过期时间检查 (expires_at)
+        2. 心跳超时检查 (heartbeat timeout)
+        3. 闲置时间检查 (idle timeout)
+        4. 直播流超时检查 (live stream timeout)
+        
+        Returns:
+            CleanupDecision: 清理决策，包含是否清理、原因、下一个状态
+        """
+        from dataclasses import dataclass
+        
+        @dataclass
+        class CleanupDecision:
+            should_cleanup: bool = False
+            reason: str = ""
+            next_state: SessionLifecycleState = SessionLifecycleState.ACTIVE
+            priority: int = 0  # 优先级，数字越小优先级越高
+        
+        policy = entry.cleanup_policy
+        decision = CleanupDecision()
+        
+        # === 优先级 1: 检查是否已过期 (expires_at) ===
+        if entry.expires_at and current_time > entry.expires_at:
+            return CleanupDecision(
+                should_cleanup=True,
+                reason="会话已过期",
+                next_state=SessionLifecycleState.TERMINATING,
+                priority=1
+            )
+        
+        # === 优先级 2: 检查心跳超时 ===
+        time_since_last_heartbeat = current_time - entry.last_heartbeat
+        has_active_clients = len(entry.heartbeat_clients) > 0
+        
+        # 如果有活跃客户端，不会因心跳超时而清理
+        if not has_active_clients and time_since_last_heartbeat > policy.max_no_heartbeat_time:
+            # 如果处于人工操作模式，先恢复自动化
+            if entry.is_manual_mode:
+                return CleanupDecision(
+                    should_cleanup=False,
+                    reason="无活跃心跳，需要恢复自动化",
+                    next_state=SessionLifecycleState.ACTIVE,
+                    priority=2
+                )
+            
+            # 心跳超时，需要清理
+            return CleanupDecision(
+                should_cleanup=True,
+                reason=f"心跳超时 ({time_since_last_heartbeat}s > {policy.max_no_heartbeat_time}s)",
+                next_state=SessionLifecycleState.TERMINATING,
+                priority=2
+            )
+        
+        # === 优先级 3: 检查闲置超时 ===
+        time_since_last_activity = current_time - entry.last_activity
+        is_idle = entry.status == BrowserStatusEnum.IDLE
+        no_active_connections = len(entry.active_connections) == 0
+        
+        if is_idle and no_active_connections and time_since_last_activity > policy.max_idle_time:
+            return CleanupDecision(
+                should_cleanup=True,
+                reason=f"闲置超时 ({time_since_last_activity}s > {policy.max_idle_time}s)",
+                next_state=SessionLifecycleState.TERMINATING,
+                priority=3
+            )
+        
+        # === 状态转换逻辑（不清理，只更新状态）===
+        
+        # 从 IDLE 恢复到 ACTIVE
+        if entry.lifecycle_state == SessionLifecycleState.IDLE and (has_active_clients or entry.status == BrowserStatusEnum.RUNNING):
+            return CleanupDecision(
+                should_cleanup=False,
+                reason="从闲置恢复活跃",
+                next_state=SessionLifecycleState.ACTIVE,
+                priority=99
+            )
+        
+        # 从 ACTIVE 转为 IDLE
+        if entry.lifecycle_state == SessionLifecycleState.ACTIVE and is_idle and no_active_connections:
+            return CleanupDecision(
+                should_cleanup=False,
+                reason="进入闲置状态",
+                next_state=SessionLifecycleState.IDLE,
+                priority=99
+            )
+        
+        # 默认保持当前状态
+        return CleanupDecision(
+            should_cleanup=False,
+            reason="状态正常",
+            next_state=entry.lifecycle_state,
+            priority=99
+        )
+    
+    @staticmethod
+    async def _execute_cleanup_strategy(
+        entry: "BrowserSessionEntry", 
+        decision: "CleanupDecision"
+    ):
+        """
+        执行清理策略 - 根据不同的清理原因执行不同的清理动作
+        """
+        # 如果是心跳超时导致的清理，先尝试恢复自动化
+        if "心跳超时" in decision.reason and entry.is_manual_mode:
+            logger.info(f"清理前恢复自动化: {entry.mid}_{entry.browser_id}")
+            try:
+                await LiveService.resume_automation(entry.mid, entry.browser_id)
+            except Exception as e:
+                logger.warning(f"恢复自动化失败（继续清理）: {e}")
+        
+        # 清理相关的直播流
+        session_key = LiveService._get_session_key(entry.mid, entry.browser_id)
+        if session_key in LiveService.live_streams:
+            logger.info(f"清理关联的直播流: {session_key}")
+            await LiveService._cleanup_live_stream(entry.mid, entry.browser_id)
+
+    @staticmethod
     async def _check_live_stream_timeouts():
-        """检查直播流超时"""
+        """检查直播流超时 - 整合到状态机中"""
         current_time = int(time.time())
-        timeout_streams = []
+        streams_to_cleanup = []
 
         for stream_key, entry in list(LiveService.live_streams.items()):
             # 检查直播流是否超时
-            if (
-                current_time - entry.last_heartbeat
-                > LiveService.DEFAULT_LIVE_STREAM_TIMEOUT
-            ):
+            time_since_last_heartbeat = current_time - entry.last_heartbeat
+            if time_since_last_heartbeat > LiveService.DEFAULT_LIVE_STREAM_TIMEOUT:
+                logger.warning(
+                    f"直播流超时: {stream_key}, "
+                    f"最后心跳: {entry.last_heartbeat}, "
+                    f"超时时长: {time_since_last_heartbeat}s"
+                )
                 # 标记为超时
                 entry.is_active = False
-                timeout_streams.append(stream_key)
-                logger.warning(
-                    f"直播流超时: {stream_key}, 最后心跳: {entry.last_heartbeat}"
-                )
+                streams_to_cleanup.append(stream_key)
 
         # 清理超时直播流
-        for stream_key in timeout_streams:
+        for stream_key in streams_to_cleanup:
             try:
                 mid, browser_id = LiveService._parse_session_key(stream_key)
                 await LiveService._cleanup_live_stream(mid, browser_id)
-                logger.warning(f"清理超时直播流: {stream_key}")
+                logger.info(f"已清理超时直播流: {stream_key}")
             except Exception as e:
                 logger.error(f"清理直播流失败: {stream_key}, error: {e}")
 
     @staticmethod
     async def start_live_streaming(
-        mid: int, browser_id: int, params: Optional[VideoStreamParams] = None
+        mid: int, browser_id: int, params: Optional[VideoStreamParams]=None
     ):
         """开始直播流管理"""
         stream_key = LiveService._get_session_key(mid, browser_id)
         current_time = int(time.time())
 
         # 如果已有直播流，先停止其他任务
-        if stream_key in LiveService.live_streams:
-            await LiveService._stop_other_tasks(mid, browser_id)
+        if stream_key in LiveService.live_streams and stream_key in VideoStreamService.video_streams:
+            await VideoStreamService.stop_video_stream(mid, browser_id, force=True)
 
         # 创建或更新直播流条目
         LiveService.live_streams[stream_key] = LiveStreamingEntry(
@@ -287,15 +325,6 @@ class LiveService:
             entry.last_activity = current_time
 
         logger.info(f"开始直播流管理: {stream_key}")
-
-    @staticmethod
-    async def _stop_other_tasks(mid: int, browser_id: int):
-        """停止其他任务，确保直播优先"""
-        stream_key = LiveService._get_session_key(mid, browser_id)
-
-        # 停止视频流（如果有）
-        if stream_key in VideoStreamService.video_streams:
-            await VideoStreamService.stop_video_stream(mid, browser_id, force=True)
 
     @staticmethod
     async def _cleanup_live_stream(mid: int, browser_id: int):
@@ -318,45 +347,13 @@ class LiveService:
             if not entry.active_connections and not entry.heartbeat_clients:
                 # 恢复自动化
                 await LiveService.resume_automation(mid, browser_id)
-                # 如果是因为心跳超时导致的清理，直接释放浏览器资源
+                # 如果是因为心跳超时导致的清理或会话处于闲置状态，直接释放浏览器资源
                 current_time = int(time.time())
-                if (
-                    current_time - entry.last_heartbeat
-                    > LiveService.DEFAULT_LIVE_STREAM_TIMEOUT
-                ):
-                    logger.warning(f"直播流心跳超时，释放浏览器资源: {stream_key}")
-                    await LiveService.release_browser_session(mid, browser_id)
-                elif entry.status == BrowserStatusEnum.IDLE:
+                if (current_time - entry.last_heartbeat > LiveService.DEFAULT_LIVE_STREAM_TIMEOUT or entry.status == BrowserStatusEnum.IDLE):
+                    logger.warning(f"直播流心跳超时或会话闲置，释放浏览器资源: {stream_key}")
                     await LiveService.release_browser_session(mid, browser_id)
 
         logger.info(f"清理直播流完成: {stream_key}")
-
-    @staticmethod
-    async def _cleanup_idle_browsers():
-        """清理闲置浏览器"""
-        current_time = int(time.time())
-        idle_sessions = []
-
-        for session_key, entry in LiveService.browser_sessions.items():
-            policy = entry.cleanup_policy
-            max_idle_time = policy.max_idle_time
-
-            # 检查是否为闲置状态且超过最大闲置时间
-            if (
-                entry.status == BrowserStatusEnum.IDLE
-                and not entry.active_connections
-                and current_time - entry.last_activity > max_idle_time
-            ):
-                idle_sessions.append(session_key)
-
-        # 清理闲置会话
-        for session_key in idle_sessions:
-            try:
-                mid, browser_id = LiveService._parse_session_key(session_key)
-                await LiveService.release_browser_session(mid, browser_id)
-                logger.warning(f"清理闲置会话: {session_key}")
-            except Exception as e:
-                logger.error(f"清理闲置会话失败: {session_key}, error: {e}")
 
     @staticmethod
     async def handle_heartbeat(
@@ -427,33 +424,11 @@ class LiveService:
         entry = LiveService.browser_sessions[session_key]
         current_time = int(time.time())
 
-        # 如果当前有更低优先级的操作，先暂停
+        # 如果当前有更高或相同优先级的操作在进行，返回冲突
         if (
-            not entry.is_manual_mode
-            or request.priority.value > entry.current_operation_priority.value
+            entry.is_manual_mode
+            and request.priority.value <= entry.current_operation_priority.value
         ):
-
-            # 暂停自动化任务
-            await LiveService.pause_plugins(mid, browser_id)
-
-            # 更新状态
-            entry.is_manual_mode = True
-            entry.current_operation_priority = request.priority
-            entry.manual_operation_start_time = current_time
-            entry.status = BrowserStatusEnum.PAUSED
-
-            message = f"人工操作已开始，优先级: {request.priority.value}"
-            if request.reason:
-                message += f", 原因: {request.reason}"
-
-            return ManualOperationResult(
-                success=True,
-                message=message,
-                status="manual_mode_active",
-                priority=request.priority.value,
-                start_time=current_time,
-            )
-        else:
             return ManualOperationResult(
                 success=False,
                 message=f"当前已有更高或相同优先级的操作在进行: {entry.current_operation_priority.value}",
@@ -461,15 +436,31 @@ class LiveService:
                 priority=entry.current_operation_priority.value,
                 start_time=0,
             )
+        
+        # 暂停自动化任务
+        await LiveService.pause_plugins(mid, browser_id)
 
-    @staticmethod
-    async def stop_manual_operation(mid: int, browser_id: int) -> AutomationResult:
-        """停止人工操作，恢复自动化"""
-        return await LiveService.resume_automation(mid, browser_id)
+        # 更新状态
+        entry.is_manual_mode = True
+        entry.current_operation_priority = request.priority
+        entry.manual_operation_start_time = current_time
+        entry.status = BrowserStatusEnum.PAUSED
+
+        message = f"人工操作已开始，优先级: {request.priority.value}"
+        if request.reason:
+            message += f", 原因: {request.reason}"
+
+        return ManualOperationResult(
+            success=True,
+            message=message,
+            status="manual_mode_active",
+            priority=request.priority.value,
+            start_time=current_time,
+        )
 
     @staticmethod
     async def resume_automation(
-        mid: int, browser_id: int, request: Optional[AutomationResumeRequest] = None
+        mid: int, browser_id: int, request: Optional[AutomationResumeRequest]=None
     ) -> AutomationResult:
         """恢复自动化任务"""
         session_key = LiveService._get_session_key(mid, browser_id)
@@ -554,8 +545,11 @@ class LiveService:
         )
 
     @staticmethod
-    async def get_plugined_session(
-        mid: int, browser_id: int, headless: bool = False, is_create_browser: bool = True
+    async def get_or_create_browser_session(
+        mid: int,
+        browser_id: int,
+        headless: bool=False,
+        is_create_browser: bool=True,
     ) -> PluginedSessionInfo:
         """获取插件化浏览器会话"""
         pool = get_default_session_pool()
@@ -567,19 +561,16 @@ class LiveService:
             entry = LiveService.browser_sessions[session_key]
             entry.last_activity = current_time
             return entry.plugined_session
+        
         if not is_create_browser:
             raise BrowserNotStartedException()
+        
         # 获取浏览器会话
-        session_params = type(
-            "",
-            (),
-            {
-                "mid": mid,
-                "browser_id": browser_id,
-                "headless": headless,
-            },
-        )()
-
+        session_params = SessionCreateParams(
+            mid=mid,
+            browser_id=browser_id,
+            headless=headless,
+        )
         plugined_session = await pool.get_session(session_params)
 
         # 创建会话条目
@@ -721,35 +712,9 @@ class LiveService:
             "interrupt_automation": False,
         }
         result = await LiveService.execute_browser_command(mid, browser_id, command)
-        if result.success:
-            return result.data
-        else:
-            raise Exception(result.error or "获取浏览器信息失败")
-
-    @staticmethod
-    async def get_stream_status(mid: int, browser_id: int) -> VideoStreamStatusData:
-        """获取视频流状态
-
-        统一接口：通过 VideoStreamService 获取状态
-
-        Args:
-            mid: 用户ID
-            browser_id: 浏览器ID
-
-        Returns:
-            VideoStreamStatusData: 视频流状态数据
-        """
-        status = VideoStreamService.get_video_stream_status(mid, browser_id)
-        if status:
-            return status
-        # 如果没有找到，返回默认状态
-        return VideoStreamStatusData(
-            mid=mid,
-            browser_id=browser_id,
-            active=False,
-            last_frame_time=0.0,
-            params={},
-        )
+        if not result.success:
+            raise GetBrowserInfoFailedException(result.error or "未知错误")
+        return result.data
 
     @staticmethod
     async def pause_plugins(mid: int, browser_id: int) -> PluginStatusData:
@@ -822,25 +787,19 @@ class LiveService:
             # 关闭浏览器会话
             if session_key in LiveService.browser_sessions:
                 entry = LiveService.browser_sessions[session_key]
-                try:
+                with contextlib.suppress(Exception):
                     # 恢复插件状态
                     if entry.is_manual_mode:
                         await entry.plugined_session.resume_plugins()
                     await entry.plugined_session.close()
-                except:
-                    pass
                 del LiveService.browser_sessions[session_key]
 
             # 从池中释放会话
-            remove_params = type(
-                "",
-                (),
-                {
-                    "mid": mid,
-                    "browser_id": browser_id,
-                    "force_close": False,
-                },
-            )()
+            remove_params = BrowserSessionRemoveParams(
+                mid=mid,
+                browser_id=browser_id,
+                force_close=False,
+            )
 
             await pool.release_session(remove_params)
 
@@ -851,7 +810,9 @@ class LiveService:
             return True
 
         except Exception as e:
-            logger.error(f"释放浏览器会话失败 (mid={mid}, browser_id={browser_id}): {e}")
+            logger.error(
+                f"释放浏览器会话失败 (mid={mid}, browser_id={browser_id}): {e}"
+            )
             return False
 
     @staticmethod
@@ -875,50 +836,24 @@ class LiveService:
         )
 
     @staticmethod
-    async def cleanup_expired_sessions():
-        """清理过期会话"""
-        current_time = int(time.time())
-        expired_sessions = []
-
-        for session_key, entry in list(LiveService.browser_sessions.items()):
-            # 检查会话是否超时
-            if current_time - entry.last_activity > LiveService.DEFAULT_SESSION_TIMEOUT:
-                # 如果处于人工操作模式且有活跃连接，暂不清理
-                if entry.is_manual_mode and entry.active_connections:
-                    continue
-                expired_sessions.append(session_key)
-
-        # 清理过期会话
-        for session_key in expired_sessions:
-            try:
-                mid, browser_id = LiveService._parse_session_key(session_key)
-                await LiveService.release_browser_session(mid, browser_id)
-                logger.warning(f"清理过期会话: {session_key}")
-            except Exception as e:
-                logger.error(f"清理过期会话失败: {session_key}, error: {e}")
-
-    @staticmethod
     def get_session_statistics() -> SessionStatisticsData:
         """获取会话统计信息"""
         total_sessions = len(LiveService.browser_sessions)
-        running_sessions = sum(
-            1
-            for entry in LiveService.browser_sessions.values()
+        running_sessions = len([
+            entry for entry in LiveService.browser_sessions.values()
             if entry.status == BrowserStatusEnum.RUNNING
-        )
-        paused_sessions = sum(
-            1
-            for entry in LiveService.browser_sessions.values()
+        ])
+        paused_sessions = len([
+            entry for entry in LiveService.browser_sessions.values()
             if entry.status == BrowserStatusEnum.PAUSED
-        )
-        idle_sessions = sum(
-            1
-            for entry in LiveService.browser_sessions.values()
+        ])
+        idle_sessions = len([
+            entry for entry in LiveService.browser_sessions.values()
             if entry.status == BrowserStatusEnum.IDLE
-        )
-        manual_mode_sessions = sum(
-            1 for entry in LiveService.browser_sessions.values() if entry.is_manual_mode
-        )
+        ])
+        manual_mode_sessions = len([
+            entry for entry in LiveService.browser_sessions.values() if entry.is_manual_mode
+        ])
 
         total_connections = sum(
             len(entry.active_connections)
@@ -978,8 +913,8 @@ class LiveService:
 
         try:
             # 创建新的浏览器会话
-            plugined_session = await LiveService.get_plugined_session(
-                mid, browser_id, headless=request.headless
+            await LiveService.get_or_create_browser_session(
+                mid, browser_id
             )
 
             # 获取会话条目并设置生命周期状态
@@ -996,7 +931,7 @@ class LiveService:
                 entry.cleanup_policy = request.cleanup_policy
             elif request.auto_cleanup:
                 entry.cleanup_policy = BrowserCleanupPolicy(
-                    max_idle_time=1800, max_no_heartbeat_time=60, cleanup_interval=300
+                    max_idle_time=1800, max_no_heartbeat_time=300, cleanup_interval=300
                 )
 
             return CreateSessionData(
@@ -1030,7 +965,7 @@ class LiveService:
         """
         max_retries = 3
         retry_delay = 5  # 秒
-
+        start_time = time.time()
         for attempt in range(max_retries):
             try:
                 # 检查会话是否已存在
@@ -1040,8 +975,8 @@ class LiveService:
                     return
 
                 # 创建新的浏览器会话
-                plugined_session = await LiveService.get_plugined_session(
-                    mid, browser_id, headless=request.headless
+                await LiveService.get_or_create_browser_session(
+                    mid, browser_id
                 )
 
                 # 获取会话条目并设置生命周期状态
@@ -1059,10 +994,12 @@ class LiveService:
                     entry.cleanup_policy = request.cleanup_policy
                 elif request.auto_cleanup:
                     entry.cleanup_policy = BrowserCleanupPolicy(
-                        max_idle_time=1800, max_no_heartbeat_time=60, cleanup_interval=300
+                        max_idle_time=1800,
+                        max_no_heartbeat_time=300,
+                        cleanup_interval=300,
                     )
 
-                logger.info(f"后台创建浏览器会话成功: {session_key}")
+                logger.info(f"后台创建浏览器会话成功: {session_key}\n耗时:{time.time() - start_time}秒")
                 return
 
             except Exception as e:

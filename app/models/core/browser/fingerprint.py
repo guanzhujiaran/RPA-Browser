@@ -41,6 +41,7 @@ class BrowserEnum(StrEnum):
 
 class LogPluginLogLevelEnum(StrEnum):
     """日志插件日志级别枚举"""
+
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -205,6 +206,7 @@ class BaseFingerprintBrowserInitParams(SQLModel):
 __all__ = [
     "PlatformEnum",
     "BrowserEnum",
+    "LogPluginLogLevelEnum",
     "Int32",
     "BaseFingerprintBrowserInitParams",
 ]

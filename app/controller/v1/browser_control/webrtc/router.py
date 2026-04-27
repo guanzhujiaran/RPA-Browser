@@ -1,13 +1,12 @@
 from fastapi import Depends
-from app.models.RPA_browser.depends_models import VerifyBrowserDependsReq
-from app.models.RPA_browser.live_control_models import VideoStreamStatusResponse
-from app.models.RPA_browser.webrtc_models import (
+from app.models.common.depends import VerifyBrowserDependsReq
+from app.models.runtime.control import VideoStreamStatusResponse
+from app.models.runtime.webrtc import (
     WebRTCOfferResponse,
     WebRTCAnswerRequest,
     WebRTCAnswerResponse,
     WebRTCIceCandidateRequest,
     WebRTCIceCandidateResponse,
-    WebRTCGetIceCandidatesResponse,
     WebRTCConnectionStatusResponse,
     WebRTCCloseConnectionResponse,
 )
@@ -178,34 +177,7 @@ async def add_webrtc_ice_candidate(
         )
 
 
-@router.get(
-    BrowserControlRouterPath.webrtc_ice_candidates_get,
-    response_model=StandardResponse[WebRTCGetIceCandidatesResponse],
-)
-async def get_webrtc_ice_candidates(
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-):
-    """
-    获取服务端的 ICE candidates
 
-    获取后端生成的 ICE candidates，用于建立 WebRTC 连接。
-
-    Args:
-        browser_id: 浏览器ID
-
-    Returns:
-        WebRTCGetIceCandidatesResponse: ICE candidates 列表和 ICE gathering 状态
-    """
-    browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-
-    candidates, ice_gathering_state = WebRTCService.get_server_ice_candidates(
-        mid, browser_id
-    )
-    return success_response(
-        data=WebRTCGetIceCandidatesResponse(
-            candidates=candidates, ice_gathering_state=ice_gathering_state
-        )
-    )
 
 
 @router.get(

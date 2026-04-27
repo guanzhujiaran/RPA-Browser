@@ -3,7 +3,7 @@ import time
 from urllib.parse import urlparse
 from pydantic import computed_field
 
-from app.models.RPA_browser.plugin_model import LogPluginModel
+from app.models.core.plugin.models import LogPluginModel
 from app.services.site_rpa_operation.base.base_plugin import BasePlugin, PluginMethodType
 from app.config import CONF
 

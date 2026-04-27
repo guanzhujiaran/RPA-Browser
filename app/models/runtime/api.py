@@ -10,8 +10,8 @@ from pydantic import computed_field, field_validator
 from sqlmodel import SQLModel
 
 from app.models.base.base_sqlmodel import BasePaginationReq
-from app.models.core.fingerprint import Int32
-from app.models.core.browser_info import UserBrowserInfoWithoutPlugin
+from app.models.core.browser.fingerprint import Int32
+from app.models.core.browser.info import UserBrowserInfoWithoutPlugin
 from botright.modules.proxy_manager import ProxyManager, SplitError
 
 

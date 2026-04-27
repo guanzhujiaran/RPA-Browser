@@ -7,11 +7,11 @@ import uuid
 from playwright.async_api import Page
 from loguru import logger
 
-from app.models.RPA_browser.browser_info_model import (
+from app.models.core.browser.info import (
     UserBrowserInfoListParams,
     UserBrowserInfoCreateParams,
 )
-from app.models.RPA_browser.browser_session_model import SessionCreateParams
+from app.models.runtime.api import SessionCreateParams
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 from app.services.RPA_browser.browser_session_pool.playwright_pool import (
     get_default_session_pool,
@@ -106,7 +106,7 @@ async def op_browser(browser_token: uuid.UUID):
 
     # 创建会话参数
     session_params = SessionCreateParams(
-        browser_token=browser_token, browser_id=browser_id, headless=False
+        mid=browser_token, browser_id=browser_id, headless=False
     )
     print(f'session_params: {session_params}')
     # 获取包含插件的会话

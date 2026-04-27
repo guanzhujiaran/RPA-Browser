@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from contextlib import suppress
 from tempfile import TemporaryDirectory, gettempdir
 from typing import Any, Dict, List, Optional
 
@@ -186,22 +187,16 @@ class Botright(AsyncObject):
         Closes all associated browser instances and stops the Playwright engine.
         """
         for obj in self.stoppable:
-            try:
+            with suppress(Exception):
                 await obj.close()
-            except Exception:
-                pass
 
-        try:
+        with suppress(Exception):
             await self.playwright.stop()
-        except Exception:
-            pass
 
         for temp_dir in self.temp_dirs:
             if os.path.exists(temp_dir.name):
-                try:
+                with suppress(Exception):
                     temp_dir.cleanup()
-                except Exception:
-                    pass
 
     @staticmethod
     def get_browser_engine(execute_path: Optional[str] = None) -> browsers.Browser:

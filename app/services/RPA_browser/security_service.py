@@ -7,11 +7,11 @@ JavaScript代码安全检查服务
 import re
 import time
 from typing import List, Tuple
-from app.models.RPA_browser.live_control_models import JavaScriptExecutionResult
-from app.models.RPA_browser.rpa_operation_models import (
-    SecurityCheckParams, 
-    SecurityCheckResult, 
-    SecurityRisk
+from app.models.runtime.control import JavaScriptExecutionResult
+from app.models.runtime.operations import (
+    SecurityCheckParams,
+    SecurityCheckResult,
+    SecurityRisk,
 )
 
 

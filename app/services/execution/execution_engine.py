@@ -30,9 +30,6 @@ from loguru import logger
 from app.services.execution.action_registry import (
     ActionRegistry, ActionContext, ActionResult, BaseAction, action_registry
 )
-from app.services.execution.user_plugin import (
-    BaseCustomPlugin, PluginContext, PluginHookType, plugin_registry
-)
 
 
 class ExecutionStatus(StrEnum):
@@ -96,7 +93,6 @@ class ExecutionEngine:
     def __init__(self):
         self._tasks: Dict[str, ExecutionTask] = {}
         self._action_registry = action_registry
-        self._plugin_registry = plugin_registry
         self._running = True
 
     @staticmethod
@@ -188,14 +184,6 @@ class ExecutionEngine:
             plugins=[]
         )
 
-        # 创建插件上下文
-        plugin_ctx = PluginContext(
-            session_id=session_id,
-            browser_id=browser_id,
-            action_name=action_id,
-            action_params=params
-        )
-
         # 获取操作实例：优先系统级，再按 mid 按需加载用户私有操作
         if mid:
             action = await self._action_registry.create_action_for_user(action_id, mid)
@@ -219,54 +207,10 @@ class ExecutionEngine:
                 action_id=action_id
             )
 
-        # 执行插件 before_action 钩子
-        if plugin_ids:
-            for pid in plugin_ids:
-                plugin = self._plugin_registry.get_instance(pid)
-                if plugin and plugin.enabled:
-                    try:
-                        await plugin.before_action(plugin_ctx)
-                    except Exception as e:
-                        logger.warning(f"插件 {pid} before_action 失败: {e}")
-
         try:
             # 执行操作
             result = await action.execute(ctx)
             result.execution_time = time.time() - start_time
-            plugin_ctx.result = result.data
-            plugin_ctx.execution_time = result.execution_time
-
-            if result.success:
-                # 执行插件 on_success 钩子
-                if plugin_ids:
-                    for pid in plugin_ids:
-                        plugin = self._plugin_registry.get_instance(pid)
-                        if plugin and plugin.enabled:
-                            try:
-                                await plugin.on_success(plugin_ctx)
-                            except Exception as e:
-                                logger.warning(f"插件 {pid} on_success 失败: {e}")
-            else:
-                # 执行插件 on_error 钩子
-                if plugin_ids:
-                    plugin_ctx.error = Exception(result.error)
-                    for pid in plugin_ids:
-                        plugin = self._plugin_registry.get_instance(pid)
-                        if plugin and plugin.enabled:
-                            try:
-                                await plugin.on_error(plugin_ctx)
-                            except Exception as e:
-                                logger.warning(f"插件 {pid} on_error 失败: {e}")
-
-            # 执行插件 after_action 钩子
-            if plugin_ids:
-                for pid in plugin_ids:
-                    plugin = self._plugin_registry.get_instance(pid)
-                    if plugin and plugin.enabled:
-                        try:
-                            await plugin.after_action(plugin_ctx)
-                        except Exception as e:
-                            logger.warning(f"插件 {pid} after_action 失败: {e}")
 
             return result
 
@@ -277,16 +221,6 @@ class ExecutionEngine:
                 execution_time=time.time() - start_time,
                 action_id=action_id
             )
-            plugin_ctx.error = Exception("超时")
-            # 执行插件 on_timeout 钩子
-            if plugin_ids:
-                for pid in plugin_ids:
-                    plugin = self._plugin_registry.get_instance(pid)
-                    if plugin and plugin.enabled:
-                        try:
-                            await plugin.on_timeout(plugin_ctx)
-                        except Exception as e:
-                            logger.warning(f"插件 {pid} on_timeout 失败: {e}")
             return result
 
         except Exception as e:
@@ -296,16 +230,6 @@ class ExecutionEngine:
                 execution_time=time.time() - start_time,
                 action_id=action_id
             )
-            plugin_ctx.error = e
-            # 执行插件 on_error 钩子
-            if plugin_ids:
-                for pid in plugin_ids:
-                    plugin = self._plugin_registry.get_instance(pid)
-                    if plugin and plugin.enabled:
-                        try:
-                            await plugin.on_error(plugin_ctx)
-                        except Exception as plugin_error:
-                            logger.warning(f"插件 {pid} on_error 失败: {plugin_error}")
             return result
 
     async def execute_workflow(
@@ -315,7 +239,6 @@ class ExecutionEngine:
         page: Any,
         browser: Any,
         workflow: Workflow,
-        plugin_ids: Optional[List[str]] = None,
         user_data: Optional[Dict[str, Any]] = None,
         mid: Optional[str] = None,
     ) -> List[ActionResult]:
@@ -328,7 +251,6 @@ class ExecutionEngine:
             page: Playwright Page对象
             browser: Playwright Browser对象
             workflow: 工作流定义
-            plugin_ids: 启用的插件ID列表
             user_data: 用户数据，可在步骤中通过 {{user.key}} 引用
             mid: 用户 mid，用于按需加载用户私有的自定义组合操作
 
@@ -345,7 +267,7 @@ class ExecutionEngine:
             browser_id=browser_id,
             status=ExecutionStatus.RUNNING,
             actions=[{"workflow": workflow.id, "steps": len(workflow.steps)}],
-            plugins=plugin_ids or []
+            plugins=[]
         )
         self._tasks[task_id] = task
 

@@ -2,7 +2,7 @@
 Mid相关依赖注入函数
 """
 
-from app.models.RPA_browser.depends_models import AuthInfo
+from app.models.common.depends import AuthInfo
 from enum import IntEnum
 from typing import List
 from fastapi import Header

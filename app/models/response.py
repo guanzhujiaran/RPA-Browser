@@ -1,4 +1,4 @@
-from typing import Optional, TypeVar, Generic, Any
+from typing import TypeVar, Generic, Any
 from sqlmodel import SQLModel
 from pydantic import BaseModel
 
@@ -18,22 +18,22 @@ class StandardResponse(SQLModel, Generic[DataT]):
     }
     """
     code: int
-    data: Optional[DataT] = None
+    data: DataT | None = None
     msg: str = "success"
 
 
 # 工具函数用于创建标准响应
-def success_response(data: Optional[DataT] = None, msg: str = "success") -> StandardResponse[DataT]:
+def success_response(data: DataT | None = None, msg: str = "success") -> StandardResponse[DataT]:
     """创建成功响应"""
     return StandardResponse(code=ResponseCode.SUCCESS, data=data, msg=msg)
 
 
-def error_response(code: int, msg: str = "error", data: Optional[Any] = None) -> StandardResponse[Any]:
+def error_response(code: int, msg: str = "error", data: Any | None = None) -> StandardResponse[Any]:
     """创建错误响应"""
     return StandardResponse(code=code, data=data, msg=msg)
 
 
-def custom_response(code: int, msg: str = "error", data: Optional[Any] = None) -> StandardResponse[Any]:
+def custom_response(code: int, msg: str = "error", data: Any | None = None) -> StandardResponse[Any]:
     """创建自定义错误响应"""
     return StandardResponse(code=code, data=data, msg=msg)
 

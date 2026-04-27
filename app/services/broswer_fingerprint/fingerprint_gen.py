@@ -1,13 +1,13 @@
 import random
 from dataclasses import asdict
 
-from app.models.RPA_browser.browser_info_model import (
+from app.models.core.browser.fingerprint import (
     BaseFingerprintBrowserInitParams,
     PlatformEnum,
-    BrowserFingerprintCreateParams,
-    UserBrowserServerSideDefaultSetting,
     BrowserEnum,
 )
+from app.models.runtime.api import BrowserFingerprintCreateParams
+from app.models.core.browser.info import UserBrowserServerSideDefaultSetting
 from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
     browser_exec_info_helper,
 )

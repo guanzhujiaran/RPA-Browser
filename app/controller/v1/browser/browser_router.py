@@ -3,15 +3,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.common.depends import BrowserReqAuthInfo
 from app.utils.depends.mid_depends import AuthInfo
 
-from app.models.RPA_browser.browser_info_model import (
-    BaseFingerprintBrowserInitParams,
+from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
+from app.models.core.browser.info import UserBrowserInfo
+from app.models.runtime.api import (
     BrowserFingerprintUpsertParams,
     BrowserFingerprintQueryParams,
     BrowserFingerprintDeleteParams,
     BrowserFingerprintCreateResp,
     BrowserFingerprintQueryResp,
     BrowserFingerprintDeleteResp,
-    UserBrowserInfo,
     BrowserFingerprintListParams,
     BrowserFingerprintCreateParams,
     BrowserFingerprintRenameParams,

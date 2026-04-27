@@ -1,11 +1,11 @@
 from fastapi import Depends, BackgroundTasks
 import time
-from app.models.RPA_browser.live_control_models import (
+from app.models.runtime.control import (
     HeartbeatResponse,
     CreateSessionResponse,
     BrowserSessionStatus,
 )
-from app.models.RPA_browser.simplified_models import (
+from app.models.runtime.simplified import (
     SimplifiedHeartbeatRequest,
     SimplifiedCreateSessionRequest,
 )
@@ -14,7 +14,7 @@ from app.models.router.router_prefix import BrowserSessionRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.RPA_browser.depends_models import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo
 from ..base import new_session_router
 
 router = new_session_router()
@@ -116,7 +116,7 @@ async def create_browser_session(
         browser_started=False,  # 还未启动，在后台创建中
         created_at=current_time,
         expires_at=current_time
-        + (request.expiration_time if request.expiration_time else 3600),
+        + (request.expiration_time or 3600),
         message="浏览器会话创建任务已启动，正在后台处理",
     )
 

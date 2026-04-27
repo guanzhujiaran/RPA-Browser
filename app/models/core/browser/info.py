@@ -4,12 +4,14 @@ Core 模块 - 浏览器信息模型
 定义用户浏览器信息、默认设置等数据库模型。
 """
 
+from typing import TYPE_CHECKING
+
 from app.config import settings
 from pydantic import computed_field
 from sqlalchemy import BIGINT
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.models.core.fingerprint import (
+from app.models.core.browser.fingerprint import (
     BaseFingerprintBrowserInitParams,
     PlatformEnum,
     BrowserEnum,
@@ -18,13 +20,21 @@ from app.models.core.fingerprint import (
 from app.models.base.base_sqlmodel import BaseSQLModel
 from snowflake import SnowflakeGenerator
 
+if TYPE_CHECKING:
+    from app.models.core.plugin.models import (
+        LogPluginModel,
+        PageLimitPluginModel,
+        RandomWaitPluginModel,
+        RetryPluginModel,
+    )
+
 # 初始化雪花ID生成器
 snowflake_generator = SnowflakeGenerator(
     instance=settings.snowflake_id, epoch=1735689600000, seq=2
 )
 
 
-class UserBrowserToken(BaseSQLModel):
+class UserBrowserUserId(BaseSQLModel):
     """用户浏览器令牌基础模型"""
 
     mid: int = Field(unique=False, index=True, sa_type=BIGINT)
@@ -35,7 +45,7 @@ class UserBrowserToken(BaseSQLModel):
         return str(self.mid)
 
 
-class UserBrowserInfoBase(UserBrowserToken):
+class UserBrowserInfoBase(UserBrowserUserId):
     """用户浏览器信息基础模型"""
 
     id: int = Field(
@@ -209,7 +219,7 @@ class UserBrowserDefaultSettingResponse(SQLModel):
 
 
 __all__ = [
-    "UserBrowserToken",
+    "UserBrowserUserId",
     "UserBrowserInfoBase",
     "UserBrowserServerSideDefaultSetting",
     "UserBrowserDefaultSetting",

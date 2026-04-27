@@ -5,7 +5,7 @@ Plugin Config 模块 - 默认插件配置模型
 """
 
 from pydantic import BaseModel
-from app.models.plugin.enums import LogPluginLogLevelEnum
+from app.models.core.browser.fingerprint import LogPluginLogLevelEnum
 
 
 class LogPluginConfig(BaseModel):

@@ -5,7 +5,7 @@ Runtime 模块 - LiveService 数据模型
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Set
+from typing import Dict, Set
 import time
 import asyncio
 
@@ -52,7 +52,7 @@ class VideoStreamInfo:
     session: PluginedSessionInfo
     params: VideoStreamParams
     active: bool = True
-    last_frame: Optional[bytes] = None
+    last_frame: bytes | None = None
     last_frame_time: float = 0.0
 
 
@@ -65,26 +65,13 @@ class LiveStreamingEntry:
     start_time: int
     last_heartbeat: int
     is_active: bool = True
-    stream_params: Optional[VideoStreamParams] = None
+    stream_params: VideoStreamParams | None = None
     cleanup_scheduled: bool = False
 
-
-@dataclass
-class LiveServiceState:
-    """LiveService状态管理"""
-
-    browser_sessions: Dict[str, BrowserSessionEntry]
-    video_streams: Dict[str, VideoStreamInfo]
-    auto_streams: Dict[str, bool]
-    live_streams: Dict[str, LiveStreamingEntry]
-    cleanup_task: Optional[asyncio.Task] = None
-    heartbeat_monitor_task: Optional[asyncio.Task] = None
-    stream_monitor_task: Optional[asyncio.Task] = None
 
 
 __all__ = [
     "BrowserSessionEntry",
     "VideoStreamInfo",
     "LiveStreamingEntry",
-    "LiveServiceState",
 ]

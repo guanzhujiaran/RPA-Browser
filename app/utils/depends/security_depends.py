@@ -15,8 +15,8 @@ from app.models.exceptions.base_exception import (
     PluginIdNotBelongToUserException,
     FingerprintLimitExceededException,
 )
-from app.models.RPA_browser.browser_api_models import BrowserFingerprintQueryParams
-from app.models.RPA_browser.depends_models import (
+from app.models.runtime.api import BrowserFingerprintQueryParams
+from app.models.common.depends import (
     VerifyBrowserDependsReq,
     BrowserReqAuthInfo,
     VerifyPluginDependsReq,
@@ -25,7 +25,6 @@ from app.models.RPA_browser.depends_models import (
 )
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 from app.services.RPA_browser.permission_config_service import PermissionConfigService
-from app.services.RPA_browser.plugin_db_service import PluginDBService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 
@@ -64,44 +63,6 @@ async def verify_browser_ownership(
         raise BrowserIdNotBeloneToUserException(browser_id=browser_id)
 
     return BrowserReqAuthInfo(auth_info=auth_info, browser_id=browser_id)
-
-
-async def verify_plugin_ownership(
-    body: VerifyPluginDependsReq,
-    auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
-) -> BrowserPluginReqInfo:
-    """
-    验证插件是否属于当前用户MID
-
-    Args:
-        body: 验证插件请求参数
-        auth_info: 认证信息（从请求头获取）
-        session: 数据库会话
-
-    Returns:
-        BrowserPluginReqInfo: 验证通过的插件请求信息
-
-    Raises:
-        PluginIdIsNoneException: 当插件ID为空时抛出
-        PluginIdNotBelongToUserException: 当插件不属于用户或不存在时抛出
-    """
-
-    plugin_id = body.plugin_id
-    if not plugin_id:
-        raise PluginIdIsNoneException()
-
-    # 验证插件是否存在且属于当前用户
-    plugin_info = await PluginDBService.get_user_plugin(
-        plugin_id=plugin_id, session=session
-    )
-
-    if not plugin_info:
-        raise PluginIdNotBelongToUserException(plugin_id=plugin_id)
-
-    return BrowserPluginReqInfo(
-        mid=auth_info.mid, browser_id=body.browser_id, plugin_id=plugin_id
-    )
 
 
 async def verify_fingerprint_ownership(

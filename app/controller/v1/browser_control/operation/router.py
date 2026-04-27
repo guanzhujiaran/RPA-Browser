@@ -1,11 +1,11 @@
 from fastapi import Depends
-from app.models.RPA_browser.live_control_models import PluginStatusResponse
+from app.models.runtime.control import PluginStatusResponse
 from app.models.response import StandardResponse, success_response
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.RPA_browser.depends_models import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo
 from ..base import new_operation_router
 
 router = new_operation_router()

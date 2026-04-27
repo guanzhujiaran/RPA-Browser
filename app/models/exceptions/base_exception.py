@@ -74,6 +74,24 @@ class GetBrowserSessionFailedException(BaseException):
         self.msg = self.msg.format(error=error)
 
 
+class GetBrowserInfoFailedException(BaseException):
+    code = ResponseCode.INTERNAL_ERROR
+    msg = ResponseMsg.exception_get_browser_info_failed
+
+    def __init__(self, error: str):
+        self.msg = self.msg.format(error=error)
+
+
+class WebRTCStreamNotActiveException(BaseException):
+    code = ResponseCode.INTERNAL_ERROR
+    msg = ResponseMsg.exception_webrtc_stream_not_active
+
+
+class BilibiliLoginFailedException(BaseException):
+    code = ResponseCode.INTERNAL_ERROR
+    msg = ResponseMsg.exception_bilibili_login_failed
+
+
 class BrowserFingerprintNotFoundException(BaseException):
     code = ResponseCode.NOT_FOUND
     msg = ResponseMsg.exception_browser_fingerprint_not_found

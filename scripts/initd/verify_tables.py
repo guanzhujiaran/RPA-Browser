@@ -11,9 +11,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from app.config import settings
 
 # 导入需要创建的数据库表
-from app.models.RPA_browser.browser_info_model import *  # type: ignore
-from app.models.RPA_browser.plugin_model import *  # type: ignore
-from app.models.RPA_browser.notify_model import *  # type: ignore
+from app.models.core.browser.info import *  # type: ignore
+from app.models.core.plugin.models import *  # type: ignore
+from app.models.core.notify.models import *  # type: ignore
 
 
 def create_database_if_not_exists():

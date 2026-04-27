@@ -13,7 +13,7 @@ from email.utils import formataddr
 import asyncio
 import inspect
 from typing import Type
-from app.models.RPA_browser.notify_model import NotificationConfig
+from app.models.core.notify.models import NotificationConfig
 from app.utils.decorator import log_class_decorator
 from app.utils.http import httpx_client
 import loguru

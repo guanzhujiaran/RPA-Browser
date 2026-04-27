@@ -1,8 +1,9 @@
 import asyncio
 import uuid
 import sys
-from app.models.RPA_browser.browser_info_model import UserBrowserInfoCreateParams
-from app.models.RPA_browser.browser_session_model import SessionCreateParams, BrowserSessionRemoveParams
+from app.models.core.browser.info import UserBrowserInfoCreateParams
+from app.models.runtime.api import SessionCreateParams
+from app.models.runtime.session import BrowserSessionRemoveParams
 from app.services.RPA_browser.browser_session_pool.playwright_pool import get_default_session_pool
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 from app.utils.depends.session_manager import DatabaseSessionManager

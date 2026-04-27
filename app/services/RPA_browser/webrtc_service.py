@@ -14,6 +14,7 @@ from PIL import Image
 import io
 from loguru import logger
 from app.services.RPA_browser.live_service import LiveService
+from app.models.exceptions.base_exception import WebRTCStreamNotActiveException
 
 
 @dataclass
@@ -38,11 +39,11 @@ class BrowserVideoStreamTrack(VideoStreamTrack):
     async def recv(self) -> VideoFrame:
         """接收视频帧"""
         if not self.active:
-            raise Exception("Stream is not active")
+            raise WebRTCStreamNotActiveException()
 
         try:
             # 获取浏览器会话
-            plugined_session = await LiveService.get_plugined_session(
+            plugined_session = await LiveService.get_or_create_browser_session(
                 self.mid, self.browser_id, headless=False
             )
             page = await plugined_session.get_current_page()
@@ -82,9 +83,6 @@ class WebRTCService:
 
     # 缓存 ICE candidates (在连接建立前收到 candidate 时使用)
     ice_candidate_cache: Dict[str, list] = {}
-
-    # 缓存服务端的 ICE candidates (供前端获取)
-    server_ice_candidates: Dict[str, list] = {}
 
     @staticmethod
     def _get_connection_key(mid: int, browser_id: int) -> str:
@@ -168,19 +166,11 @@ class WebRTCService:
                     f"Signaling state changed for {connection_key}: {pc.signalingState}"
                 )
 
-            # 🔥 关键: 监听 ICE candidates 并缓存到服务端缓存
+            # 🔥 关键: 监听 ICE candidates
             @pc.on("icecandidate")
             def on_ice_candidate(candidate):
                 if candidate:
                     logger.info(f"🧊 Server ICE candidate collected for {connection_key}: {candidate}")
-                    # 缓存服务端的 candidate，供前端获取
-                    if connection_key not in WebRTCService.server_ice_candidates:
-                        WebRTCService.server_ice_candidates[connection_key] = []
-                    WebRTCService.server_ice_candidates[connection_key].append({
-                        "candidate": candidate.to_sdp(),
-                        "sdpMid": candidate.sdpMid,
-                        "sdpMLineIndex": candidate.sdpMLineIndex
-                    })
                 else:
                     logger.info(f"🎉 Server ICE gathering complete for {connection_key}")
 
@@ -299,10 +289,6 @@ class WebRTCService:
         # 清除缓存的 ICE candidates
         WebRTCService.clear_cached_candidates(mid, browser_id)
 
-        # 清除服务端 ICE candidates
-        if connection_key in WebRTCService.server_ice_candidates:
-            del WebRTCService.server_ice_candidates[connection_key]
-
         # 🔧 从 LiveService 的直播流管理中移除
         await LiveService._cleanup_live_stream(mid, browser_id)
         logger.info(f"✅ Cleaned up WebRTC stream from LiveService for {connection_key}")
@@ -325,24 +311,6 @@ class WebRTCService:
             "signaling_state": pc.signalingState,
         }
 
-    @staticmethod
-    def get_server_ice_candidates(mid: int, browser_id: int) -> tuple[list, str]:
-        """获取服务端的 ICE candidates"""
-        connection_key = WebRTCService._get_connection_key(mid, browser_id)
-
-        if connection_key not in WebRTCService.active_connections:
-            logger.warning(f"Connection not found for {connection_key}")
-            return [], "closed"
-
-        pc = WebRTCService.active_connections[connection_key].peer_connection
-        candidates = WebRTCService.server_ice_candidates.get(connection_key, [])
-
-        logger.info(
-            f"Returning {len(candidates)} server ICE candidates for {connection_key}, "
-            f"ICE gathering state: {pc.iceGatheringState}"
-        )
-
-        return candidates, pc.iceGatheringState
 
     @staticmethod
     def _parse_ice_candidate(

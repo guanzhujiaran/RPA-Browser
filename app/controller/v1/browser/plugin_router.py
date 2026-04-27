@@ -2,13 +2,13 @@
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.RPA_browser.plugin_model import (
+from app.models.plugin.models import (
     LogPluginCreate,
     PageLimitPluginCreate,
     RandomWaitPluginCreate,
     RetryPluginCreate,
 )
-from app.models.RPA_browser.plugin_request_model import (
+from app.models.plugin.request_models import (
     PluginCreateRequest,
     PluginGetRequest,
     PluginListRequest,
@@ -28,7 +28,6 @@ from app.models.response import StandardResponse, success_response, error_respon
 from app.models.response_code import ResponseCode
 from app.services.RPA_browser.browser_service import BrowserService
 from app.services.RPA_browser.browser_db_service import BrowserDBService
-from app.services.RPA_browser.plugin_db_service import PluginDBService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 
@@ -77,7 +76,7 @@ async def create_or_update_plugin_router(
 
         # 根据插件类型创建对应的插件
         if plugin_enum == PluginTypeEnum.LOG:
-            from app.models.RPA_browser.plugin_model import LogPluginLogLevelEnum
+            from app.models.core.browser.fingerprint import LogPluginLogLevelEnum
             plugin_params = LogPluginCreate(
                 mid=str(mid),
                 browser_info_id=str(params.browser_info_id) if params.browser_info_id else None,
@@ -490,16 +489,6 @@ async def delete_plugin_router(
         browser_service = BrowserService(auth_info.mid)
         # 将plugin_id从str转换为int
         plugin_id_int = int(request.plugin_id)
-        
-        # 验证插件是否属于当前用户，防止越权
-        is_owner = await PluginDBService.verify_plugin_ownership(
-            plugin_id_int, auth_info.mid, session
-        )
-        if not is_owner:
-            return error_response(
-                code=ResponseCode.FORBIDDEN,
-                msg="无权删除该插件"
-            )
         
         result = await browser_service.delete_plugin(plugin_id_int, session)
         

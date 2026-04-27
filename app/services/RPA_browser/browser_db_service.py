@@ -1,14 +1,16 @@
 from sqlalchemy.sql.functions import count
 from sqlmodel import select, and_
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models.RPA_browser.browser_info_model import (
+from app.models.core.browser.info import (
     UserBrowserInfo,
     UserBrowserDefaultSetting,
     UserBrowserDefaultSettingRequest,
     UserBrowserDefaultSettingResponse,
+)
+from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
+from app.models.runtime.api import (
     BrowserFingerprintCreateParams,
     BrowserFingerprintUpsertParams,
-    BaseFingerprintBrowserInitParams,
     BrowserFingerprintQueryParams,
     BrowserFingerprintUpdateParams,
     BrowserFingerprintDeleteParams,
@@ -23,7 +25,6 @@ from app.services.broswer_fingerprint.fingerprint_gen import (
     gen_from_browserforge_fingerprint,
 )
 from app.models.response_code import ResponseCode
-from app.services.RPA_browser.plugin_db_service import PluginDBService
 from app.models.exceptions.base_exception import BrowserFingerprintNotFoundException
 from typing import Union
 from pathlib import Path
@@ -91,10 +92,6 @@ class BrowserDBService:
             session.add(browser_info)
             await session.commit()
             await session.refresh(browser_info)
-            # 获取或创建用户级别的默认插件配置
-            await PluginDBService.get_or_create_user_default_plugins(
-                browser_info.mid, session
-            )
 
         return BrowserFingerprintCreateResp(mid=mid, id=browser_info.id)
 
@@ -123,11 +120,6 @@ class BrowserDBService:
         session.add(browser_info)
         await session.commit()
         await session.refresh(browser_info)
-
-        # 获取或创建用户级别的默认插件配置
-        await PluginDBService.get_or_create_user_default_plugins(
-            browser_info.mid, session
-        )
 
         # 返回响应 - 需要将mid和id转换为字符串
         browser_info_dict = browser_info.model_dump()

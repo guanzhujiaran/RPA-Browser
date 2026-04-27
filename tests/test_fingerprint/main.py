@@ -1,6 +1,6 @@
 import uuid, asyncio
 
-from app.models.RPA_browser.browser_info_model import UserBrowserInfoCreateParams
+from app.models.core.browser.info import UserBrowserInfoCreateParams
 from app.services.broswer_fingerprint.fingerprint_gen import gen_from_browserforge_fingerprint
 
 

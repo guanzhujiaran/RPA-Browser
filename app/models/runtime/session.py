@@ -7,12 +7,8 @@ Runtime 模块 - 会话管理模型
 from sqlmodel import SQLModel, Field
 from pydantic import computed_field
 
-
-class BrowserSessionBaseParams(SQLModel):
-    pass
-
-
 class BrowserSessionGetParams(SQLModel):
+    mid: int
     browser_id: int
 
 
@@ -24,11 +20,17 @@ class BrowserSessionAllRemoveParams(BrowserSessionGetParams):
     force_close: bool = False
 
 
-class BrowserSessionRemoveParams(BrowserSessionBaseParams, BrowserSessionGetParams):
+class BrowserSessionRemoveParams(BrowserSessionGetParams):
     force_close: bool = False
 
 
-class SessionCreateParams(BrowserSessionCreateParams, BrowserSessionBaseParams): ...
+class SessionCreateParams(BrowserSessionCreateParams):
+    mid: int
+    browser_id: int
+    @computed_field
+    @property
+    def mid_str(self) -> str:
+        return str(self.mid) if self.mid else ""
 
 
 class SessionCloseResponse(SQLModel):

@@ -1,8 +1,8 @@
-from app.models.RPA_browser.plugin_model import (
+from app.models.core.plugin.models import (
     LogPluginModel,
     RandomWaitPluginModel,
     RetryPluginModel,
-    PageLimitPluginModel
+    PageLimitPluginModel,
 )
 from app.services.site_rpa_operation.plugins import (
     LogPlugin,

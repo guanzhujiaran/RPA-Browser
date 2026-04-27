@@ -1,8 +1,7 @@
 import asyncio
 from typing import Dict, Optional
-from app.models.RPA_browser.browser_session_model import (
+from app.models.runtime.session import (
     SessionCreateParams,
-    BrowserSessionBaseParams,
     BrowserSessionRemoveParams,
     SessionAllCloseResponse,
     SessionCloseResponse,
@@ -61,14 +60,13 @@ class PlaywrightSessionPool:
             return await browser_session.create_session(params)
 
     async def release_all_session(
-        self, params: BrowserSessionBaseParams
+        self, mid: int
     ) -> SessionAllCloseResponse:
         """
         释放指定mid的会话资源
-
         """
         async with self._pool_lock:
-            if browser_session := self._active_sessions.get(params.mid):
+            if browser_session := self._active_sessions.get(mid):
                 return await browser_session.remove_all_session()
         return SessionAllCloseResponse()
 

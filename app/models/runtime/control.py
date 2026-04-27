@@ -130,7 +130,7 @@ class BrowserCleanupPolicy(SQLModel):
     """浏览器清理策略"""
 
     max_idle_time: int = Field(default=1800, description="最大闲置时间（秒）")
-    max_no_heartbeat_time: int = Field(default=60, description="最大无心跳时间（秒）")
+    max_no_heartbeat_time: int = Field(default=300, description="最大无心跳时间（秒）")
     cleanup_interval: int = Field(default=300, description="清理检查间隔（秒）")
 
 
@@ -162,7 +162,6 @@ class BrowserSessionStatus(SQLModel):
 class CreateSessionRequest(SQLModel):
     """创建会话请求"""
 
-    headless: bool = Field(default=False, description="是否无头模式")
     auto_cleanup: bool = Field(default=True, description="是否启用自动清理")
     cleanup_policy: BrowserCleanupPolicy | None = Field(None, description="清理策略")
     expiration_time: int | None = Field(None, description="会话过期时间（秒）")

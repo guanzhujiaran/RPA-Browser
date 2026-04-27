@@ -12,12 +12,12 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.response_code import ResponseCode
-from app.models.RPA_browser.browser_info_model import (
+from app.models.core.browser.info import (
     UserBrowserDefaultSettingRequest,
     UserBrowserDefaultSettingResponse,
     UserBrowserServerSideDefaultSetting,
 )
-from app.models.RPA_browser.depends_models import (
+from app.models.common.depends import (
     VerifyBrowserDependsReq,
     BrowserReqAuthInfo,
 )

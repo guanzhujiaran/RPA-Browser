@@ -6,4 +6,4 @@ updatedAt: 2025-12-25T14:11:38.705Z
 provider: 
 ---
 
-所有的typehint禁止Dict[str, Any]或者任何Dict的内容，严格使用pydantic或者dataclass
+所有的typehint禁止Dict[str, Any]或者任何Dict的内容，严格使用pydantic或者dataclass，不要使用不适合项目python版本的类型，都用最新的写法，比如|None替代optional

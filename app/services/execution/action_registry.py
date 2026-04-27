@@ -13,13 +13,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Type
 from enum import StrEnum
 
-from app.models.RPA_browser.custom_execution_models import CustomActionModel
+from app.models.core.workflow.models import CustomActionModel
 from app.utils.depends.session_manager import DatabaseSessionManager
 from sqlmodel import select
 import asyncio
 import time
-
-from app.services.execution.user_plugin import BaseCustomPlugin
 
 
 class ActionType(StrEnum):
@@ -90,7 +88,6 @@ class ActionContext:
     browser: Any  # Playwright Browser 对象
     params: Dict[str, Any] = field(default_factory=dict)
     user_data: Dict[str, Any] = field(default_factory=dict)
-    plugins: List[BaseCustomPlugin] = field(default_factory=list)
 
 
 class BaseAction(ABC):

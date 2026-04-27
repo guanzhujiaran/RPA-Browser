@@ -1,10 +1,9 @@
 import os
 from typing import List
-import asyncio
 from pydantic import computed_field
-from app.models.RPA_browser.browser_exec_info_model import (
-    BrowserExecInfoModels,
+from app.models.core.browser.exec import (
     BrowserExecInfoModel,
+    BrowserExecInfoModels,
 )
 import aiofiles
 

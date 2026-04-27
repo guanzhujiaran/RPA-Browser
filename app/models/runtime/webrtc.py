@@ -40,12 +40,6 @@ class WebRTCIceCandidateResponse(SQLModel):
     success: bool = Field(description="是否成功")
 
 
-class WebRTCGetIceCandidatesResponse(SQLModel):
-    """获取 ICE Candidates 响应"""
-
-    candidates: List[Dict[str, Any]] = Field(description="ICE candidates 列表")
-    ice_gathering_state: str = Field(description="ICE gathering 状态")
-
 
 class WebRTCConnectionStatusResponse(SQLModel):
     """WebRTC 连接状态响应"""
@@ -67,7 +61,6 @@ __all__ = [
     "WebRTCAnswerResponse",
     "WebRTCIceCandidateRequest",
     "WebRTCIceCandidateResponse",
-    "WebRTCGetIceCandidatesResponse",
     "WebRTCConnectionStatusResponse",
     "WebRTCCloseConnectionResponse",
 ]

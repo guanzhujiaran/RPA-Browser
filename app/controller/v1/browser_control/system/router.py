@@ -1,12 +1,12 @@
 from fastapi import Depends
 import time
-from app.models.RPA_browser.live_control_models import (
+from app.models.runtime.control import (
     SystemStatisticsResponse,
     CleanupPolicyResponse,
     SystemCleanupResponse,
     SystemHealthCheckResponse,
 )
-from app.models.RPA_browser.simplified_models import (
+from app.models.runtime.simplified import (
     SimplifiedBrowserCleanupPolicyRequest,
 )
 from app.models.response import StandardResponse, success_response, error_response
@@ -16,7 +16,7 @@ from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.RPA_browser.depends_models import BrowserReqInfo
+from app.models.common.depends import BrowserReqInfo
 from ..base import new_system_router
 
 router = new_system_router()
@@ -106,7 +106,7 @@ async def trigger_cleanup():
     """
     # 触发清理
     await LiveService.cleanup_expired_sessions()
-    await LiveService._cleanup_idle_browsers()
+    await LiveService.cleanup_idle_browsers()
 
     # 获取清理后的统计信息
     statistics = LiveService.get_session_statistics()

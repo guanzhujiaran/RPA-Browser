@@ -1,29 +1,19 @@
-from typing import Dict
-from app.models.RPA_browser.plugin_model import (
-    LogPluginModel,
-    PageLimitPluginModel,
-    RandomWaitPluginModel,
-    RetryPluginModel,
-    PluginBaseModel,
-)
-from app.models.RPA_browser.notify_model import (
+from app.models.core.notify.models import (
     NotificationConfig,
+)
+from app.models.notify.models import (
     NotificationConfigCreate,
     NotificationConfigUpdate,
-    NotificationConfigEffectiveResp,
 )
-from app.models.RPA_browser.browser_info_model import (
-    BaseFingerprintBrowserInitParams,
-    BrowserFingerprintCreateParams,
-)
-from app.services.RPA_browser.plugin_db_service import PluginDBService
+from app.models.notify.response_models import NotificationConfigEffectiveResp
+from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
+from app.models.runtime.api import BrowserFingerprintCreateParams
 from app.services.RPA_browser.notification_service import NotificationService
 from app.services.broswer_fingerprint.fingerprint_gen import (
     gen_from_browserforge_fingerprint,
 )
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.services.site_rpa_operation.plugins import PluginTypeEnum
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -52,52 +42,6 @@ class BrowserService:
         res = await gen_from_browserforge_fingerprint(params=params)
         res.proxy_server = None  # 清除代理服务器配置
         return res
-
-    async def create_log_plugin(
-        self, params: LogPluginModel, session: AsyncSession
-    ) -> LogPluginModel:
-        """
-        创建日志插件
-        只有当配置与默认值不同时才创建数据库记录
-        """
-        return await PluginDBService.create_log_plugin(params=params, session=session)
-
-    async def create_page_limit_plugin(
-        self, params: PageLimitPluginModel, session: AsyncSession
-    ) -> PageLimitPluginModel:
-        """
-        创建页面限制插件
-        只有当配置与默认值不同时才创建数据库记录
-        """
-        return await PluginDBService.create_page_limit_plugin(
-            params=params, session=session
-        )
-
-    async def create_random_wait_plugin(
-        self, params: RandomWaitPluginModel, session: AsyncSession
-    ) -> RandomWaitPluginModel:
-        """
-        创建随机等待插件
-        只有当配置与默认值不同时才创建数据库记录
-        """
-        return await PluginDBService.create_random_wait_plugin(
-            params=params, session=session
-        )
-
-    async def create_retry_plugin(
-        self, params: RetryPluginModel, session: AsyncSession
-    ) -> RetryPluginModel:
-        """
-        创建重试插件
-        只有当配置与默认值不同时才创建数据库记录
-        """
-        return await PluginDBService.create_retry_plugin(params=params, session=session)
-
-    async def delete_plugin(self, plugin_id: int, session: AsyncSession) -> bool:
-        """
-        删除插件配置
-        """
-        return await PluginDBService.delete_user_plugin(plugin_id, session)
 
     # Notification related methods
     async def get_notification_config(
@@ -166,68 +110,6 @@ class BrowserService:
         """
         return await NotificationService.push_msg(
             str(self.mid), title, content, session, browser_id
-        )
-
-    async def get_jwt_token(self) -> str:
-        """
-        获取JWT访问令牌
-
-        Returns:
-            str: JWT访问令牌
-        """
-        return JWTTokenService.generate_jwt_token(self.mid)
-
-    async def get_user_default_plugins(
-        self, session: AsyncSession
-    ) -> Dict[PluginTypeEnum, PluginBaseModel]:
-        """
-        获取用户默认插件配置
-        """
-        return await PluginDBService.get_user_default_plugins(self.mid, session)
-
-    async def get_or_create_user_default_plugins(
-        self, session: AsyncSession
-    ) -> Dict[PluginTypeEnum, PluginBaseModel]:
-        """
-        获取用户默认插件配置（兼容旧接口）
-        """
-        return await PluginDBService.get_or_create_user_default_plugins(
-            self.mid, session
-        )
-
-    async def get_browser_info_plugins(
-        self, browser_info_id: int, session: AsyncSession
-    ) -> Dict[PluginTypeEnum, PluginBaseModel]:
-        """
-        获取浏览器实例的插件配置
-        """
-        return await PluginDBService.get_browser_info_plugins(
-            self.mid, browser_info_id, session
-        )
-
-    async def get_specific_plugin_for_browser_info(
-        self, plugin_type: PluginTypeEnum, browser_info_id: int, session: AsyncSession
-    ) -> PluginBaseModel | None:
-        """
-        获取浏览器实例的特定类型插件
-        """
-        return await PluginDBService.get_specific_plugin_for_browser_info(
-            plugin_type, self.mid, browser_info_id, session
-        )
-
-    async def create_plugin_for_browser_info(
-        self,
-        plugin_type: PluginTypeEnum,
-        browser_info_id: int,
-        session: AsyncSession,
-        **kwargs,
-    ) -> PluginBaseModel | None:
-        """
-        为浏览器实例创建特定类型的插件
-        只有当配置与默认值不同时才创建数据库记录
-        """
-        return await PluginDBService.create_plugin_for_browser_info(
-            plugin_type, self.mid, browser_info_id, session, **kwargs
         )
 
     async def send_msg(

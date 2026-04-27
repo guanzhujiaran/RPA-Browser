@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Dict, List, Optional
 
 import httpx
@@ -113,12 +114,10 @@ class ProxyManager(AsyncObject):
         get_ip_apis = ["https://api.ipify.org/?format=json", "https://api.myip.com/", "https://get.geojs.io/v1/ip.json", "https://api.ip.sb/jsonip", "https://l2.io/ip.json"]
 
         for get_ip_api in get_ip_apis:
-            try:
+            with suppress(Exception):
                 ip_request = await httpx_client.get(get_ip_api, timeout=self.timeout)
                 ip = ip_request.json().get("ip")
                 break
-            except Exception:
-                pass
         else:
             raise ProxyCheckError("Could not get IP-Address of Proxy (Proxy is Invalid/Timed Out)")
 
@@ -130,7 +129,7 @@ class ProxyManager(AsyncObject):
         }
 
         for get_geo_api, api_names in get_geo_apis.items():
-            try:
+            with suppress(Exception):
                 api_url = get_geo_api.replace("<IP>", ip)
                 country, country_code, latitude, longitude, timezone = api_names
                 r = await self._httpx.get(api_url, timeout=self.timeout)
@@ -144,7 +143,5 @@ class ProxyManager(AsyncObject):
 
                 assert self.country
                 break
-            except Exception:
-                pass
         else:
-            raise ProxyCheckError("Could not get GeoInformation from proxy (Proxy is probably not Indexed)")
+            raise ProxyCheckError("Could not get GeoInformation from proxy (Proxy is Probably not Indexed)")

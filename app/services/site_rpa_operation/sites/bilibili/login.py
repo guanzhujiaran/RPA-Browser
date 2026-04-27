@@ -1,5 +1,6 @@
 from app.services.site_rpa_operation.base.base_RPA import BaseRPA
 from app.services.geetest.captcha_break import acb
+from app.models.exceptions.base_exception import BilibiliLoginFailedException
 
 
 class BiliLoginRPA(BaseRPA):
@@ -53,4 +54,4 @@ class BiliLoginRPA(BaseRPA):
         res = await page.evaluate("()=>{return window.__LIVE_USER_LOGIN_STATUS__ }")
         if res and res.get("isLogin"):
             return
-        raise Exception("登录失败")
+        raise BilibiliLoginFailedException()

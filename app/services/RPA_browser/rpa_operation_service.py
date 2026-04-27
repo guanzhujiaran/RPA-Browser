@@ -6,7 +6,7 @@ RPA 操作服务 - 处理浏览器自动化操作
 
 import base64
 from playwright.async_api import Page, BrowserContext
-from app.models.RPA_browser.browser_info_model import (
+from app.models.runtime.operations import (
     RPAClickParams,
     RPAFillParams,
     RPAScrollParams,
@@ -16,7 +16,7 @@ from app.models.RPA_browser.browser_info_model import (
     RPANavigateParams,
     RPAResponse,
 )
-from app.models.RPA_browser.live_control_models import BrowserInfoData
+from app.models.runtime.control import BrowserInfoData
 from app.services.RPA_browser.browser_session_pool.session_pool_model import (
     PluginedSessionInfo,
 )

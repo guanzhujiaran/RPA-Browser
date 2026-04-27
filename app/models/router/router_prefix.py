@@ -55,14 +55,6 @@ class BrowserControlRouterPath(StrEnum):
     custom_actions_update = "/custom-actions/update"
     custom_actions_delete = "/custom-actions/delete"
 
-    # === 插件管理 ===
-    plugins_registered = "/plugins/registered"
-    plugins_get = "/plugins/get"
-    plugins_list_user = "/plugins/list-user"
-    plugins_create = "/plugins/create"
-    plugins_update = "/plugins/update"
-    plugins_delete = "/plugins/delete"
-
     # === 工作流管理 ===
     workflows_list = "/workflows/list"
     workflows_get = "/workflows/get"
@@ -85,7 +77,6 @@ class BrowserControlRouterPath(StrEnum):
     webrtc_offer = "/webrtc/offer"
     webrtc_answer = "/webrtc/answer"
     webrtc_ice_candidate = "/webrtc/ice-candidate"
-    webrtc_ice_candidates_get = "/webrtc/ice-candidates"
     webrtc_status = "/webrtc/status"
     webrtc_close = "/webrtc/close"
 

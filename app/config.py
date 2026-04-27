@@ -1,11 +1,14 @@
 import os
+from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.models.consts.enums import ConfigRunningModeEnum
 
 current_dir = os.path.dirname(__file__)
 
 
 class Settings(BaseSettings):
     mysql_browser_info_url: str
+    RUNNING_MODE: ConfigRunningModeEnum
     controller_base_path: str | None = "/api"
     chromium_executable_dir: str | None = os.path.join(current_dir, "chrome")
     jwt_algorithm: str = "HS256"  # JWT算法
@@ -30,12 +33,15 @@ class Settings(BaseSettings):
     sys_pushme_token: str = ""
     sys_pushplus_token: str = ""
     GEMINI_API_KEY: str = "NotNecessary"
-    default_proxy_server: str = "" # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128
+    default_proxy_server: str = (
+        ""  # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128
+    )
     snowflake_id: int = 1
     environment: str = "development"  # 环境变量：development, production
 
 
 settings = Settings()
+logger.info(f"Settings loaded\n{settings}")
 
 
 class CONF:

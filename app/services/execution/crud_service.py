@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import uuid
 from sqlmodel import select
 
-from app.models.RPA_browser.custom_execution_models import (
+from app.models.core.workflow.models import (
     CustomActionModel,
     UserPluginModel,
     UserWorkflowModel,
@@ -142,132 +142,6 @@ class ActionCrudService:
         """禁用操作"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(select(CustomActionModel).where(CustomActionModel.id == id))
-            model = result.first()
-            if not model:
-                return False
-            model.is_enabled = False
-            model.updated_at = datetime.now()
-            await session.commit()
-            return True
-
-
-class PluginCrudService:
-    """插件 CRUD 服务"""
-
-    @staticmethod
-    async def create(
-        mid: str,
-        plugin_id: str,
-        name: str,
-        hooks: List[str],
-        code: Optional[str] = None,
-        description: str = "",
-        config_schema: Optional[Dict[str, Any]] = None,
-        default_config: Optional[Dict[str, Any]] = None,
-        priority: int = 100,
-    ) -> UserPluginModel:
-        """创建自定义插件"""
-        async with DatabaseSessionManager.async_session() as session:
-            model = UserPluginModel(
-                plugin_id=plugin_id,
-                name=name,
-                description=description,
-                mid=mid,
-                priority=priority,
-            )
-            model.set_hooks(hooks)
-            if config_schema:
-                model.set_config_schema(config_schema)
-            if default_config:
-                model.set_default_config(default_config)
-            if code:
-                model.code = code
-            session.add(model)
-            await session.commit()
-            await session.refresh(model)
-            return model
-
-    @staticmethod
-    async def get_by_id(id: int) -> Optional[UserPluginModel]:
-        """根据ID获取"""
-        async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
-            return result.first()
-
-    @staticmethod
-    async def list_by_user(mid: str, skip: int = 0, limit: int = 100) -> List[UserPluginModel]:
-        """获取用户的所有插件"""
-        async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(
-                select(UserPluginModel)
-                .where(UserPluginModel.mid == mid)
-                .offset(skip)
-                .limit(limit)
-            )
-            return result.all()
-
-    @staticmethod
-    async def update(
-        id: int,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        hooks: Optional[List[str]] = None,
-        code: Optional[str] = None,
-        priority: Optional[int] = None,
-    ) -> Optional[UserPluginModel]:
-        """更新插件"""
-        async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
-            model = result.first()
-            if not model:
-                return None
-
-            if name is not None:
-                model.name = name
-            if description is not None:
-                model.description = description
-            if hooks is not None:
-                model.set_hooks(hooks)
-            if code is not None:
-                model.code = code
-            if priority is not None:
-                model.priority = priority
-
-            model.updated_at = datetime.now()
-            await session.commit()
-            await session.refresh(model)
-            return model
-
-    @staticmethod
-    async def delete(id: int) -> bool:
-        """删除插件"""
-        async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
-            model = result.first()
-            if not model:
-                return False
-            await session.delete(model)
-            await session.commit()
-            return True
-
-    @staticmethod
-    async def enable(id: int) -> bool:
-        """启用插件"""
-        async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
-            model = result.first()
-            if not model:
-                return False
-            model.is_enabled = True
-            model.updated_at = datetime.now()
-            await session.commit()
-            return True
-
-    @staticmethod
-    async def disable(id: int) -> bool:
-        """禁用插件"""
-        async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
             model = result.first()
             if not model:
                 return False
@@ -549,6 +423,5 @@ class ExecutionLogCrudService:
 
 # 全局服务实例
 action_crud = ActionCrudService()
-plugin_crud = PluginCrudService()
 workflow_crud = WorkflowCrudService()
 execution_log_crud = ExecutionLogCrudService()

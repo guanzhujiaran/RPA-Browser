@@ -1,6 +1,6 @@
 from typing import Callable
 
-from app.models.RPA_browser.plugin_model import RetryPluginModel
+from app.models.core.plugin.models import RetryPluginModel
 from app.services.RPA_browser.notification_service import NotificationService
 from app.services.site_rpa_operation.base.base_plugin import BasePlugin, PluginMethodType
 import asyncio

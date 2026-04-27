@@ -1,14 +1,21 @@
 from app.models.response_code import ResponseCode
-from app.models.RPA_browser.depends_models import VerifyBrowserDependsReq
+from app.models.common.depends import VerifyBrowserDependsReq
 from app.utils.depends.security_depends import verify_browser_ownership
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models.RPA_browser.notify_model import (
+from app.models.core.notify.models import (
     NotificationConfig,
+)
+from app.models.notify.models import (
     NotificationConfigCreate,
     NotificationConfigUpdate,
+)
+from app.models.notify.response_models import (
     NotificationConfigUpsertResp,
     NotificationConfigDeleteResp,
+    NotificationConfigEffectiveResp,
+)
+from app.models.notify.request_models import (
     NotifyConfigReadRequest,
     TestNotificationRequest,
     TestNotificationResponse,

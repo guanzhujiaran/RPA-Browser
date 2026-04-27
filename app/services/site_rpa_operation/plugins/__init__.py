@@ -9,7 +9,7 @@ class StrEnum(str, Enum):
 
 
 
-from app.models.RPA_browser.plugin_model import (
+from app.models.core.plugin.models import (
     LogPluginModel,
     RandomWaitPluginModel,
     RetryPluginModel,
