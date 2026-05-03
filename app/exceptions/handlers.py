@@ -5,6 +5,7 @@ from starlette.responses import JSONResponse
 import uuid
 from app.models.response import StandardResponse
 from app.models.response_code import ResponseCode
+from app.models.consts.enums import ConfigRunningModeEnum
 import traceback
 from app.config import settings
 from sqlalchemy.exc import DisconnectionError, OperationalError
@@ -118,8 +119,8 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
             f"Unexpected error (ID: {error_id}): {error_details['error_type']}: {error_details['error_message']}"
         )
 
-    # 根据settings中的环境配置输出错误信息
-    if settings.environment.lower() == "development":
+    # 根据settings中的运行模式配置输出错误信息
+    if settings.RUNNING_MODE == ConfigRunningModeEnum.DEV:
         # 自定义异常不需要打印详细的错误信息和 traceback
         if is_custom_exception:
             print(f"[Custom Exception] {error_details['error_type']}: {error_message}")
@@ -144,7 +145,7 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
         )
 
     # 在开发环境下，将错误详情添加到data中（自定义异常除外）
-    if settings.environment.lower() == "development" and not is_custom_exception:
+    if settings.RUNNING_MODE == ConfigRunningModeEnum.DEV and not is_custom_exception:
         response_data = {
             "error_id": error_id,
             "error_type": error_details["error_type"],
@@ -188,7 +189,7 @@ async def database_connection_handler(_: Request, exc: Exception) -> JSONRespons
         ),
         data=(
             response_data
-            if settings.environment.lower() == "development"
+            if settings.RUNNING_MODE == ConfigRunningModeEnum.DEV
             else {"error_id": error_id, "retry_after": 5}
         ),
         msg="数据库连接丢失，请稍后重试" if is_connection_lost else "数据库服务异常",

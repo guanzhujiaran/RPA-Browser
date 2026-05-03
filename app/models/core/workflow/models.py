@@ -4,17 +4,37 @@ Core 模块 - 工作流数据库模型
 定义工作流、自定义操作、用户插件等数据库模型。
 """
 
+import json
 from sqlmodel import SQLModel, Field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Type, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import uuid
+from playwright.async_api import Page, BrowserContext
 
 
 # ============ 枚举定义 ============
 
-class ActionTypeEnum(str, Enum):
+class ActionType(str, Enum):
     """操作类型"""
+    NAVIGATION = "navigation"
+    CLICK = "click"
+    INPUT = "input"
+    SCROLL = "scroll"
+    HOVER = "hover"
+    WAIT = "wait"
+    SCREENSHOT = "screenshot"
+    EVALUATE = "evaluate"
+    SELECT = "select"
+    KEYBOARD = "keyboard"
+    MOUSE = "mouse"
+    LLM = "llm"
+    CUSTOM = "custom"
+
+
+class ActionTypeEnum(str, Enum):
+    """操作类型（数据库用，兼容旧代码）"""
     NAVIGATION = "navigation"
     CLICK = "click"
     INPUT = "input"
@@ -40,6 +60,52 @@ class PluginHookEnum(str, Enum):
     ON_SUCCESS = "on_success"
     ON_ERROR = "on_error"
     ON_TIMEOUT = "on_timeout"
+
+
+# ============ 执行相关模型 ============
+
+class ActionParameter(SQLModel):
+    """操作参数定义"""
+    name: str = Field(description="参数名称")
+    type: str = Field(default="str", description="参数类型")
+    required: bool = Field(default=True, description="是否必需")
+    default: Any = Field(default=None, description="默认值")
+    description: str = Field(default="", description="参数描述")
+
+
+class ActionMetadata(SQLModel):
+    """操作元数据"""
+    id: str = Field(description="操作ID")
+    name: str = Field(description="操作名称")
+    type: str = Field(description="操作类型")
+    description: str = Field(default="", description="操作描述")
+    parameters: List[ActionParameter] = Field(default_factory=list, description="参数列表")
+    timeout: int = Field(default=30000, description="超时时间(毫秒)")
+    retry_on_error: bool = Field(default=False, description="错误时重试")
+    retry_times: int = Field(default=0, description="重试次数")
+    retry_delay: float = Field(default=1.0, description="重试延迟(秒)")
+    requires_browser: bool = Field(default=True, description="是否需要浏览器上下文")
+
+
+class ActionResult(SQLModel):
+    """操作执行结果"""
+    success: bool = Field(description="是否成功")
+    data: Any = Field(default=None, description="返回数据")
+    error: Optional[str] = Field(default=None, description="错误信息")
+    execution_time: float = Field(default=0.0, description="执行时间(秒)")
+    action_id: str = Field(default="", description="操作ID")
+    action_name: str = Field(default="", description="操作名称")
+
+
+@dataclass
+class ActionContext:
+    """操作执行上下文（包含运行时对象，使用 dataclass）"""
+    session_id: str
+    browser_id: str
+    page: Page  # Playwright Page 对象
+    browser: BrowserContext  # Playwright BrowserContext 对象
+    params: Dict[str, Any] = field(default_factory=dict)
+    user_data: Dict[str, Any] = field(default_factory=dict)
 
 
 # ============ 数据库模型 ============
@@ -94,47 +160,39 @@ class CustomActionModel(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.now)
 
     def get_parameters_schema(self) -> List[Dict[str, Any]]:
-        import json
         try:
             return json.loads(self.parameters_schema)
         except:
             return []
 
     def set_parameters_schema(self, schema: List[Dict[str, Any]]):
-        import json
         self.parameters_schema = json.dumps(schema, ensure_ascii=False)
 
     def get_steps(self) -> List[Dict[str, Any]]:
-        import json
         try:
             return json.loads(self.steps)
         except:
             return []
 
     def set_steps(self, steps: List[Dict[str, Any]]):
-        import json
         self.steps = json.dumps(steps, ensure_ascii=False)
 
     def get_tags(self) -> List[str]:
-        import json
         try:
             return json.loads(self.tags)
         except:
             return []
 
     def set_tags(self, tags: List[str]):
-        import json
         self.tags = json.dumps(tags, ensure_ascii=False)
 
     def get_user_data(self) -> Dict[str, Any]:
-        import json
         try:
             return json.loads(self.user_data) if self.user_data else {}
         except:
             return {}
 
     def set_user_data(self, data: Dict[str, Any]):
-        import json
         self.user_data = json.dumps(data, ensure_ascii=False)
 
 
@@ -163,47 +221,39 @@ class UserPluginModel(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.now)
 
     def get_hooks(self) -> List[str]:
-        import json
         try:
             return json.loads(self.hooks)
         except:
             return []
 
     def set_hooks(self, hooks: List[str]):
-        import json
         self.hooks = json.dumps(hooks, ensure_ascii=False)
 
     def get_config_schema(self) -> Dict[str, Any]:
-        import json
         try:
             return json.loads(self.config_schema)
         except:
             return {}
 
     def set_config_schema(self, schema: Dict[str, Any]):
-        import json
         self.config_schema = json.dumps(schema, ensure_ascii=False)
 
     def get_default_config(self) -> Dict[str, Any]:
-        import json
         try:
             return json.loads(self.default_config)
         except:
             return {}
 
     def set_default_config(self, config: Dict[str, Any]):
-        import json
         self.default_config = json.dumps(config, ensure_ascii=False)
 
     def get_user_data(self) -> Dict[str, Any]:
-        import json
         try:
             return json.loads(self.user_data) if self.user_data else {}
         except:
             return {}
 
     def set_user_data(self, data: Dict[str, Any]):
-        import json
         self.user_data = json.dumps(data, ensure_ascii=False) if data else None
 
 
@@ -244,47 +294,39 @@ class UserWorkflowModel(SQLModel, table=True):
             self.workflow_id = str(uuid.uuid4())
 
     def get_steps(self) -> List[Dict[str, Any]]:
-        import json
         try:
             return json.loads(self.steps)
         except:
             return []
 
     def set_steps(self, steps: List[Dict[str, Any]]):
-        import json
         self.steps = json.dumps(steps, ensure_ascii=False)
 
     def get_tags(self) -> List[str]:
-        import json
         try:
             return json.loads(self.tags)
         except:
             return []
 
     def set_tags(self, tags: List[str]):
-        import json
         self.tags = json.dumps(tags, ensure_ascii=False)
 
     def get_trigger_config(self) -> Dict[str, Any]:
-        import json
         try:
             return json.loads(self.trigger_config)
         except:
             return {}
 
     def set_trigger_config(self, config: Dict[str, Any]):
-        import json
         self.trigger_config = json.dumps(config, ensure_ascii=False)
 
     def get_user_data(self) -> Dict[str, Any]:
-        import json
         try:
             return json.loads(self.user_data) if self.user_data else {}
         except:
             return {}
 
     def set_user_data(self, data: Dict[str, Any]):
-        import json
         self.user_data = json.dumps(data, ensure_ascii=False) if data else None
 
 
@@ -309,33 +351,35 @@ class WorkflowExecutionLogModel(SQLModel, table=True):
     finished_at: datetime | None = Field(default=None)
 
     def get_results(self) -> List[Dict[str, Any]]:
-        import json
         try:
             return json.loads(self.results)
         except:
             return []
 
     def set_results(self, results: List[Dict[str, Any]]):
-        import json
         self.results = json.dumps(results, ensure_ascii=False)
 
     def get_user_data(self) -> Dict[str, Any]:
-        import json
         try:
             return json.loads(self.user_data) if self.user_data else {}
         except:
             return {}
 
     def set_user_data(self, data: Dict[str, Any]):
-        import json
         self.user_data = json.dumps(data, ensure_ascii=False) if data else None
 
 
 __all__ = [
     # 枚举
+    "ActionType",
     "ActionTypeEnum",
     "ErrorHandlingEnum",
     "PluginHookEnum",
+    # 执行相关模型
+    "ActionParameter",
+    "ActionMetadata",
+    "ActionResult",
+    "ActionContext",
     # 数据库模型
     "WorkflowStepModel",
     "CustomActionModel",

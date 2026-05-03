@@ -27,7 +27,6 @@ class RouterTag(StrEnum):
     plugin_control = "插件控制"
     security_control = "安全控制"
     system_control = "系统管理"
-    webrtc_control = "WebRTC 控制"
     session_control = "会话操作"
 
     # === 系统管理 ===

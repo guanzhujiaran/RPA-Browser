@@ -67,6 +67,7 @@ class WorkflowExecuteRequest(SQLModel):
     steps: List[WorkflowStepRequest] = Field(description="步骤列表")
     user_data: Dict[str, Any] | None = Field(default=None, description="自定义数据")
     on_error: str = Field(default="stop", description="错误处理")
+    page_index: int | None = Field(default=None, description="页面索引，指定在哪个 tab 页执行操作")
 
 
 class WorkflowDetailResponse(SQLModel):
@@ -189,13 +190,15 @@ class ActionExecuteRequest(SQLModel):
     action_id: str = Field(description="操作ID")
     params: Dict[str, Any] = Field(default_factory=dict, description="操作参数")
     user_data: Dict[str, Any] | None = Field(default=None, description="自定义数据")
-
+    page_index: int | None = Field(default=None, description="页面索引，指定在哪个 tab 页执行操作")
+    
 
 class BatchActionRequest(SQLModel):
     """批量执行操作请求"""
     actions: List[ActionExecuteRequest] = Field(description="操作列表")
     parallel: bool = Field(default=False, description="是否并行执行")
     user_data: Dict[str, Any] | None = Field(default=None, description="共享自定义数据")
+    page_index: int | None = Field(default=None, description="页面索引，指定在哪个 tab 页执行操作")
 
 
 class ActionPreviewRequest(SQLModel):
@@ -217,6 +220,7 @@ class ExecuteStepRequest(SQLModel):
     action_id: str = Field(description="操作ID")
     params: Dict[str, Any] = Field(default_factory=dict, description="操作参数")
     step_index: int = Field(default=0, description="步骤索引")
+    page_index: int | None = Field(default=None, description="页面索引，指定在哪个 tab 页执行操作")
 
 
 class ActionResultResponse(SQLModel):

@@ -33,6 +33,7 @@ class BrowserSessionRouterPath(StrEnum):
     heartbeat = "/heartbeat"
     create = "/create"
     status = "/status"
+    close = "/close"
 
 
 class BrowserControlRouterPath(StrEnum):
@@ -64,37 +65,12 @@ class BrowserControlRouterPath(StrEnum):
     workflows_duplicate = "/workflows/duplicate"
     workflows_execute = "/workflows/execute"
 
-    # === 插件运行时控制 ===
-    plugins_pause = "/plugins/pause"
-    plugins_resume = "/plugins/resume"
-    plugins_status = "/plugins/status"
-
-    # === 视频流 ===
-    stream_status = "/stream/status"
-    stream_mjpeg = "/stream/mjpeg"
-
     # === WebRTC 视频流 ===
     webrtc_offer = "/webrtc/offer"
     webrtc_answer = "/webrtc/answer"
     webrtc_ice_candidate = "/webrtc/ice-candidate"
     webrtc_status = "/webrtc/status"
     webrtc_close = "/webrtc/close"
-
-    system_statistics = "/system/statistics"
-    cleanup_policy = "/system/cleanup"
-    system_cleanup = "/system/cleanup"
-    system_health = "/system/health"
-
-
-class PluginRouterPath(StrEnum):
-    """插件管理路由路径 - prefix: /browser"""
-
-    create_plugin = "/plugin"
-    update_plugin = "/plugin"
-    get_plugins = "/plugins/list"
-    get_plugin = "/plugin/get"
-    delete_plugin = "/plugin/delete"
-
 
 class UserBrowserDefaultSettingRouterPath(StrEnum):
     """用户浏览器默认设置路由路径 - prefix: /browser"""

@@ -3,7 +3,9 @@
 
 提供用户自定义操作、插件、工作流的 POST API（全部POST，避免缓存等问题）
 """
-
+from loguru import logger
+import time
+from app.models.response_code import ResponseCode
 from fastapi import Depends
 from sqlmodel import SQLModel
 from typing import Any, List
@@ -16,7 +18,7 @@ from app.utils.depends.security_depends import verify_browser_ownership
 from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from fastapi import APIRouter
 from app.services.execution.action_registry import action_registry
-from app.services.execution.execution_engine import execution_engine
+from app.services.execution.execution_engine import execution_engine, Workflow, WorkflowStep
 from app.services.execution.crud_service import action_crud, workflow_crud
 
 # 导入自定义执行模型（直接从源文件导入）
@@ -97,30 +99,20 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
 
 @router.post(BrowserControlRouterPath.actions_execute)
 async def execute_action(
-    req: ActionExecuteRequest,
+    request: ActionExecuteRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-) -> StandardResponse[ActionResultResponse]:
+) -> StandardResponse[ActionResultResponse | None]:
     """执行单个操作"""
-    session_key = LiveService._get_session_key(
-        browser_info.auth_info.mid, browser_info.browser_id
-    )
-    entry = LiveService.browser_sessions.get(session_key)
-    if not entry:
-        return error_response("浏览器不存在或未运行")
-
-    mid = str(browser_info.auth_info.mid)
-    page = await entry.plugined_session.get_current_page()
-    browser = entry.plugined_session.browser_context.browser
-    result = await execution_engine.execute_action(
-        session_id=browser_info.browser_id,
+    # 🔑 调用 service 层方法
+    result = await execution_engine.execute_action_with_session(
+        mid=browser_info.auth_info.mid,
         browser_id=browser_info.browser_id,
-        page=page,
-        browser=browser,
-        action_id=req.action_id,
-        params=req.params,
-        mid=mid,
+        action_id=request.action_id,
+        params=request.params,
+        user_data=request.user_data,
+        page_index=request.page_index,
     )
-
+    
     return success_response(
         ActionResultResponse(
             success=result.success,
@@ -133,45 +125,39 @@ async def execute_action(
     )
 
 
+
 @router.post(BrowserControlRouterPath.actions_batch)
 async def batch_execute(
-    req: BatchActionRequest,
+    request: BatchActionRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[List[ActionResultResponse]]:
     """批量执行操作"""
-    session_key = LiveService._get_session_key(
-        browser_info.auth_info.mid, browser_info.browser_id
-    )
-    entry = LiveService.browser_sessions.get(session_key)
-    if not entry:
-        return error_response("浏览器不存在或未运行")
-
-    mid = str(browser_info.auth_info.mid)
-    page = await entry.plugined_session.get_current_page()
-    browser = entry.plugined_session.browser_context.browser
-    actions = [{"action_id": a.action_id, "params": a.params} for a in req.actions]
-    results = await execution_engine.execute_batch(
-        session_id=browser_info.browser_id,
-        browser_id=browser_info.browser_id,
-        page=page,
-        browser=browser,
-        actions=actions,
-        parallel=req.parallel,
-        mid=mid,
-    )
-
-    response = [
-        ActionResultResponse(
-            success=r.success,
-            data=r.data,
-            error=r.error,
-            execution_time=r.execution_time,
-            action_id=r.action_id,
-            action_name=r.action_name,
+    try:
+        # 🔑 调用 service 层方法
+        actions = [{"action_id": a.action_id, "params": a.params} for a in request.actions]
+        results = await execution_engine.execute_batch_with_session(
+            mid=browser_info.auth_info.mid,
+            browser_id=browser_info.browser_id,
+            actions=actions,
+            parallel=request.parallel,
+            user_data=request.user_data,
+            page_index=request.page_index,
         )
-        for r in results
-    ]
-    return success_response(response)
+
+        response = [
+            ActionResultResponse(
+                success=r.success,
+                data=r.data,
+                error=r.error,
+                execution_time=r.execution_time,
+                action_id=r.action_id,
+                action_name=r.action_name,
+            )
+            for r in results
+        ]
+        return success_response(response)
+    except ValueError as e:
+        return error_response(str(e))
 
 
 # ============ 自定义操作 CRUD（全 POST） ============
@@ -179,23 +165,25 @@ async def batch_execute(
 
 class IdRequest(SQLModel):
     """ID请求"""
+
     id: int
 
 
 class IdListRequest(SQLModel):
     """ID列表请求"""
+
     skip: int = 0
     limit: int = 100
 
 
 @router.post(BrowserControlRouterPath.custom_actions_list)
 async def list_custom_actions(
-    req: IdListRequest,
+    request: IdListRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[List[CustomActionListItemResponse]]:
     """获取用户自定义操作列表"""
     models = await action_crud.list_by_user(
-        mid=auth.mid, skip=req.skip, limit=req.limit
+        mid=auth.mid, skip=request.skip, limit=request.limit
     )
     response = [
         CustomActionListItemResponse(
@@ -229,11 +217,11 @@ async def reload_custom_actions(
 
 @router.post(BrowserControlRouterPath.custom_actions_get)
 async def get_custom_action(
-    req: IdRequest,
+    request: IdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[CustomActionDetailResponse]:
     """获取单个自定义操作"""
-    model = await action_crud.get_by_id(req.id)
+    model = await action_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("操作不存在")
     return success_response(
@@ -258,7 +246,7 @@ async def get_custom_action(
 
 @router.post(BrowserControlRouterPath.custom_actions_create)
 async def create_custom_action(
-    req: CustomActionCreateRequest,
+    request: CustomActionCreateRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[CustomActionCreateRequest]:
     """创建自定义操作"""
@@ -267,14 +255,14 @@ async def create_custom_action(
 
     model = await action_crud.create(
         action_id=action_id,
-        name=req.name,
-        action_type=req.action_type,
-        description=req.description,
+        name=request.name,
+        action_type=request.action_type,
+        description=request.description,
         mid=auth.mid,
-        parameters_schema=req.parameters_schema,
-        steps=req.steps,
+        parameters_schema=request.parameters_schema,
+        steps=request.steps,
         is_composite=True,
-        code=req.code,
+        code=request.code,
     )
 
     return success_response(model)
@@ -282,45 +270,45 @@ async def create_custom_action(
 
 @router.post(BrowserControlRouterPath.custom_actions_update)
 async def update_custom_action(
-    req: CustomActionUpdateRequest,
+    request: CustomActionUpdateRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[str]:
     """更新自定义操作"""
-    model = await action_crud.get_by_id(req.id)
+    model = await action_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("操作不存在")
 
     await action_crud.update(
-        id=req.id,
-        name=req.name,
-        description=req.description,
-        parameters_schema=req.parameters_schema,
-        steps=req.steps,
+        id=request.id,
+        name=request.name,
+        description=request.description,
+        parameters_schema=request.parameters_schema,
+        steps=request.steps,
         is_composite=True,
-        code=req.code,
-        timeout=req.timeout,
+        code=request.code,
+        timeout=request.timeout,
     )
 
-    if req.is_enabled is not None:
-        if req.is_enabled:
-            await action_crud.enable(req.id)
+    if request.is_enabled is not None:
+        if request.is_enabled:
+            await action_crud.enable(request.id)
         else:
-            await action_crud.disable(req.id)
+            await action_crud.disable(request.id)
 
     return success_response("更新成功")
 
 
 @router.post(BrowserControlRouterPath.custom_actions_delete)
 async def delete_custom_action(
-    req: IdRequest,
+    request: IdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[str]:
     """删除自定义操作"""
-    model = await action_crud.get_by_id(req.id)
+    model = await action_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("操作不存在")
 
-    await action_crud.delete(req.id)
+    await action_crud.delete(request.id)
     return success_response("删除成功")
 
 
@@ -329,12 +317,12 @@ async def delete_custom_action(
 
 @router.post(BrowserControlRouterPath.workflows_list)
 async def list_workflows(
-    req: IdListRequest,
+    request: IdListRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[List[WorkflowListItemResponse]]:
     """获取用户工作流列表"""
     models = await workflow_crud.list_by_user(
-        mid=auth.mid, skip=req.skip, limit=req.limit
+        mid=auth.mid, skip=request.skip, limit=request.limit
     )
     response = [
         WorkflowListItemResponse(
@@ -353,11 +341,11 @@ async def list_workflows(
 
 @router.post(BrowserControlRouterPath.workflows_get)
 async def get_workflow(
-    req: IdRequest,
+    request: IdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDetailResponse]:
     """获取单个工作流"""
-    model = await workflow_crud.get_by_id(req.id)
+    model = await workflow_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("工作流不存在")
     return success_response(
@@ -380,7 +368,7 @@ async def get_workflow(
 
 @router.post(BrowserControlRouterPath.workflows_create)
 async def create_workflow(
-    req: WorkflowCreateRequest,
+    request: WorkflowCreateRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowCreateResponse]:
     """创建工作流
@@ -393,7 +381,7 @@ async def create_workflow(
 
     # 转换 steps
     steps_data = []
-    for i, step in enumerate(req.steps):
+    for step in request.steps:
         step_dict = {
             "action_id": step.action_id,
             "params": step.params,
@@ -408,9 +396,9 @@ async def create_workflow(
 
     model = await workflow_crud.create(
         workflow_id=workflow_id,
-        name=req.name,
-        description=req.description,
-        on_error=req.on_error,
+        name=request.name,
+        description=request.description,
+        on_error=request.on_error,
         mid=auth.mid,
         steps=steps_data,
     )
@@ -426,19 +414,19 @@ async def create_workflow(
 
 @router.post(BrowserControlRouterPath.workflows_update)
 async def update_workflow(
-    req: WorkflowUpdateRequest,
+    request: WorkflowUpdateRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[str]:
     """更新工作流"""
-    model = await workflow_crud.get_by_id(req.id)
+    model = await workflow_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("工作流不存在")
 
     # 转换 steps
     steps_data = None
-    if req.steps is not None:
+    if request.steps is not None:
         steps_data = []
-        for step in req.steps:
+        for step in request.steps:
             step_dict = {
                 "action_id": step.action_id,
                 "params": step.params,
@@ -452,52 +440,52 @@ async def update_workflow(
             steps_data.append(step_dict)
 
     await workflow_crud.update(
-        id=req.id,
-        name=req.name,
-        description=req.description,
+        id=request.id,
+        name=request.name,
+        description=request.description,
         steps=steps_data,
-        on_error=req.on_error,
-        tags=req.tags,
+        on_error=request.on_error,
+        tags=request.tags,
     )
 
-    if req.is_enabled is not None:
-        if req.is_enabled:
-            await workflow_crud.enable(req.id)
+    if request.is_enabled is not None:
+        if request.is_enabled:
+            await workflow_crud.enable(request.id)
         else:
-            await workflow_crud.disable(req.id)
+            await workflow_crud.disable(request.id)
 
     return success_response("更新成功")
 
 
 @router.post(BrowserControlRouterPath.workflows_delete)
 async def delete_workflow(
-    req: IdRequest,
+    request: IdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[str]:
     """删除工作流"""
-    model = await workflow_crud.get_by_id(req.id)
+    model = await workflow_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("工作流不存在")
 
-    await workflow_crud.delete(req.id)
+    await workflow_crud.delete(request.id)
     return success_response("删除成功")
 
 
 @router.post(BrowserControlRouterPath.workflows_duplicate)
 async def duplicate_workflow(
-    req: IdRequest,
+    request: IdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDuplicateResponse]:
     """复制工作流"""
     # 先检查原始工作流权限，防止越权
-    original = await workflow_crud.get_by_id(req.id)
+    original = await workflow_crud.get_by_id(request.id)
     if not original:
         return error_response("工作流不存在")
     if original.mid != auth.mid:
         return error_response("无权复制此工作流")
 
     # 权限检查通过后再复制
-    model = await workflow_crud.duplicate(req.id)
+    model = await workflow_crud.duplicate(request.id)
     return success_response(
         WorkflowDuplicateResponse(
             id=model.id,
@@ -509,25 +497,16 @@ async def duplicate_workflow(
 
 @router.post(BrowserControlRouterPath.workflows_execute)
 async def execute_workflow(
-    req: WorkflowExecuteRequest,
+    request: WorkflowExecuteRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[WorkflowExecuteResponse]:
     """执行工作流
 
     支持模板变量和自定义数据。
     """
-    from app.services.execution.execution_engine import Workflow, WorkflowStep
-
-    session_key = LiveService._get_session_key(
-        browser_info.auth_info.mid, browser_info.browser_id
-    )
-    entry = LiveService.browser_sessions.get(session_key)
-    if not entry:
-        return error_response("浏览器不存在或未运行")
-
-    # 构建工作流步骤
+        # 构建工作流步骤
     workflow_steps = []
-    for step_req in req.steps:
+    for step_req in request.steps:
         step = WorkflowStep(
             action_id=step_req.action_id,
             params=step_req.params,
@@ -542,30 +521,22 @@ async def execute_workflow(
     # 构建工作流
     workflow = Workflow(
         id=str(uuid.uuid4()),
-        name=req.name or "临时工作流",
+        name=request.name or "临时工作流",
         steps=workflow_steps,
-        on_error=req.on_error,
+        on_error=request.on_error,
+    )
+
+    # 🔑 调用 service 层方法
+    results = await execution_engine.execute_workflow_with_session(
+        mid=browser_info.auth_info.mid,
+        browser_id=browser_info.browser_id,
+        workflow=workflow,
+        user_data=request.user_data,
+        page_index=request.page_index,
     )
 
     # 生成执行ID
     execution_id = str(uuid.uuid4())
-
-    # 获取用户数据
-    user_data = req.user_data or {}
-
-    # 执行
-    mid = str(browser_info.auth_info.mid)
-    page = await entry.plugined_session.get_current_page()
-    browser = entry.plugined_session.browser_context.browser
-    results = await execution_engine.execute_workflow(
-        session_id=browser_info.browser_id,
-        browser_id=browser_info.browser_id,
-        page=page,
-        browser=browser,
-        workflow=workflow,
-        user_data=user_data,
-        mid=mid,
-    )
 
     results_data = [
         {
@@ -592,12 +563,13 @@ async def execute_workflow(
     )
 
 
+
 # ============ 调试相关 API ============
 
 
 @router.post(BrowserControlRouterPath.actions_preview)
 async def preview_action_params(
-    req: ActionPreviewRequest,
+    request: ActionPreviewRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ActionPreviewResponse]:
     """
@@ -609,11 +581,13 @@ async def preview_action_params(
     mid = str(browser_info.auth_info.mid)
 
     # 直接从数据库加载操作
-    action_instance = await action_registry.create_action_for_user(req.action_id, mid)
-    metadata = action_registry.get_action_metadata(req.action_id)
+    action_instance = await action_registry.create_action_for_user(
+        request.action_id, mid
+    )
+    metadata = action_registry.get_action_metadata(request.action_id)
 
     if not metadata:
-        return error_response(f"未找到操作: {req.action_id}")
+        return error_response(f"未找到操作: {request.action_id}")
 
     # 检查是否为组合操作
     composite = action_instance if hasattr(action_instance, "_steps") else None
@@ -625,10 +599,10 @@ async def preview_action_params(
 
         for i, step in enumerate(composite._steps):
             original_params = step.get("params", {})
-            replaced_params = composite._replace_params(original_params, req.params)
+            replaced_params = composite._replace_params(original_params, request.params)
 
             # 收集被替换的参数名
-            for key in req.params:
+            for key in request.params:
                 for p_key, p_val in replaced_params.items():
                     if f"{{{{{key}}}}}" in str(p_val) or key in str(p_val):
                         found_params.add(key)
@@ -644,7 +618,7 @@ async def preview_action_params(
 
         return success_response(
             ActionPreviewResponse(
-                action_id=req.action_id,
+                action_id=request.action_id,
                 action_name=metadata.name,
                 is_composite=True,
                 steps_preview=steps_preview,
@@ -655,13 +629,15 @@ async def preview_action_params(
     else:
         # 普通操作：直接预览参数替换
         if action_instance and hasattr(action_instance, "_replace_params"):
-            replaced_params = action_instance._replace_params(req.params, req.params)
+            replaced_params = action_instance._replace_params(
+                request.params, request.params
+            )
         else:
-            replaced_params = req.params
+            replaced_params = request.params
 
         return success_response(
             ActionPreviewResponse(
-                action_id=req.action_id,
+                action_id=request.action_id,
                 action_name=metadata.name,
                 is_composite=False,
                 steps_preview=[],
@@ -673,7 +649,7 @@ async def preview_action_params(
 
 @router.post(BrowserControlRouterPath.actions_validate)
 async def validate_action_params(
-    req: ActionValidateRequest,
+    request: ActionValidateRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ActionValidateResponse]:
     """
@@ -683,11 +659,11 @@ async def validate_action_params(
     """
     mid = str(browser_info.auth_info.mid)
     # 尝试获取操作
-    await action_registry.create_action_for_user(req.action_id, mid)
-    metadata = action_registry.get_action_metadata(req.action_id)
+    await action_registry.create_action_for_user(request.action_id, mid)
+    metadata = action_registry.get_action_metadata(request.action_id)
 
     if not metadata:
-        return error_response(f"未找到操作: {req.action_id}")
+        return error_response(f"未找到操作: {request.action_id}")
 
     missing_params = []
     invalid_params = []
@@ -695,10 +671,10 @@ async def validate_action_params(
 
     # 检查必需参数
     for param in metadata.parameters:
-        if param.required and param.name not in req.params:
+        if param.required and param.name not in request.params:
             missing_params.append(param.name)
-        elif param.name in req.params:
-            value = req.params[param.name]
+        elif param.name in request.params:
+            value = request.params[param.name]
             # 类型检查
             if param.type != Any and param.type is not None:
                 expected_type = (
@@ -726,7 +702,7 @@ async def validate_action_params(
     return success_response(
         ActionValidateResponse(
             valid=valid,
-            action_id=req.action_id,
+            action_id=request.action_id,
             action_name=metadata.name,
             missing_params=missing_params,
             invalid_params=invalid_params,
@@ -737,7 +713,7 @@ async def validate_action_params(
 
 @router.post(BrowserControlRouterPath.actions_execute_step)
 async def execute_action_step(
-    req: ExecuteStepRequest,
+    request: ExecuteStepRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ExecuteStepResponse]:
     """
@@ -747,54 +723,22 @@ async def execute_action_step(
     - 如果 action_id 是复合操作，执行指定 step_index 的步骤
     - 如果 action_id 是普通操作，执行该操作
     """
-    session_key = LiveService._get_session_key(
-        browser_info.auth_info.mid, browser_info.browser_id
-    )
-    entry = LiveService.browser_sessions.get(session_key)
-    if not entry:
-        return error_response("浏览器不存在或未运行")
-
-    mid = str(browser_info.auth_info.mid)
-    page = await entry.plugined_session.get_current_page()
-    browser = entry.plugined_session.browser_context.browser
-
-    # 从数据库加载操作
-    action_instance = await action_registry.create_action_for_user(req.action_id, mid)
-    metadata = action_registry.get_action_metadata(req.action_id)
-    if not metadata:
-        return error_response(f"未找到操作: {req.action_id}")
-
-    # 检查是否为组合操作
-    composite = action_instance if hasattr(action_instance, "_steps") else None
-
-    if composite and hasattr(composite, "_steps"):
-        # 组合操作：执行指定步骤
-        steps = composite._steps
-        if req.step_index < 0 or req.step_index >= len(steps):
-            return error_response(
-                f"步骤索引 {req.step_index} 超出范围 (0-{len(steps)-1})"
-            )
-
-        step = steps[req.step_index]
-        # 替换参数
-        step_params = composite._replace_params(step.get("params", {}), req.params)
-
-        # 执行子操作（子操作也要传入 mid）
-        result = await execution_engine.execute_action(
-            session_id=browser_info.browser_id,
+    try:
+        # 🔑 调用 service 层方法
+        step_index, action_id, action_name, result = await execution_engine.execute_action_step_with_session(
+            mid=browser_info.auth_info.mid,
             browser_id=browser_info.browser_id,
-            page=page,
-            browser=browser,
-            action_id=step["action_id"],
-            params=step_params,
-            mid=mid,
+            action_id=request.action_id,
+            params=request.params,
+            step_index=request.step_index,
+            page_index=request.page_index,
         )
-
+        
         return success_response(
             ExecuteStepResponse(
-                step_index=req.step_index,
-                action_id=step["action_id"],
-                action_name=metadata.name,
+                step_index=step_index,
+                action_id=action_id,
+                action_name=action_name,
                 result=ActionResultResponse(
                     success=result.success,
                     data=result.data,
@@ -805,30 +749,5 @@ async def execute_action_step(
                 ),
             )
         )
-    else:
-        # 普通操作：直接执行
-        result = await execution_engine.execute_action(
-            session_id=browser_info.browser_id,
-            browser_id=browser_info.browser_id,
-            page=page,
-            browser=browser,
-            action_id=req.action_id,
-            params=req.params,
-            mid=mid,
-        )
-
-        return success_response(
-            ExecuteStepResponse(
-                step_index=0,
-                action_id=req.action_id,
-                action_name=metadata.name,
-                result=ActionResultResponse(
-                    success=result.success,
-                    data=result.data,
-                    error=result.error,
-                    execution_time=result.execution_time,
-                    action_id=result.action_id,
-                    action_name=result.action_name,
-                ),
-            )
-        )
+    except ValueError as e:
+        return error_response(str(e))

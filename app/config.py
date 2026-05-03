@@ -37,7 +37,20 @@ class Settings(BaseSettings):
         ""  # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128
     )
     snowflake_id: int = 1
-    environment: str = "development"  # 环境变量：development, production
+
+    # 浏览器会话默认配置
+    browser_session_auto_cleanup: bool = True  # 是否启用自动清理
+    browser_session_max_idle_time: int = 1800  # 最大闲置时间（秒）
+    browser_session_max_no_heartbeat_time: int = 300  # 最大无心跳时间（秒）
+    browser_session_cleanup_interval: int = 300  # 清理检查间隔（秒）
+    browser_session_expiration_time: int | None = None  # 会话过期时间（秒），None表示不过期
+    
+    # 浏览器页面数量限制配置
+    browser_max_pages_per_context: int = 10  # 每个浏览器上下文的最大页面数
+    
+    # WebRTC 视频流配置
+    browser_webrtc_idle_timeout: int = 300  # WebRTC 流最大闲置时间（秒），默认5分钟
+
 
 
 settings = Settings()

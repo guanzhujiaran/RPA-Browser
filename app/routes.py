@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import OperationalError, DisconnectionError
 
 # 导入 controller 包（自动收集路由）
-from app.controller.v1 import browser, browser_control, system, admin
+from app.controller.v1 import browser, browser_control, admin
 from app.exceptions.handlers import (
     http_exception_handler,
     validation_exception_handler,
@@ -25,7 +25,6 @@ def setup_routes(app: FastAPI):
     app.include_router(browser_control.router)  # /api/v1/browser/session/*
 
     # 3. 系统管理层
-    app.include_router(system.router)  # /api/v1/system/*
     app.include_router(admin.router)  # /api/{admin_base_path}/*
 
     # 注册异常处理器

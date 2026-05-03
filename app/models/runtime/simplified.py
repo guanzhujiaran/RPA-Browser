@@ -12,7 +12,6 @@ from app.models.runtime.control import (
     ManualOperationRequest,
     AutomationResumeRequest,
     LiveControlCommand,
-    VideoStreamParams,
     BrowserCleanupPolicy,
     EmptyRequest,
 )
@@ -41,11 +40,6 @@ class SimplifiedAutomationResumeRequest(AutomationResumeRequest):
 class SimplifiedLiveControlCommand(LiveControlCommand):
     """简化版实时控制命令（不包含browser_id）"""
     pass
-
-
-class SimplifiedStartVideoStreamRequest(SQLModel):
-    """简化版启动视频流请求（不包含browser_id）"""
-    params: VideoStreamParams = Field(description="视频流参数")
 
 
 class SimplifiedBrowserCleanupPolicyRequest(SQLModel):
@@ -90,11 +84,6 @@ SimplifiedExecuteJSRequest = SimplifiedJavaScriptExecuteWithParamsRequest
 from app.models.runtime.operations import ExecuteJsResponse as ExecuteJSResponse
 
 
-class SimplifiedVideoStreamMjpegRequest(SQLModel):
-    """简化版MJPEG视频流请求（不包含browser_id）"""
-    pass
-
-
 class SimplifiedForceReleaseRequest(SQLModel):
     """简化版强制释放浏览器请求（不包含browser_id）"""
     pass
@@ -111,7 +100,6 @@ __all__ = [
     "SimplifiedManualOperationRequest",
     "SimplifiedAutomationResumeRequest",
     "SimplifiedLiveControlCommand",
-    "SimplifiedStartVideoStreamRequest",
     "SimplifiedBrowserCleanupPolicyRequest",
     "SimplifiedScreenshotRequest",
     "SimplifiedNavigateRequest",
@@ -120,7 +108,6 @@ __all__ = [
     "SimplifiedJavaScriptExecuteWithParamsRequest",
     "SimplifiedExecuteJSRequest",
     "ExecuteJSResponse",
-    "SimplifiedVideoStreamMjpegRequest",
     "SimplifiedForceReleaseRequest",
     "SimplifiedPausePluginsRequest",
     "SimplifiedEmptyRequest",

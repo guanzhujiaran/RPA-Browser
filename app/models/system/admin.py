@@ -4,6 +4,7 @@ System 模块 - 管理员响应模型
 
 from sqlmodel import SQLModel, Field
 from typing import Dict, Any
+from app.models.runtime.control import BrowserCleanupPolicy
 
 
 class AdminSessionInfo(SQLModel):
@@ -44,20 +45,23 @@ class AdminWebRTCConnectionInfo(SQLModel):
     connection_state: str = Field(description="连接状态")
 
 
-class AdminAllStreamsResponse(SQLModel):
-    """管理员获取所有流响应"""
-    live_streams_count: int = Field(description="直播流数量")
-    live_streams: list[AdminLiveStreamInfo] = Field(description="直播流列表")
-    webrtc_connections_count: int = Field(description="WebRTC连接数量")
-    webrtc_connections: list[AdminWebRTCConnectionInfo] = Field(description="WebRTC连接列表")
+
+class BrowserSessionConfigResponse(SQLModel):
+    """浏览器会话配置响应"""
+    auto_cleanup: bool = Field(description="是否启用自动清理")
+    max_idle_time: int = Field(description="最大闲置时间（秒）")
+    max_no_heartbeat_time: int = Field(description="最大无心跳时间（秒）")
+    cleanup_interval: int = Field(description="清理检查间隔（秒）")
+    expiration_time: int | None = Field(None, description="会话过期时间（秒），None表示不过期")
 
 
-class AdminAllStatsResponse(SQLModel):
-    """管理员获取所有统计响应"""
-    session_stats: Dict[str, Any] = Field(description="会话统计")
-    live_streams_count: int = Field(description="直播流数量")
-    webrtc_connections_count: int = Field(description="WebRTC连接数量")
-    timestamp: int = Field(description="时间戳")
+class UpdateBrowserSessionConfigRequest(SQLModel):
+    """更新浏览器会话配置请求"""
+    auto_cleanup: bool | None = Field(None, description="是否启用自动清理")
+    max_idle_time: int | None = Field(None, description="最大闲置时间（秒）", ge=60)
+    max_no_heartbeat_time: int | None = Field(None, description="最大无心跳时间（秒）", ge=30)
+    cleanup_interval: int | None = Field(None, description="清理检查间隔（秒）", ge=60)
+    expiration_time: int | None = Field(None, description="会话过期时间（秒），None表示不过期", ge=300)
 
 
 __all__ = [
@@ -65,6 +69,6 @@ __all__ = [
     "AdminAllSessionsResponse",
     "AdminLiveStreamInfo",
     "AdminWebRTCConnectionInfo",
-    "AdminAllStreamsResponse",
-    "AdminAllStatsResponse",
+    "BrowserSessionConfigResponse",
+    "UpdateBrowserSessionConfigRequest",
 ]

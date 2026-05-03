@@ -110,8 +110,8 @@ def get_auth_info_from_header(
         # 验证mid是否有效（大于0）
         if mid_int <= 0:
             raise InvalidUIDException()
-    except ValueError:
-        raise InvalidMidFormatException()
+    except ValueError as e:
+        raise InvalidMidFormatException() from e
 
     # 解析level字符串（如 "level0" -> UserLevel.LEVEL_0）
     level_enum = (

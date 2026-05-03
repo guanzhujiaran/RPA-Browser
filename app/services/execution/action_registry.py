@@ -8,86 +8,32 @@
 4. 操作执行结果可以传递给下一个操作
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Type
-from enum import StrEnum
 
-from app.models.core.workflow.models import CustomActionModel
+import contextlib
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, List, Optional, Type
+from urllib.parse import urlparse
+import ipaddress
+import socket
+import base64
+import httpx
+from app.models.core.workflow.models import (
+    CustomActionModel,
+    ActionType,
+    ActionParameter,
+    ActionMetadata,
+    ActionResult,
+    ActionContext,
+)
+from app.models.core.browser.security import SecurityCheckResult
 from app.utils.depends.session_manager import DatabaseSessionManager
+from playwright.async_api import Page, BrowserContext
+from playwright.async_api import Browser
 from sqlmodel import select
 import asyncio
 import time
-
-
-class ActionType(StrEnum):
-    """操作类型"""
-
-    NAVIGATION = "navigation"  # 导航操作
-    CLICK = "click"  # 点击操作
-    INPUT = "input"  # 输入操作
-    SCROLL = "scroll"  # 滚动操作
-    HOVER = "hover"  # 悬停操作
-    WAIT = "wait"  # 等待操作
-    SCREENSHOT = "screenshot"  # 截图操作
-    EVALUATE = "evaluate"  # JavaScript执行
-    SELECT = "select"  # 下拉选择
-    KEYBOARD = "keyboard"  # 键盘操作
-    MOUSE = "mouse"  # 鼠标操作
-    LLM = "llm"  # LLM对话
-    CUSTOM = "custom"  # 自定义操作
-
-
-@dataclass
-class ActionParameter:
-    """操作参数定义"""
-
-    name: str
-    type: Type | str
-    required: bool = True
-    default: Any = None
-    description: str = ""
-    validator: Optional[Callable[[Any], bool]] = None
-
-
-@dataclass
-class ActionMetadata:
-    """操作元数据"""
-
-    id: str
-    name: str
-    type: ActionType
-    description: str = ""
-    parameters: List[ActionParameter] = field(default_factory=list)
-    timeout: int = 30000  # 默认超时30秒
-    retry_on_error: bool = False
-    retry_times: int = 0
-    retry_delay: float = 1.0
-    requires_browser: bool = True  # 是否需要浏览器上下文
-
-
-@dataclass
-class ActionResult:
-    """操作执行结果"""
-
-    success: bool
-    data: Any = None
-    error: Optional[str] = None
-    execution_time: float = 0.0
-    action_id: str = ""
-    action_name: str = ""
-
-
-@dataclass
-class ActionContext:
-    """操作执行上下文"""
-
-    session_id: str
-    browser_id: str
-    page: Any  # Playwright Page 对象
-    browser: Any  # Playwright Browser 对象
-    params: Dict[str, Any] = field(default_factory=dict)
-    user_data: Dict[str, Any] = field(default_factory=dict)
+from loguru import logger
+from app.config import settings
 
 
 class BaseAction(ABC):
@@ -121,10 +67,12 @@ class BaseAction(ABC):
             if param_def.required and param_def.name not in params:
                 return False, f"缺少必需参数: {param_def.name}"
 
-            if param_def.name in params:
-                value = params[param_def.name]
-                if param_def.validator and not param_def.validator(value):
-                    return False, f"参数 {param_def.name} 验证失败"
+            # 注意：当前 ActionParameter 模型中没有 validator 字段
+            # 如果将来需要自定义验证器，可以在 ActionParameter 中添加 validator 字段
+            # if param_def.name in params and hasattr(param_def, 'validator') and param_def.validator:
+            #     value = params[param_def.name]
+            #     if not param_def.validator(value):
+            #         return False, f"参数 {param_def.name} 验证失败"
 
         return True, None
 
@@ -141,34 +89,34 @@ class ClickAction(BaseAction):
             parameters=[
                 ActionParameter(
                     name="selector",
-                    type=str,
+                    type="str",
                     required=True,
                     description="CSS选择器或xpath",
                 ),
                 ActionParameter(
                     name="button",
-                    type=str,
+                    type="str",
                     required=False,
                     default="left",
                     description="鼠标按钮: left, right, middle",
                 ),
                 ActionParameter(
                     name="click_count",
-                    type=int,
+                    type="int",
                     required=False,
                     default=1,
                     description="点击次数",
                 ),
                 ActionParameter(
                     name="delay",
-                    type=int,
+                    type="int",
                     required=False,
                     default=0,
                     description="点击前延迟(毫秒)",
                 ),
                 ActionParameter(
                     name="position",
-                    type=dict,
+                    type="dict",
                     required=False,
                     default=None,
                     description="点击位置: {x: 0-1, y: 0-1} 相对坐标",
@@ -178,7 +126,6 @@ class ClickAction(BaseAction):
 
     async def execute(self, ctx: ActionContext) -> ActionResult:
         start_time = time.time()
-
         selector = ctx.params.get("selector")
         button = ctx.params.get("button", "left")
         click_count = ctx.params.get("click_count", 1)
@@ -190,20 +137,11 @@ class ClickAction(BaseAction):
                 await asyncio.sleep(delay / 1000)
 
             if position:
-                # 使用相对坐标
-                viewport = ctx.page.viewport_size or await ctx.page.evaluate(
-                    """() => ({
-                        width: window.innerWidth,
-                        height: window.innerHeight
-                    })"""
-                )
-                abs_x = int(position["x"] * viewport["width"])
-                abs_y = int(position["y"] * viewport["height"])
-
+                x, y = position['x'], position['y']
                 if click_count == 2:
-                    await ctx.page.dblclick(x=abs_x, y=abs_y, button=button)
+                    await ctx.page.dblclick(x=x, y=y, button=button)
                 else:
-                    await ctx.page.click(x=abs_x, y=abs_y, button=button)
+                    await ctx.page.click(x=x, y=y, button=button)
             else:
                 locator = ctx.page.locator(selector)
                 if click_count == 2:
@@ -240,21 +178,21 @@ class InputAction(BaseAction):
             description="向输入框输入文本",
             parameters=[
                 ActionParameter(
-                    name="selector", type=str, required=True, description="输入框选择器"
+                    name="selector", type="str", required=True, description="输入框选择器"
                 ),
                 ActionParameter(
-                    name="value", type=str, required=True, description="输入的值"
+                    name="value", type="str", required=True, description="输入的值"
                 ),
                 ActionParameter(
                     name="delay",
-                    type=int,
+                    type="int",
                     required=False,
                     default=0,
                     description="逐字输入延迟(毫秒)",
                 ),
                 ActionParameter(
                     name="clear_first",
-                    type=bool,
+                    type="bool",
                     required=False,
                     default=True,
                     description="输入前清空",
@@ -279,8 +217,7 @@ class InputAction(BaseAction):
             if delay > 0:
                 # 模拟打字效果
                 for char in value:
-                    await locator.type(char)
-                    await asyncio.sleep(delay / 1000)
+                    await locator.type(char,delay=delay)
             else:
                 await locator.fill(value)
 
@@ -313,18 +250,18 @@ class NavigateAction(BaseAction):
             description="导航到指定URL",
             parameters=[
                 ActionParameter(
-                    name="url", type=str, required=True, description="目标URL"
+                    name="url", type="str", required=True, description="目标URL"
                 ),
                 ActionParameter(
                     name="wait_until",
-                    type=str,
+                    type="str",
                     required=False,
                     default="load",
                     description="等待条件: load, domcontentloaded, networkidle",
                 ),
                 ActionParameter(
                     name="timeout",
-                    type=int,
+                    type="int",
                     required=False,
                     default=30000,
                     description="超时时间(毫秒)",
@@ -340,6 +277,43 @@ class NavigateAction(BaseAction):
         timeout = ctx.params.get("timeout", 30000)
 
         try:
+            # 验证 URL 格式
+            if not url or not isinstance(url, str):
+                return ActionResult(
+                    success=False,
+                    error="URL 不能为空",
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+
+            # 检查是否是有效的 URL 格式（只允许 http 和 https）
+            if not (url.startswith("http://") or url.startswith("https://")):
+                # 尝试自动添加 https:// 前缀
+                if "." in url and not url.startswith("www."):
+                    url = "https://" + url
+                elif url.startswith("www."):
+                    url = "https://" + url
+                else:
+                    return ActionResult(
+                        success=False,
+                        error=f"无效的 URL 格式: {url}。只允许 http:// 和 https:// 协议的网站",
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                    )
+
+            # 安全检查：禁止访问 localhost、127.0.0.1 和局域网地址
+            security_check = await self._check_url_security(url)
+            if not security_check.allowed:
+                return ActionResult(
+                    success=False,
+                    error=security_check.reason,
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+
             response = await ctx.page.goto(url, wait_until=wait_until, timeout=timeout)
 
             return ActionResult(
@@ -362,6 +336,516 @@ class NavigateAction(BaseAction):
                 action_name=self.metadata.name,
             )
 
+    def _check_protocol(self, scheme: str) -> SecurityCheckResult:
+        """检查协议是否允许"""
+        if scheme in ["http", "https"]:
+            return SecurityCheckResult(allowed=True)
+        return SecurityCheckResult(
+            allowed=False, reason=f"不支持的协议: {scheme}。只允许 http 和 https"
+        )
+
+    def _check_hostname_basic(self, hostname: str) -> SecurityCheckResult:
+        """检查主机名基本规则"""
+        localhost_variants = [
+            "localhost",
+            "localhost.localdomain",
+            "ip6-localhost",
+            "ip6-loopback",
+        ]
+        if hostname in localhost_variants:
+            return SecurityCheckResult(allowed=False, reason="禁止访问 localhost")
+
+        if hostname in ["127.0.0.1", "::1", "0.0.0.0"]:
+            return SecurityCheckResult(
+                allowed=False, reason=f"禁止访问回环地址: {hostname}"
+            )
+
+        return SecurityCheckResult(allowed=True)
+
+    def _check_ip_address(self, ip_str: str, hostname: str) -> SecurityCheckResult:
+        """检查 IP 地址安全性"""
+        with contextlib.suppress(ValueError):
+            ip = ipaddress.ip_address(ip_str)
+
+            if ip.version == 4 and ip in ipaddress.ip_network("127.0.0.0/8"):
+                return SecurityCheckResult(
+                    allowed=False, reason="禁止访问 127.0.0.0/8 网段"
+                )
+
+            if ip.version == 6 and ip == ipaddress.ip_address("::1"):
+                return SecurityCheckResult(
+                    allowed=False, reason="禁止访问 IPv6 回环地址 ::1"
+                )
+
+            if ip.is_private:
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问私有地址: {hostname}"
+                )
+
+            if ip.is_loopback:
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问回环地址: {hostname}"
+                )
+
+            if ip.is_link_local:
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问链路本地地址: {hostname}"
+                )
+
+            if ip.is_multicast:
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问多播地址: {hostname}"
+                )
+
+            if ip.is_reserved:
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问保留地址: {hostname}"
+                )
+
+            return SecurityCheckResult(allowed=True)
+        
+        # 如果 ValueError 被 suppress，返回允许
+        return SecurityCheckResult(allowed=True)
+
+    async def _check_dns_resolution(
+        self, hostname: str, max_retries: int = 2
+    ) -> SecurityCheckResult:
+        """DNS 解析并检查地址安全性"""
+        for attempt in range(max_retries):
+            try:
+                addr_info_v4 = socket.getaddrinfo(
+                    hostname, None, socket.AF_INET, socket.SOCK_STREAM
+                )
+                addr_info_v6 = socket.getaddrinfo(
+                    hostname, None, socket.AF_INET6, socket.SOCK_STREAM
+                )
+                all_addr_info = addr_info_v4 + addr_info_v6
+
+                if not all_addr_info:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(0.5)
+                        continue
+                    return SecurityCheckResult(
+                        allowed=True,
+                        reason=f"DNS 解析未返回地址，但允许浏览器尝试验证: {hostname}",
+                    )
+
+                for info in all_addr_info:
+                    ip_str = info[4][0]
+                    result = self._check_ip_address(ip_str, hostname)
+                    if not result.allowed:
+                        return result
+
+                return SecurityCheckResult(allowed=True)
+
+            except socket.gaierror:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5)
+                    continue
+                return SecurityCheckResult(
+                    allowed=True,
+                    reason=f"DNS 解析失败（已重试{max_retries}次）: {hostname}。允许浏览器尝试验证",
+                )
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5)
+                    continue
+                return SecurityCheckResult(
+                    allowed=True,
+                    reason=f"DNS 检查异常（已重试{max_retries}次）: {str(e)}。允许浏览器尝试验证",
+                )
+
+        return SecurityCheckResult(allowed=True)
+
+    async def _check_url_security(self, url: str) -> SecurityCheckResult:
+        """
+        检查 URL 的安全性，禁止访问本地和局域网地址
+
+        安全措施:
+        1. 验证 URL 格式和协议
+        2. 检查主机名是否为 localhost 或回环地址
+        3. 检查 IP 地址类型（私有、回环、链路本地）
+        4. DNS 双重检查（防止 DNS rebinding）
+        5. 支持 IPv4 和 IPv6
+        """
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            scheme = parsed.scheme.lower()
+
+            if not hostname:
+                return SecurityCheckResult(
+                    allowed=False, reason="无法解析 URL 主机名"
+                )
+
+            # 检查协议
+            protocol_result = self._check_protocol(scheme)
+            if not protocol_result.allowed:
+                return protocol_result
+
+            # 清理主机名
+            hostname = hostname.strip().lower()
+
+            # 检查主机名基本规则
+            hostname_result = self._check_hostname_basic(hostname)
+            if not hostname_result.allowed:
+                return hostname_result
+
+            # 尝试作为 IP 地址检查
+            check_hostname = hostname.strip("[]")
+            with contextlib.suppress(ValueError):
+                ip = ipaddress.ip_address(check_hostname)
+
+                if ip.version == 4 and ip in ipaddress.ip_network("127.0.0.0/8"):
+                    return SecurityCheckResult(
+                        allowed=False, reason="禁止访问 127.0.0.0/8 网段"
+                    )
+
+                if ip.version == 6 and ip == ipaddress.ip_address("::1"):
+                    return SecurityCheckResult(
+                        allowed=False, reason="禁止访问 IPv6 回环地址 ::1"
+                    )
+
+                if ip.is_private:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问私有地址: {hostname}"
+                    )
+
+                if ip.is_loopback:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问回环地址: {hostname}"
+                    )
+
+                if ip.is_link_local:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问链路本地地址: {hostname}"
+                    )
+
+                if ip.is_multicast:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问多播地址: {hostname}"
+                    )
+
+                if ip.is_reserved:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问保留地址: {hostname}"
+                    )
+
+                return SecurityCheckResult(allowed=True)
+
+            # DNS 解析检查
+            return await self._check_dns_resolution(hostname)
+
+        except Exception as e:
+            return SecurityCheckResult(
+                allowed=False, reason=f"URL 安全检查失败: {str(e)}"
+            )
+
+
+class NewPageAction(BaseAction):
+    """新建页面操作"""
+
+    def get_metadata(self) -> ActionMetadata:
+        return ActionMetadata(
+            id="new_page",
+            name="新建页面",
+            type=ActionType.NAVIGATION,
+            description="在浏览器中创建新页面（标签页）",
+            parameters=[
+                ActionParameter(
+                    name="url",
+                    type="str",
+                    required=False,
+                    default=None,
+                    description="可选的初始 URL，如果不提供则打开空白页",
+                ),
+                ActionParameter(
+                    name="wait_until",
+                    type="str",
+                    required=False,
+                    default="load",
+                    description="等待条件: load, domcontentloaded, networkidle（仅在提供 url 时生效）",
+                ),
+                ActionParameter(
+                    name="timeout",
+                    type="int",
+                    required=False,
+                    default=30000,
+                    description="超时时间(毫秒)（仅在提供 url 时生效）",
+                ),
+            ],
+        )
+
+    async def execute(self, ctx: ActionContext) -> ActionResult:
+        start_time = time.time()
+
+        url = ctx.params.get("url")
+        wait_until = ctx.params.get("wait_until", "load")
+        timeout = ctx.params.get("timeout", 30000)
+
+        try:
+            # 🔑 关键修复：使用 browser_context.new_page() 而不是 browser.new_page()
+            # browser.new_page() 会创建新的 BrowserContext（新窗口）
+            # browser_context.new_page() 会在现有 context 中创建新标签页
+            if ctx.page:
+                # 从当前页面获取所属的 browser_context
+                browser_context = ctx.page.context
+            elif ctx.browser:
+                # 如果没有 page，退而求其次使用 browser（会创建新窗口）
+                logger.warning("没有可用的 page 对象，使用 browser.new_page() 创建新窗口")
+                new_page = await ctx.browser.new_page()
+                browser_context = new_page.context
+            else:
+                return ActionResult(
+                    success=False,
+                    error="浏览器对象不可用，无法创建新页面",
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+            
+            # 🔑 检查页面数量限制
+            current_pages = len([p for p in browser_context.pages if not p.is_closed()])
+            max_pages = settings.browser_max_pages_per_context
+            
+            if current_pages >= max_pages:
+                logger.warning(
+                    f"⚠️ 页面数量达到限制 ({current_pages}/{max_pages})，将关闭最旧的页面"
+                )
+                # 关闭最旧的页面
+                for page in browser_context.pages:
+                    if not page.is_closed():
+                        try:
+                            await page.close()
+                            logger.info(f"🗑️ 已关闭旧页面: {page.url}")
+                            break
+                        except Exception as e:
+                            logger.error(f"关闭旧页面失败: {e}")
+                
+                # 等待一下让浏览器完成清理
+                await asyncio.sleep(0.5)
+            
+            # 创建新页面
+            new_page = await browser_context.new_page()
+            
+            # 如果提供了 URL，则导航到该 URL
+            if url:
+                # 安全检查：禁止访问 localhost、127.0.0.1 和局域网地址
+                security_check = await self._check_url_security(url)
+                if not security_check.allowed:
+                    await new_page.close()
+                    return ActionResult(
+                        success=False,
+                        error=security_check.reason,
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                    )
+                
+                response = await new_page.goto(url, wait_until=wait_until, timeout=timeout)
+                
+                # 获取页面数
+                page_count = len([p for p in browser_context.pages if not p.is_closed()])
+                
+                return ActionResult(
+                    success=True,
+                    data={
+                        "page_created": True,
+                        "url": url,
+                        "status": response.status if response else None,
+                        "page_count": page_count,
+                    },
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+            else:
+                # 空白页
+                # 获取页面数
+                page_count = len([p for p in browser_context.pages if not p.is_closed()])
+                
+                return ActionResult(
+                    success=True,
+                    data={
+                        "page_created": True,
+                        "url": "about:blank",
+                        "page_count": page_count,
+                    },
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+
+        except Exception as e:
+            return ActionResult(
+                success=False,
+                error=str(e),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+    async def _check_url_security(self, url: str) -> SecurityCheckResult:
+        """检查 URL 的安全性（复用 NavigateAction 的逻辑）"""
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            scheme = parsed.scheme.lower()
+
+            if not hostname:
+                return SecurityCheckResult(
+                    allowed=False, reason="无法解析 URL 主机名"
+                )
+
+            # 检查协议
+            if scheme not in ["http", "https"]:
+                return SecurityCheckResult(
+                    allowed=False, reason=f"不支持的协议: {scheme}。只允许 http 和 https"
+                )
+
+            # 清理主机名
+            hostname = hostname.strip().lower()
+
+            # 检查主机名基本规则
+            localhost_variants = [
+                "localhost",
+                "localhost.localdomain",
+                "ip6-localhost",
+                "ip6-loopback",
+            ]
+            if hostname in localhost_variants:
+                return SecurityCheckResult(allowed=False, reason="禁止访问 localhost")
+
+            if hostname in ["127.0.0.1", "::1", "0.0.0.0"]:
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问回环地址: {hostname}"
+                )
+
+            # 尝试作为 IP 地址检查
+            check_hostname = hostname.strip("[]")
+            try:
+                ip = ipaddress.ip_address(check_hostname)
+                
+                if ip.version == 4 and ip in ipaddress.ip_network("127.0.0.0/8"):
+                    return SecurityCheckResult(
+                        allowed=False, reason="禁止访问 127.0.0.0/8 网段"
+                    )
+
+                if ip.version == 6 and ip == ipaddress.ip_address("::1"):
+                    return SecurityCheckResult(
+                        allowed=False, reason="禁止访问 IPv6 回环地址 ::1"
+                    )
+
+                if ip.is_private:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问私有地址: {hostname}"
+                    )
+
+                if ip.is_loopback:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问回环地址: {hostname}"
+                    )
+
+                if ip.is_link_local:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问链路本地地址: {hostname}"
+                    )
+
+                if ip.is_multicast:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问多播地址: {hostname}"
+                    )
+
+                if ip.is_reserved:
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问保留地址: {hostname}"
+                    )
+
+                return SecurityCheckResult(allowed=True)
+            except ValueError:
+                pass
+
+            # DNS 解析检查
+            for attempt in range(2):
+                try:
+                    addr_info_v4 = socket.getaddrinfo(
+                        hostname, None, socket.AF_INET, socket.SOCK_STREAM
+                    )
+                    addr_info_v6 = socket.getaddrinfo(
+                        hostname, None, socket.AF_INET6, socket.SOCK_STREAM
+                    )
+                    all_addr_info = addr_info_v4 + addr_info_v6
+
+                    if not all_addr_info:
+                        if attempt < 1:
+                            await asyncio.sleep(0.5)
+                            continue
+                        return SecurityCheckResult(
+                            allowed=True,
+                            reason=f"DNS 解析未返回地址，但允许浏览器尝试验证: {hostname}",
+                        )
+
+                    for info in all_addr_info:
+                        ip_str = info[4][0]
+                        try:
+                            ip = ipaddress.ip_address(ip_str)
+                            if ip.version == 4 and ip in ipaddress.ip_network("127.0.0.0/8"):
+                                return SecurityCheckResult(
+                                    allowed=False, reason="禁止访问 127.0.0.0/8 网段"
+                                )
+                            if ip.version == 6 and ip == ipaddress.ip_address("::1"):
+                                return SecurityCheckResult(
+                                    allowed=False, reason="禁止访问 IPv6 回环地址 ::1"
+                                )
+                            if ip.is_private:
+                                return SecurityCheckResult(
+                                    allowed=False, reason=f"禁止访问私有地址: {hostname}"
+                                )
+                            if ip.is_loopback:
+                                return SecurityCheckResult(
+                                    allowed=False, reason=f"禁止访问回环地址: {hostname}"
+                                )
+                            if ip.is_link_local:
+                                return SecurityCheckResult(
+                                    allowed=False, reason=f"禁止访问链路本地地址: {hostname}"
+                                )
+                            if ip.is_multicast:
+                                return SecurityCheckResult(
+                                    allowed=False, reason=f"禁止访问多播地址: {hostname}"
+                                )
+                            if ip.is_reserved:
+                                return SecurityCheckResult(
+                                    allowed=False, reason=f"禁止访问保留地址: {hostname}"
+                                )
+                        except ValueError:
+                            pass
+
+                    return SecurityCheckResult(allowed=True)
+
+                except socket.gaierror:
+                    if attempt < 1:
+                        await asyncio.sleep(0.5)
+                        continue
+                    return SecurityCheckResult(
+                        allowed=True,
+                        reason=f"DNS 解析失败（已重试2次）: {hostname}。允许浏览器尝试验证",
+                    )
+                except Exception as e:
+                    if attempt < 1:
+                        await asyncio.sleep(0.5)
+                        continue
+                    return SecurityCheckResult(
+                        allowed=True,
+                        reason=f"DNS 检查异常（已重试2次）: {str(e)}。允许浏览器尝试验证",
+                    )
+
+            return SecurityCheckResult(allowed=True)
+
+        except Exception as e:
+            return SecurityCheckResult(
+                allowed=False, reason=f"URL 安全检查失败: {str(e)}"
+            )
+
 
 class EvaluateAction(BaseAction):
     """JavaScript执行操作"""
@@ -374,18 +858,18 @@ class EvaluateAction(BaseAction):
             description="在页面中执行JavaScript代码",
             parameters=[
                 ActionParameter(
-                    name="code", type=str, required=True, description="JavaScript代码"
+                    name="code", type="str", required=True, description="JavaScript代码"
                 ),
                 ActionParameter(
                     name="args",
-                    type=list,
+                    type="list",
                     required=False,
                     default=[],
                     description="传递给脚本的参数",
                 ),
                 ActionParameter(
                     name="timeout",
-                    type=int,
+                    type="int",
                     required=False,
                     default=30000,
                     description="超时时间(毫秒)",
@@ -443,28 +927,42 @@ class ScrollAction(BaseAction):
             parameters=[
                 ActionParameter(
                     name="selector",
-                    type=str,
+                    type="str",
                     required=False,
                     default=None,
                     description="要滚动的元素选择器，None表示滚动页面",
                 ),
                 ActionParameter(
                     name="x",
-                    type=int,
+                    type="int",
                     required=False,
                     default=0,
-                    description="水平滚动距离",
+                    description="水平滚动距离（兼容旧参数名）",
                 ),
                 ActionParameter(
                     name="y",
-                    type=int,
+                    type="int",
                     required=False,
                     default=0,
-                    description="垂直滚动距离",
+                    description="垂直滚动距离（兼容旧参数名）",
+                ),
+                ActionParameter(
+                    name="delta_x",
+                    type="float",
+                    required=False,
+                    default=0,
+                    description="水平滚动增量（负值向左，正值向右）",
+                ),
+                ActionParameter(
+                    name="delta_y",
+                    type="float",
+                    required=False,
+                    default=0,
+                    description="垂直滚动增量（负值向上，正值向下）",
                 ),
                 ActionParameter(
                     name="behavior",
-                    type=str,
+                    type="str",
                     required=False,
                     default="auto",
                     description="滚动行为: auto, smooth",
@@ -476,20 +974,20 @@ class ScrollAction(BaseAction):
         start_time = time.time()
 
         selector = ctx.params.get("selector")
-        x = ctx.params.get("x", 0)
-        y = ctx.params.get("y", 0)
+        # 🔑 支持两种参数名：x/y 和 delta_x/delta_y
+        x = ctx.params.get("delta_x", ctx.params.get("x", 0))
+        y = ctx.params.get("delta_y", ctx.params.get("y", 0))
         behavior = ctx.params.get("behavior", "auto")
 
         try:
             if selector:
                 await ctx.page.locator(selector).scroll_by(x=x, y=y, behavior=behavior)
+            elif behavior == "smooth":
+                await ctx.page.evaluate(
+                    f"window.scrollBy({{top: {y}, left: {x}, behavior: 'smooth'}})"
+                )
             else:
-                if behavior == "smooth":
-                    await ctx.page.evaluate(
-                        f"window.scrollBy({{top: {y}, left: {x}, behavior: 'smooth'}})"
-                    )
-                else:
-                    await ctx.page.evaluate(f"window.scrollBy({{top: {y}, left: {x}}})")
+                await ctx.page.evaluate(f"window.scrollBy({{top: {y}, left: {x}}})")
 
             return ActionResult(
                 success=True,
@@ -521,28 +1019,28 @@ class WaitAction(BaseAction):
             parameters=[
                 ActionParameter(
                     name="selector",
-                    type=str,
+                    type="str",
                     required=False,
                     default=None,
                     description="等待元素出现的选择器",
                 ),
                 ActionParameter(
                     name="timeout",
-                    type=int,
+                    type="int",
                     required=False,
                     default=30000,
                     description="超时时间(毫秒)",
                 ),
                 ActionParameter(
                     name="state",
-                    type=str,
+                    type="str",
                     required=False,
                     default="visible",
                     description="元素状态: visible, hidden, attached, detached",
                 ),
                 ActionParameter(
                     name="duration",
-                    type=int,
+                    type="int",
                     required=False,
                     default=None,
                     description="固定等待时间(毫秒)",
@@ -596,28 +1094,28 @@ class ScreenshotAction(BaseAction):
             parameters=[
                 ActionParameter(
                     name="selector",
-                    type=str,
+                    type="str",
                     required=False,
                     default=None,
                     description="元素选择器，None表示全页截图",
                 ),
                 ActionParameter(
                     name="full_page",
-                    type=bool,
+                    type="bool",
                     required=False,
                     default=False,
                     description="是否全页截图",
                 ),
                 ActionParameter(
                     name="type",
-                    type=str,
+                    type="str",
                     required=False,
                     default="png",
                     description="图片类型: png, jpeg",
                 ),
                 ActionParameter(
                     name="quality",
-                    type=int,
+                    type="int",
                     required=False,
                     default=80,
                     description="图片质量(jpeg有效)",
@@ -634,15 +1132,21 @@ class ScreenshotAction(BaseAction):
         quality = ctx.params.get("quality", 80)
 
         try:
+            # 构建截图参数，PNG 格式不支持 quality 参数
+            screenshot_params = {
+                "full_page": full_page,
+                "type": img_type,
+            }
+
+            # 只有 JPEG 格式才添加 quality 参数
+            if img_type.lower() in ["jpeg", "jpg"]:
+                screenshot_params["quality"] = quality
+
             if selector:
                 element = ctx.page.locator(selector)
-                image_bytes = await element.screenshot(type=img_type, quality=quality)
+                image_bytes = await element.screenshot(**screenshot_params)
             else:
-                image_bytes = await ctx.page.screenshot(
-                    full_page=full_page, type=img_type, quality=quality
-                )
-
-            import base64
+                image_bytes = await ctx.page.screenshot(**screenshot_params)
 
             image_base64 = base64.b64encode(image_bytes).decode()
 
@@ -651,7 +1155,7 @@ class ScreenshotAction(BaseAction):
                 data={
                     "format": img_type,
                     "size": len(image_bytes),
-                    "base64": image_base64[:100] + "...",  # 截断显示
+                    "base64": image_base64,
                 },
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
@@ -687,57 +1191,57 @@ class LLMAction(BaseAction):
             parameters=[
                 ActionParameter(
                     name="server_url",
-                    type=str,
+                    type="str",
                     required=True,
                     description="API 服务器地址，如 https://api.openai.com/v1",
                 ),
                 ActionParameter(
-                    name="api_key", type=str, required=True, description="API 密钥"
+                    name="api_key", type="str", required=True, description="API 密钥"
                 ),
                 ActionParameter(
                     name="model",
-                    type=str,
+                    type="str",
                     required=True,
                     description="模型名称，如 gpt-4o-mini, gpt-3.5-turbo",
                 ),
                 ActionParameter(
                     name="messages",
-                    type=list,
+                    type="list",
                     required=False,
                     default=[],
                     description="消息列表 [{role: 'user'|'assistant'|'system', content: '...'}, ...]",
                 ),
                 ActionParameter(
                     name="prompt",
-                    type=str,
+                    type="str",
                     required=False,
                     default="",
                     description="单轮对话 prompt，将自动添加到 messages",
                 ),
                 ActionParameter(
                     name="system_prompt",
-                    type=str,
+                    type="str",
                     required=False,
                     default="",
                     description="系统提示词，会作为首条 system 消息发送",
                 ),
                 ActionParameter(
                     name="temperature",
-                    type=float,
+                    type="float",
                     required=False,
                     default=0.7,
                     description="温度参数 0-2，控制随机性",
                 ),
                 ActionParameter(
                     name="max_tokens",
-                    type=int,
+                    type="int",
                     required=False,
                     default=2048,
                     description="最大生成的 token 数",
                 ),
                 ActionParameter(
                     name="timeout",
-                    type=int,
+                    type="int",
                     required=False,
                     default=120000,
                     description="请求超时时间(毫秒)",
@@ -759,8 +1263,6 @@ class LLMAction(BaseAction):
         timeout = ctx.params.get("timeout", 120000)
 
         try:
-            import httpx
-
             # 构建消息列表
             final_messages = []
 
@@ -947,7 +1449,6 @@ class CompositeAction(BaseAction):
                 browser=ctx.browser,
                 params=step_params,
                 user_data=ctx.user_data,
-                plugins=ctx.plugins,
             )
 
             # 执行子操作
@@ -1004,6 +1505,7 @@ class ActionRegistry:
             "click": ClickAction,
             "input": InputAction,
             "navigate": NavigateAction,
+            "new_page": NewPageAction,
             "evaluate": EvaluateAction,
             "scroll": ScrollAction,
             "wait": WaitAction,
@@ -1039,9 +1541,7 @@ class ActionRegistry:
         """创建系统级操作实例"""
         if action_id in self._builtin_actions:
             return self._builtin_actions[action_id]()
-        if action_id in self._actions:
-            return self._actions[action_id]()
-        return None
+        return self._actions[action_id]() if action_id in self._actions else None
 
     async def create_action_for_user(
         self, action_id: str, mid: str
@@ -1062,8 +1562,7 @@ class ActionRegistry:
             BaseAction 实例，未找到返回 None
         """
         # 1 & 2: 系统级
-        system_action = self.create_action(action_id)
-        if system_action:
+        if system_action:= self.create_action(action_id):
             return system_action
 
         # 3: 从数据库直接读取（不缓存）
@@ -1076,9 +1575,8 @@ class ActionRegistry:
                     CustomActionModel.is_enabled == True,
                 )
             )
-            model = result.first()
 
-        if model and (model.is_composite or model.get_steps()):
+        if (model := result.first()) and (model.is_composite or model.get_steps()):
             composite = CompositeAction(
                 action_id=model.action_id,
                 name=model.name,

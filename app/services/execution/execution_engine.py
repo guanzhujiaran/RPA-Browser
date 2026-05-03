@@ -9,6 +9,7 @@
 5. 支持重试和超时控制
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
@@ -30,6 +31,7 @@ from loguru import logger
 from app.services.execution.action_registry import (
     ActionRegistry, ActionContext, ActionResult, BaseAction, action_registry
 )
+from app.services.RPA_browser.live_service import LiveService
 
 
 class ExecutionStatus(StrEnum):
@@ -57,7 +59,6 @@ class ExecutionTask:
     finished_at: Optional[float] = None
     total_time: float = 0.0
     error: Optional[str] = None
-    plugins: List[str] = field(default_factory=list)  # 启用的插件ID列表
 
 
 @dataclass
@@ -108,8 +109,6 @@ class ExecutionEngine:
         - {{llm_content}} - 引用上一步返回的 llm_content
         - {{content}} - 引用上一步返回的 content 字段
         """
-        import re
-
         def replace_value(value: Any) -> Any:
             if isinstance(value, str):
                 # 替换 {{key}} 或 {{key.field}} 格式
@@ -150,9 +149,9 @@ class ExecutionEngine:
         browser: Any,
         action_id: str,
         params: Dict[str, Any],
-        plugin_ids: Optional[List[str]] = None,
         user_data: Optional[Dict[str, Any]] = None,
         mid: Optional[str] = None,
+        page_index: Optional[int] = None,  # 🔑 新增：页面索引参数
     ) -> ActionResult:
         """
         执行单个操作
@@ -160,28 +159,50 @@ class ExecutionEngine:
         Args:
             session_id: 会话ID
             browser_id: 浏览器ID
-            page: Playwright Page对象
-            browser: Playwright Browser对象
+            page: Playwright Page对象（默认页面）
+            browser: Playwright BrowserContext对象
             action_id: 操作ID
             params: 操作参数
-            plugin_ids: 要启用的插件ID列表
             user_data: 用户自定义数据
             mid: 用户 mid，用于按需加载用户私有的自定义组合操作
+            page_index: 🔑 页面索引，如果提供则切换到指定页面执行操作
 
         Returns:
             ActionResult: 操作结果
         """
         start_time = time.time()
+        
+        # 🔑 如果指定了 page_index，需要获取对应的页面
+        target_page = page
+        if page_index is not None:
+            session_key = LiveService._get_session_key(int(session_id.split('_')[0]) if '_' in session_id else int(session_id), int(browser_id))
+            
+            if session_key in LiveService.browser_sessions:
+                entry = LiveService.browser_sessions[session_key]
+                all_pages = await entry.plugined_session.get_all_pages()
+                
+                if 0 <= page_index < len(all_pages):
+                    target_page = all_pages[page_index]
+                    logger.info(f"📄 使用页面索引 {page_index}: {target_page.url}")
+                else:
+                    return ActionResult(
+                        success=False,
+                        error=f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})",
+                        execution_time=0,
+                        action_id=action_id
+                    )
+            else:
+                logger.warning(f"会话 {session_key} 不存在，使用默认页面")
+            
 
         # 创建操作上下文
         ctx = ActionContext(
             session_id=session_id,
             browser_id=browser_id,
-            page=page,
+            page=target_page,  # 🔑 使用目标页面
             browser=browser,
             params=params,
-            user_data=user_data or {},
-            plugins=[]
+            user_data=user_data or {}
         )
 
         # 获取操作实例：优先系统级，再按 mid 按需加载用户私有操作
@@ -209,9 +230,9 @@ class ExecutionEngine:
 
         try:
             # 执行操作
+            logger.info(f"[ExecutionEngine] 正在执行操作 {action_id} (ID: {action_id})")
             result = await action.execute(ctx)
             result.execution_time = time.time() - start_time
-
             return result
 
         except asyncio.TimeoutError:
@@ -266,8 +287,7 @@ class ExecutionEngine:
             session_id=session_id,
             browser_id=browser_id,
             status=ExecutionStatus.RUNNING,
-            actions=[{"workflow": workflow.id, "steps": len(workflow.steps)}],
-            plugins=[]
+            actions=[{"workflow": workflow.id, "steps": len(workflow.steps)}]
         )
         self._tasks[task_id] = task
 
@@ -353,9 +373,9 @@ class ExecutionEngine:
                         browser=browser,
                         action_id=step.action_id,
                         params=replaced_params,
-                        plugin_ids=plugin_ids,
                         user_data=user_data,
                         mid=mid,
+                        page_index=step.params.get("page_index"),  # 🔑 传递页面索引
                     )
 
                     results.append(result)
@@ -410,9 +430,9 @@ class ExecutionEngine:
                     browser=browser,
                     action_id=step.action_id,
                     params=replaced_params,
-                    plugin_ids=plugin_ids,
                     user_data=user_data,
                     mid=mid,
+                    page_index=step.params.get("page_index"),  # 🔑 传递页面索引
                 )
 
                 results.append(result)
@@ -494,7 +514,6 @@ class ExecutionEngine:
                         browser=browser,
                         action_id=action["action_id"],
                         params=action.get("params", {}),
-                        plugin_ids=plugin_ids,
                         mid=mid,
                     )
 
@@ -525,7 +544,6 @@ class ExecutionEngine:
                     browser=browser,
                     action_id=action["action_id"],
                     params=action.get("params", {}),
-                    plugin_ids=plugin_ids,
                     mid=mid,
                 )
                 results.append(result)
@@ -552,6 +570,263 @@ class ExecutionEngine:
             task.finished_at = time.time()
             return True
         return False
+    
+    @staticmethod
+    async def execute_action_with_session(
+        mid: int,
+        browser_id: int,
+        action_id: str,
+        params: Dict[str, Any],
+        user_data: Optional[Dict[str, Any]] = None,
+        page_index: Optional[int] = None,
+    ) -> ActionResult:
+        """
+        🔑 Service 层方法：执行操作（自动管理会话和页面）
+        
+        Args:
+            mid: 用户ID
+            browser_id: 浏览器ID
+            action_id: 操作ID
+            params: 操作参数
+            user_data: 用户自定义数据
+            page_index: 页面索引，指定在哪个 tab 页执行
+            
+        Returns:
+            ActionResult: 执行结果
+        """
+        session_key = LiveService._get_session_key(mid, browser_id)
+        entry = LiveService.browser_sessions.get(session_key)
+        
+        if not entry:
+            return ActionResult(
+                success=False,
+                error=f"浏览器会话不存在: {session_key}",
+                execution_time=0,
+                action_id=action_id,
+            )
+        
+        # 获取页面
+        if page_index is not None:
+            all_pages = await entry.plugined_session.get_all_pages()
+            if 0 <= page_index < len(all_pages):
+                page = all_pages[page_index]
+            else:
+                return ActionResult(
+                    success=False,
+                    error=f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})",
+                    execution_time=0,
+                    action_id=action_id,
+                )
+        else:
+            page = await entry.plugined_session.get_current_page()
+        
+        # 获取 browser context
+        browser = entry.plugined_session.browser_context
+        
+        # 执行操作
+        return await execution_engine.execute_action(
+            session_id=str(browser_id),
+            browser_id=str(browser_id),
+            page=page,
+            browser=browser,
+            action_id=action_id,
+            params=params,
+            user_data=user_data,
+            mid=str(mid),
+            page_index=None,  # 已经在上面处理了页面选择
+        )
+    
+    @staticmethod
+    async def execute_action_step_with_session(
+        mid: int,
+        browser_id: int,
+        action_id: str,
+        params: Dict[str, Any],
+        step_index: int = 0,
+        user_data: Optional[Dict[str, Any]] = None,
+        page_index: Optional[int] = None,
+    ) -> tuple:
+        """
+        🔑 Service 层方法：单步执行操作（自动管理会话和页面）
+        
+        Args:
+            mid: 用户ID
+            browser_id: 浏览器ID
+            action_id: 操作ID
+            params: 操作参数
+            step_index: 步骤索引（如果是复合操作）
+            user_data: 用户自定义数据
+            page_index: 页面索引，指定在哪个 tab 页执行操作
+        
+        Returns:
+            tuple: (step_index, action_id, action_name, ActionResult)
+        """
+        session_key = LiveService._get_session_key(mid, browser_id)
+        entry = LiveService.browser_sessions.get(session_key)
+        if not entry:
+            raise ValueError("浏览器不存在或未运行")
+        
+        # 根据 page_index 选择页面
+        if page_index is not None:
+            all_pages = await entry.plugined_session.get_all_pages()
+            if page_index < 0 or page_index >= len(all_pages):
+                raise ValueError(f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})")
+            page = all_pages[page_index]
+        else:
+            page = await entry.plugined_session.get_current_page()
+        
+        browser = entry.plugined_session.browser_context.browser
+        
+        # 从数据库加载操作
+        action_instance = await action_registry.create_action_for_user(
+            action_id, str(mid)
+        )
+        metadata = action_registry.get_action_metadata(action_id)
+        if not metadata:
+            raise ValueError(f"未找到操作: {action_id}")
+        
+        # 检查是否为组合操作
+        composite = action_instance if hasattr(action_instance, "_steps") else None
+        
+        if composite and hasattr(composite, "_steps"):
+            # 组合操作：执行指定步骤
+            steps = composite._steps
+            if step_index < 0 or step_index >= len(steps):
+                raise ValueError(f"步骤索引 {step_index} 超出范围 (0-{len(steps)-1})")
+            
+            step = steps[step_index]
+            # 替换参数
+            step_params = composite._replace_params(step.get("params", {}), params)
+            
+            # 执行子操作
+            result = await execution_engine.execute_action(
+                session_id=str(browser_id),
+                browser_id=str(browser_id),
+                page=page,
+                browser=browser,
+                action_id=step["action_id"],
+                params=step_params,
+                mid=str(mid),
+                page_index=None,  # 已经在上面处理了页面选择
+            )
+            
+            return (step_index, step["action_id"], metadata.name, result)
+        else:
+            # 普通操作：直接执行
+            result = await execution_engine.execute_action(
+                session_id=str(browser_id),
+                browser_id=str(browser_id),
+                page=page,
+                browser=browser,
+                action_id=action_id,
+                params=params,
+                mid=str(mid),
+                page_index=None,  # 已经在上面处理了页面选择
+            )
+            
+            return (0, action_id, metadata.name, result)
+    
+    @staticmethod
+    async def execute_workflow_with_session(
+        mid: int,
+        browser_id: int,
+        workflow: Any,  # Workflow 对象
+        user_data: Optional[Dict[str, Any]] = None,
+        page_index: Optional[int] = None,
+    ) -> List[ActionResult]:
+        """
+        🔑 Service 层方法：执行工作流（自动管理会话和页面）
+        
+        Args:
+            mid: 用户ID
+            browser_id: 浏览器ID
+            workflow: Workflow 对象
+            user_data: 用户自定义数据
+            page_index: 页面索引，指定在哪个 tab 页执行操作
+        
+        Returns:
+            List[ActionResult]: 执行结果列表
+        """
+        session_key = LiveService._get_session_key(mid, browser_id)
+        entry = LiveService.browser_sessions.get(session_key)
+        if not entry:
+            raise ValueError("浏览器不存在或未运行")
+        
+        # 根据 page_index 选择页面
+        if page_index is not None:
+            all_pages = await entry.plugined_session.get_all_pages()
+            if page_index < 0 or page_index >= len(all_pages):
+                raise ValueError(f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})")
+            page = all_pages[page_index]
+        else:
+            page = await entry.plugined_session.get_current_page()
+        
+        browser = entry.plugined_session.browser_context.browser
+        
+        # 执行工作流
+        results = await execution_engine.execute_workflow(
+            session_id=str(browser_id),
+            browser_id=str(browser_id),
+            page=page,
+            browser=browser,
+            workflow=workflow,
+            user_data=user_data,
+            mid=str(mid),
+        )
+        
+        return results
+    
+    @staticmethod
+    async def execute_batch_with_session(
+        mid: int,
+        browser_id: int,
+        actions: List[Dict[str, Any]],
+        parallel: bool = False,
+        user_data: Optional[Dict[str, Any]] = None,
+        page_index: Optional[int] = None,
+    ) -> List[ActionResult]:
+        """
+        🔑 Service 层方法：批量执行操作（自动管理会话和页面）
+        
+        Args:
+            mid: 用户ID
+            browser_id: 浏览器ID
+            actions: 操作列表，每个元素包含 action_id 和 params
+            parallel: 是否并行执行
+            user_data: 共享自定义数据
+            page_index: 页面索引，指定在哪个 tab 页执行操作
+        
+        Returns:
+            List[ActionResult]: 执行结果列表
+        """
+        session_key = LiveService._get_session_key(mid, browser_id)
+        entry = LiveService.browser_sessions.get(session_key)
+        if not entry:
+            raise ValueError("浏览器不存在或未运行")
+        
+        # 根据 page_index 选择页面
+        if page_index is not None:
+            all_pages = await entry.plugined_session.get_all_pages()
+            if page_index < 0 or page_index >= len(all_pages):
+                raise ValueError(f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})")
+            page = all_pages[page_index]
+        else:
+            page = await entry.plugined_session.get_current_page()
+        
+        browser = entry.plugined_session.browser_context.browser
+        
+        # 批量执行
+        results = await execution_engine.execute_batch(
+            session_id=str(browser_id),
+            browser_id=str(browser_id),
+            page=page,
+            browser=browser,
+            actions=actions,
+            parallel=parallel,
+            mid=str(mid),
+        )
+        
+        return results
 
 
 # 全局执行引擎实例

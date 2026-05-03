@@ -1,17 +1,17 @@
 """管理员 API - 查看所有系统状态"""
 from loguru import logger
 from fastapi import APIRouter
-
+import time
+from app.config import settings
 from app.models.response_code import ResponseCode
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_tag import RouterTag
 from app.models.system.admin import (
     AdminAllSessionsResponse,
-    AdminAllStreamsResponse,
-    AdminAllStatsResponse,
+    BrowserSessionConfigResponse,
+    UpdateBrowserSessionConfigRequest,
 )
 from app.services.RPA_browser.live_service import LiveService
-from app.services.RPA_browser.webrtc_service import WebRTCService
 
 router = APIRouter(tags=[RouterTag.admin_management])
 
@@ -33,10 +33,7 @@ async def get_all_sessions():
                 "is_manual_mode": session_info.is_manual_mode,
                 "priority": str(session_info.current_operation_priority),
                 "active_connections": len(session_info.active_connections),
-                "cleanup_policy": {
-                    "max_idle_time": session_info.cleanup_policy.max_idle_time,
-                    "max_no_heartbeat_time": session_info.cleanup_policy.max_no_heartbeat_time,
-                },
+                "cleanup_policy": session_info.cleanup_policy,
             }
             sessions.append(session_data)
 
@@ -54,86 +51,72 @@ async def get_all_sessions():
         )
 
 
-@router.post("/streams/all", response_model=StandardResponse[AdminAllStreamsResponse])
-async def get_all_streams():
-    """获取所有视频流信息（管理员）"""
+@router.get("/config/browser-session", response_model=StandardResponse[BrowserSessionConfigResponse])
+async def get_browser_session_config():
+    """获取浏览器会话配置（管理员）"""
     try:
-        logger.info("👨‍💼 Admin: fetching all streams")
+        logger.info("👨‍💼 Admin: fetching browser session config")
 
-        live_streams = []
-        for session_key, stream_info in list(LiveService.live_streams.items()):
-            stream_data = {
-                "session_key": session_key,
-                "mid": stream_info.mid,
-                "browser_id": stream_info.browser_id,
-                "is_active": stream_info.is_active,
-                "start_time": stream_info.start_time,
-                "last_heartbeat": stream_info.last_heartbeat,
-                "params": {
-                    "fps": stream_info.params.fps if stream_info.params else None,
-                    "crf": stream_info.params.crf if stream_info.params else None,
-                    "preset": stream_info.params.preset if stream_info.params else None,
-                    "gop": stream_info.params.gop if stream_info.params else None,
-                    "tune": stream_info.params.tune if stream_info.params else None,
-                    "video_bitrate": stream_info.params.video_bitrate if stream_info.params else None,
-                    "audio_bitrate": stream_info.params.audio_bitrate if stream_info.params else None,
-                },
-            }
-            live_streams.append(stream_data)
-
-        webrtc_connections = []
-        for conn_key, stream_info in list(WebRTCService.active_connections.items()):
-            webrtc_data = {
-                "connection_key": conn_key,
-                "mid": stream_info.mid,
-                "browser_id": stream_info.browser_id,
-                "active": stream_info.active,
-                "ice_connection_state": stream_info.peer_connection.iceConnectionState,
-                "connection_state": stream_info.peer_connection.connectionState,
-            }
-            webrtc_connections.append(webrtc_data)
-
-        response = AdminAllStreamsResponse(
-            live_streams_count=len(live_streams),
-            live_streams=live_streams,
-            webrtc_connections_count=len(webrtc_connections),
-            webrtc_connections=webrtc_connections,
+        response = BrowserSessionConfigResponse(
+            auto_cleanup=settings.browser_session_auto_cleanup,
+            max_idle_time=settings.browser_session_max_idle_time,
+            max_no_heartbeat_time=settings.browser_session_max_no_heartbeat_time,
+            cleanup_interval=settings.browser_session_cleanup_interval,
+            expiration_time=settings.browser_session_expiration_time,
         )
 
         return success_response(data=response)
     except Exception as e:
-        logger.error(f"❌ Admin: failed to fetch streams: {e}")
+        logger.error(f"❌ Admin: failed to fetch browser session config: {e}")
         return error_response(
-            msg=f"Failed to fetch streams: {str(e)}",
+            msg=f"Failed to fetch browser session config: {str(e)}",
             code=ResponseCode.INTERNAL_ERROR,
         )
 
 
-@router.post("/stats/all", response_model=StandardResponse[AdminAllStatsResponse])
-async def get_all_stats():
-    """获取所有系统统计信息（管理员）"""
+@router.post("/config/browser-session", response_model=StandardResponse[BrowserSessionConfigResponse])
+async def update_browser_session_config(request: UpdateBrowserSessionConfigRequest):
+    """更新浏览器会话配置（管理员）
+    
+    注意：此修改仅在内存中生效，重启服务后会恢复为环境变量中的配置。
+    如需永久修改，请更新 .env 文件或环境变量。
+    """
     try:
-        logger.info("👨‍💼 Admin: fetching all system stats")
+        logger.info("👨‍💼 Admin: updating browser session config")
 
-        # 获取会话统计
-        session_stats = LiveService.get_session_statistics()
+        # 更新配置
+        if request.auto_cleanup is not None:
+            settings.browser_session_auto_cleanup = request.auto_cleanup
+        if request.max_idle_time is not None:
+            settings.browser_session_max_idle_time = request.max_idle_time
+        if request.max_no_heartbeat_time is not None:
+            settings.browser_session_max_no_heartbeat_time = request.max_no_heartbeat_time
+        if request.cleanup_interval is not None:
+            settings.browser_session_cleanup_interval = request.cleanup_interval
+        if request.expiration_time is not None:
+            settings.browser_session_expiration_time = request.expiration_time
 
-        # 获取流统计
-        live_streams_count = len(LiveService.live_streams)
-        webrtc_connections_count = len(WebRTCService.active_connections)
-
-        # 构建响应
-        response = AdminAllStatsResponse(
-            session_stats=session_stats.model_dump(),
-            live_streams_count=live_streams_count,
-            webrtc_connections_count=webrtc_connections_count,
-            timestamp=int(__import__("time").time()),
+        logger.info(
+            f"✅ Browser session config updated: "
+            f"auto_cleanup={settings.browser_session_auto_cleanup}, "
+            f"max_idle_time={settings.browser_session_max_idle_time}s, "
+            f"max_no_heartbeat_time={settings.browser_session_max_no_heartbeat_time}s, "
+            f"cleanup_interval={settings.browser_session_cleanup_interval}s, "
+            f"expiration_time={settings.browser_session_expiration_time}s"
         )
 
-        return success_response(data=response)
+        response = BrowserSessionConfigResponse(
+            auto_cleanup=settings.browser_session_auto_cleanup,
+            max_idle_time=settings.browser_session_max_idle_time,
+            max_no_heartbeat_time=settings.browser_session_max_no_heartbeat_time,
+            cleanup_interval=settings.browser_session_cleanup_interval,
+            expiration_time=settings.browser_session_expiration_time,
+        )
+
+        return success_response(data=response, msg="配置更新成功（仅内存中生效）")
     except Exception as e:
-        logger.error(f"❌ Admin: failed to fetch stats: {e}")
+        logger.error(f"❌ Admin: failed to update browser session config: {e}")
         return error_response(
-            msg=f"Failed to fetch stats: {str(e)}",
+            msg=f"Failed to update browser session config: {str(e)}",
             code=ResponseCode.INTERNAL_ERROR,
         )

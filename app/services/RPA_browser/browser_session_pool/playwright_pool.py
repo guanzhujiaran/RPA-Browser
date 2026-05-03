@@ -10,6 +10,10 @@ from app.services.RPA_browser.browser_session_pool.session_pool_model import (
     BrowserSession,
     PluginedSessionInfo,
 )
+import time
+from loguru import logger
+from app.models.exceptions.base_exception import BrowserNotStartedException
+import contextlib
 
 
 class PlaywrightSessionPool:
@@ -46,22 +50,37 @@ class PlaywrightSessionPool:
 
     async def _create_session(self, params: SessionCreateParams) -> PluginedSessionInfo:
         """
-        创建新的浏览器会话
-        Returns:
-            (BaseUndetectedPlaywright实例, BrowserContext) 的元组
-        """
-        if browser_session := self._active_sessions.get(params.mid):
-            return await browser_session.create_session(params)
-        else:
-            browser_session = BrowserSession(
-                mid=params.mid, sessions={}
-            )
-            self._active_sessions[params.mid] = browser_session
-            return await browser_session.create_session(params)
+        创建新的浏览器会话（带并发保护）
 
-    async def release_all_session(
-        self, mid: int
-    ) -> SessionAllCloseResponse:
+        此方法只负责创建浏览器会话，不操作 LiveService 的状态。
+        
+        Returns:
+            PluginedSessionInfo: 新创建的会话实例
+        """
+        start_time = time.time()
+
+        # 🔑 第一阶段：获取或创建 BrowserSession
+        if not (browser_session := self._active_sessions.get(params.mid)):
+            browser_session = BrowserSession(mid=params.mid, sessions={})
+            self._active_sessions[params.mid] = browser_session
+
+        # 🔑 第二阶段：创建浏览器会话
+        create_start = time.time()
+        plugined_session = await browser_session.create_session(params)
+        create_elapsed = time.time() - create_start
+        logger.info(f"浏览器创建完成: mid={params.mid}, browser_id={params.browser_id}, 耗时: {create_elapsed:.3f}s")
+
+        # 🔑 第三阶段：验证刚创建的浏览器是否仍然有效
+        if plugined_session.is_closed:
+            logger.warning(f"刚创建的浏览器已关闭: mid={params.mid}, browser_id={params.browser_id}")
+            raise BrowserNotStartedException("浏览器在创建过程中被关闭，请重试")
+
+        elapsed = time.time() - start_time
+        logger.info(f"会话创建完成: mid={params.mid}, browser_id={params.browser_id}, 总耗时: {elapsed:.3f}s")
+
+        return plugined_session
+
+    async def release_all_session(self, mid: int) -> SessionAllCloseResponse:
         """
         释放指定mid的会话资源
         """

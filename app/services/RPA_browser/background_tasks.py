@@ -192,7 +192,6 @@ class BackgroundTasks:
           * 心跳超时清理
           * 闲置会话清理 (idle timeout)
           * 状态转换 (ACTIVE <-> IDLE)
-        - _check_live_stream_timeouts() 专门处理直播流超时
         
         优势：
         - 减少任务数量，降低调度复杂度
@@ -205,8 +204,6 @@ class BackgroundTasks:
             if settings.RUNNING_MODE == ConfigRunningModeEnum.PROD:
                 # 1. 心跳超时检查（包含状态机评估和自动清理）
                 await LiveService._check_heartbeat_timeouts()
-                # 2. 直播流超时检查
-                await LiveService._check_live_stream_timeouts()
                 
                 logger.info("✅ 会话清理任务完成")
             else:

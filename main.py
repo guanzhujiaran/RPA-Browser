@@ -8,6 +8,7 @@ import sys
 from app.routes import setup_routes
 from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
+from app.models.consts.enums import ConfigRunningModeEnum
 from scripts.initd.main import init_dependencies
 import asyncio
 
@@ -46,15 +47,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="Browser Automation API", lifespan=lifespan)
     fastapi_cdn_host.patch_docs(app)
-
-    # 设置路由（必须在静态文件挂载之前）
     setup_routes(app)
-
-    # 🔧 仅在开发环境挂载静态文件服务（用于 WebRTC 调试工具）
-    if settings.environment == "development":
-        static_dir = Path(__file__).parent
-        if static_dir.exists():
-            app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     return app
 

@@ -13,6 +13,7 @@ from app.models.router.tag import VersionTag, RouterTag
 
 class RouterInfo(SQLModel):
     """路由信息模型"""
+
     version_tag: VersionTag
     router_tag: RouterTag
     router_prefix: RouterPrefix
@@ -30,13 +31,6 @@ browser_fingerprint_router = RouterInfo(
     router_tag=RouterTag.browser_fingerprint,
     router_prefix=RouterPrefix.BROWSER,
     description="浏览器指纹管理 - 提供指纹的生成、存储、查询、删除等功能",
-)
-
-browser_plugin_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.browser_plugin,
-    router_prefix=RouterPrefix.BROWSER,
-    description="浏览器插件配置管理 - 提供插件配置的 CRUD 功能",
 )
 
 browser_notification_router = RouterInfo(
@@ -90,25 +84,10 @@ browser_control_execution_router = RouterInfo(
     description="操作管理 - 操作执行、插件、工作流",
 )
 
-# 安全控制子路由
-browser_control_security_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.security_control,
-    router_prefix=RouterPrefix.BROWSER_CONTROL,
-    description="安全控制 - JS代码安全检查与执行",
-)
-
-# 系统管理子路由
-browser_control_system_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.system_control,
-    router_prefix=RouterPrefix.BROWSER_CONTROL,
-    description="系统管理 - 健康检查、统计、清理",
-)
 
 browser_control_webrtc_router = RouterInfo(
     version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.webrtc_control,
+    router_tag=RouterTag.session_control,
     router_prefix=RouterPrefix.BROWSER_CONTROL,
     description="webrtc管理 - 连接视频流,直播显示浏览器画面",
 )
@@ -121,13 +100,6 @@ browser_control_session_router = RouterInfo(
 )
 
 # ====== 系统管理模块 ======
-
-system_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.system_management,
-    router_prefix=RouterPrefix.SYSTEM,
-    description="系统管理 - 提供健康检查、统计信息、清理策略等系统级功能",
-)
 
 admin_router = RouterInfo(
     version_tag=DEFAULT_VERSION,
@@ -142,15 +114,14 @@ admin_router = RouterInfo(
 # 浏览器配置相关路由（/browser 前缀）
 BROWSER_CONFIG_ROUTERS: List[RouterInfo] = [
     browser_fingerprint_router,
-    browser_plugin_router,
     browser_notification_router,
     user_browser_default_settings_router,
 ]
 
 # 浏览器运行时相关路由
 BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
-    browser_session_router,      # /browser/session
-    browser_control_router,      # /browser/control
+    browser_session_router,  # /browser/session
+    browser_control_router,  # /browser/control
     # browser_control 子模块
     browser_control_operation_router,
     browser_control_execution_router,
@@ -160,7 +131,6 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
 
 # 系统管理相关路由
 SYSTEM_ROUTERS: List[RouterInfo] = [
-    system_router,
     admin_router,
 ]
 
@@ -174,10 +144,11 @@ ALL_ROUTERS: List[RouterInfo] = [
 
 # ====== 唯一性验证函数 ======
 
+
 def validate_router_uniqueness() -> None:
     """验证所有路由的 (router_tag, router_prefix) 组合唯一性"""
     seen_keys: Dict[tuple, str] = {}
-    
+
     for router in ALL_ROUTERS:
         key = (router.router_tag, router.router_prefix)
         if key in seen_keys:
@@ -197,18 +168,14 @@ __all__ = [
     "RouterInfo",
     "DEFAULT_VERSION",
     "browser_fingerprint_router",
-    "browser_plugin_router",
     "browser_notification_router",
     "user_browser_default_settings_router",
     "browser_session_router",
     "browser_control_router",
     "browser_control_operation_router",
     "browser_control_execution_router",
-    "browser_control_security_router",
-    "browser_control_system_router",
     "browser_control_webrtc_router",
     "browser_control_session_router",
-    "system_router",
     "admin_router",
     "BROWSER_CONFIG_ROUTERS",
     "BROWSER_RUNTIME_ROUTERS",

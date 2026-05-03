@@ -6,8 +6,9 @@ Runtime 模块 - 实时控制模型
 
 from sqlmodel import SQLModel, Field
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import time
+from app.config import settings
 
 
 class BrowserStatusEnum(str, Enum):
@@ -16,14 +17,6 @@ class BrowserStatusEnum(str, Enum):
     RUNNING = "running"  # 正常运行中
     PAUSED = "paused"  # 人工操作中，自动任务暂停
     IDLE = "idle"  # 闲置状态
-    STOPPED = "stopped"  # 已停止
-    ERROR = "error"  # 错误状态
-
-
-class VideoStreamStatusEnum(str, Enum):
-    """视频流状态枚举"""
-
-    RUNNING = "running"  # 正常运行中
     STOPPED = "stopped"  # 已停止
     ERROR = "error"  # 错误状态
 
@@ -63,41 +56,12 @@ class LiveControlCommand(SQLModel):
     interrupt_automation: bool = Field(default=True, description="是否中断自动化任务")
 
 
-class VideoStreamParams(SQLModel):
-    """视频流参数"""
-
-    fps: int = Field(default=10, ge=1, le=30, description="帧率 (1-30)")
-    quality: int = Field(default=80, ge=1, le=100, description="图片质量 (1-100)")
-    width: int | None = Field(None, description="宽度 (像素)")
-    height: int | None = Field(None, description="高度 (像素)")
-    full_page: bool = Field(default=False, description="是否全页截图")
-
-
-class VideoStreamStatus(SQLModel):
-    """视频流状态信息"""
-
-    mid: int
-    browser_id: int
-    active: bool
-    fps: int
-    last_frame_time: int
-    params: VideoStreamParams
-
-
-class VideoStreamResponse(SQLModel):
-    """视频流响应"""
-
-    success: bool
-    stream_url: str | None = Field(None, description="流URL")
-    message: str | None = Field(None, description="消息")
-    error: str | None = Field(None, description="错误信息")
-
-
 class HeartbeatRequest(SQLModel):
     """心跳请求"""
 
-    client_id: str
+    client_id: str= Field(..., description="客户端唯一 ID,前端自己生成来提供")
     timestamp: int
+    page_id: str = Field(...,description="页面唯一 ID（用于更新 WebRTC 活跃时间）")
 
 
 class HeartbeatResponse(SQLModel):
@@ -129,9 +93,9 @@ class AutomationResumeRequest(SQLModel):
 class BrowserCleanupPolicy(SQLModel):
     """浏览器清理策略"""
 
-    max_idle_time: int = Field(default=1800, description="最大闲置时间（秒）")
-    max_no_heartbeat_time: int = Field(default=300, description="最大无心跳时间（秒）")
-    cleanup_interval: int = Field(default=300, description="清理检查间隔（秒）")
+    max_idle_time: int = Field(default_factory=lambda: settings.browser_session_max_idle_time, description="最大闲置时间（秒）")
+    max_no_heartbeat_time: int = Field(default_factory=lambda: settings.browser_session_max_no_heartbeat_time, description="最大无心跳时间（秒）")
+    cleanup_interval: int = Field(default_factory=lambda: settings.browser_session_cleanup_interval, description="清理检查间隔（秒）")
 
 
 class SessionLifecycleState(str, Enum):
@@ -153,7 +117,7 @@ class BrowserSessionStatus(SQLModel):
     lifecycle_state: SessionLifecycleState = Field(description="会话生命周期状态")
     last_heartbeat: int = Field(description="最后心跳时间")
     active_connections: int = Field(default=0, description="活跃连接数")
-    video_streaming: bool = Field(default=False, description="是否正在视频流")
+    video_streaming: bool = Field(default=False, description="是否正在视频流（已废弃）")
     manual_mode: bool = Field(default=False, description="是否为手动模式")
     created_at: int = Field(description="会话创建时间")
     expires_at: int | None = Field(None, description="会话过期时间")
@@ -162,9 +126,8 @@ class BrowserSessionStatus(SQLModel):
 class CreateSessionRequest(SQLModel):
     """创建会话请求"""
 
-    auto_cleanup: bool = Field(default=True, description="是否启用自动清理")
-    cleanup_policy: BrowserCleanupPolicy | None = Field(None, description="清理策略")
-    expiration_time: int | None = Field(None, description="会话过期时间（秒）")
+    # 注意：auto_cleanup, cleanup_policy 和 expiration_time 已移至系统配置
+    # 前端不再能控制这些选项，它们由管理员在系统配置中统一管理
 
 
 class CreateSessionResponse(SQLModel):
@@ -178,22 +141,30 @@ class CreateSessionResponse(SQLModel):
     message: str | None = Field(None, description="详细信息")
 
 
+class CloseSessionResponse(SQLModel):
+    """关闭会话响应"""
+
+    success: bool = Field(description="关闭是否成功")
+    session_id: str = Field(description="会话ID")
+    browser_id: int = Field(description="浏览器实例ID")
+    mid: int = Field(description="用户ID")
+    closed_at: int = Field(description="关闭时间戳")
+    message: str = Field(description="响应消息")
+
+    @property
+    def browser_id_str(self) -> str:
+        return str(self.browser_id)
+
+    @property
+    def mid_str(self) -> str:
+        return str(self.mid)
+
+
 class BrowserIdParam(SQLModel):
     """包含browser_id的基础请求模型"""
 
     browser_id: str = Field(description="浏览器实例ID")
 
-
-class VideoStreamStatusRequest(SQLModel):
-    """获取视频流状态请求"""
-
-    browser_id: str = Field(description="浏览器实例ID")
-
-
-class VideoStreamMjpegRequest(SQLModel):
-    """MJPEG视频流请求"""
-
-    browser_id: str = Field(description="浏览器实例ID")
 
 
 class ScreenshotRequest(SQLModel):
@@ -284,21 +255,9 @@ class LiveControlCommandWithBrowserId(LiveControlCommand):
     browser_id: str = Field(description="浏览器实例ID")
 
 
-class StartVideoStreamRequest(SQLModel):
-    """启动视频流请求"""
-
-    browser_id: str = Field(description="浏览器实例ID")
-    params: VideoStreamParams = Field(description="视频流参数")
-
 
 class BrowserOperationRequest(SQLModel):
     """浏览器操作请求"""
-
-    browser_id: str = Field(description="浏览器实例ID")
-
-
-class PausePluginsRequest(SQLModel):
-    """暂停插件请求"""
 
     browser_id: str = Field(description="浏览器实例ID")
 
@@ -344,26 +303,13 @@ class OperationStatusResponse(SQLModel):
     last_activity: int = Field(description="最后活动时间")
     current_operation: dict = Field(description="当前操作信息")
     priority: str = Field(description="当前优先级")
-    plugin_paused: bool = Field(description="插件是否暂停")
 
     @property
     def browser_id_str(self) -> str:
         return str(self.browser_id)
 
 
-class PluginStatusResponse(SQLModel):
-    """插件状态响应"""
 
-    browser_id: int = Field(description="浏览器实例ID")
-    plugins_paused: bool = Field(description="插件是否暂停")
-    paused_at: int | None = Field(None, description="暂停时间戳")
-    reason: str | None = Field(None, description="暂停原因")
-    total_plugins: int = Field(description="总插件数量")
-    active_plugins: int = Field(description="活跃插件数量")
-
-    @property
-    def browser_id_str(self) -> str:
-        return str(self.browser_id)
 
 
 class BrowserInfoResponse(SQLModel):
@@ -381,18 +327,6 @@ class BrowserInfoResponse(SQLModel):
         return str(self.browser_id)
 
 
-class VideoStreamStatusResponse(SQLModel):
-    """视频流状态响应"""
-
-    browser_id: int = Field(description="浏览器实例ID")
-    status: VideoStreamStatusEnum = Field(description="状态: running, stopped, error")
-    message: str = Field(description="状态消息")
-    active_connections: int = Field(default=0, description="活跃连接数")
-
-    @property
-    def browser_id_str(self) -> str:
-        return str(self.browser_id)
-
 
 class SystemStatisticsResponse(SQLModel):
     """系统统计响应"""
@@ -402,7 +336,7 @@ class SystemStatisticsResponse(SQLModel):
     idle_sessions: int = Field(description="闲置会话数")
     total_active_connections: int = Field(description="总活跃连接数")
     manual_mode_sessions: int = Field(description="手动模式会话数")
-    video_streaming_sessions: int = Field(description="视频流会话数")
+    video_streaming_sessions: int = Field(description="视频流会话数（已废弃）")
     uptime: int = Field(description="系统运行时间（秒）")
     timestamp: int = Field(description="统计时间戳")
 
@@ -470,19 +404,6 @@ class BrowserInfoData(SQLModel):
     session: dict = Field(description="会话信息")
 
 
-class VideoStreamStatusData(SQLModel):
-    """视频流状态数据"""
-
-    mid: int = Field(description="用户ID")
-    browser_id: int = Field(description="浏览器实例ID")
-    active: bool = Field(description="是否活跃")
-    last_frame_time: float = Field(description="最后帧时间戳")
-    params: dict = Field(description="流参数")
-
-    @property
-    def browser_id_str(self) -> str:
-        return str(self.browser_id)
-
 
 class ManualOperationResult(SQLModel):
     """手动操作结果"""
@@ -516,11 +437,7 @@ class OperationStatusData(SQLModel):
     heartbeat_clients: list = Field(description="心跳客户端列表")
 
 
-class PluginStatusData(SQLModel):
-    """插件状态数据"""
 
-    is_paused: bool = Field(description="是否暂停")
-    message: str = Field(description="状态消息")
 
 
 class SessionStatisticsData(SQLModel):
@@ -563,9 +480,12 @@ class BrowserSessionStatusData(SQLModel):
     created_at: int = Field(description="创建时间")
     expires_at: int | None = Field(None, description="过期时间")
     status: str = Field(description="状态")
-    cleanup_policy: Dict[str, Any] = Field(default_factory=dict, description="清理策略")
+    cleanup_policy: BrowserCleanupPolicy = Field(default_factory=BrowserCleanupPolicy, description="清理策略")
     message: str = Field(description="状态消息")
-
+    screen_width: int = Field(description="屏幕宽度")
+    screen_height: int = Field(description="屏幕高度")
+    viewport_width: int = Field(description="视口宽度")
+    viewport_height: int = Field(description="视口高度")
 
 class JavaScriptExecutionResult(SQLModel):
     """JavaScript执行结果"""
@@ -596,19 +516,11 @@ class ChineseClickPredictionDetail(SQLModel):
     debug_info: dict = Field(description="调试信息")
 
 
-# 别名，兼容旧代码
-StreamStatusResponse = VideoStreamStatusResponse
-
-
 __all__ = [
     "BrowserStatusEnum",
-    "VideoStreamStatusEnum",
     "OperationPriority",
     "BrowserStatus",
     "LiveControlCommand",
-    "VideoStreamParams",
-    "VideoStreamStatus",
-    "VideoStreamResponse",
     "HeartbeatRequest",
     "HeartbeatResponse",
     "ManualOperationRequest",
@@ -618,9 +530,8 @@ __all__ = [
     "BrowserSessionStatus",
     "CreateSessionRequest",
     "CreateSessionResponse",
+    "CloseSessionResponse",
     "BrowserIdParam",
-    "VideoStreamStatusRequest",
-    "VideoStreamMjpegRequest",
     "ScreenshotRequest",
     "BrowserStatusRequest",
     "NavigateRequest",
@@ -634,15 +545,11 @@ __all__ = [
     "AutomationResumeWithBrowserIdRequest",
     "BrowserCleanupPolicyRequest",
     "LiveControlCommandWithBrowserId",
-    "StartVideoStreamRequest",
     "BrowserOperationRequest",
-    "PausePluginsRequest",
     "ManualOperationResponse",
     "AutomationResumeResponse",
     "OperationStatusResponse",
-    "PluginStatusResponse",
     "BrowserInfoResponse",
-    "VideoStreamStatusResponse",
     "SystemStatisticsResponse",
     "CleanupPolicyResponse",
     "SystemCleanupResponse",
@@ -650,16 +557,13 @@ __all__ = [
     "SystemHealthCheckResponse",
     "EmptyRequest",
     "BrowserInfoData",
-    "VideoStreamStatusData",
     "ManualOperationResult",
     "AutomationResult",
     "OperationStatusData",
-    "PluginStatusData",
     "SessionStatisticsData",
     "CreateSessionData",
     "BrowserSessionStatusData",
     "JavaScriptExecutionResult",
     "ModelInfo",
     "ChineseClickPredictionDetail",
-    "StreamStatusResponse",
 ]

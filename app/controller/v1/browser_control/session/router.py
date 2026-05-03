@@ -1,8 +1,10 @@
 from fastapi import Depends, BackgroundTasks
 import time
+from app.config import settings
 from app.models.runtime.control import (
     HeartbeatResponse,
     CreateSessionResponse,
+    CloseSessionResponse,
     BrowserSessionStatus,
 )
 from app.models.runtime.simplified import (
@@ -10,6 +12,7 @@ from app.models.runtime.simplified import (
     SimplifiedCreateSessionRequest,
 )
 from app.models.response import StandardResponse, success_response, error_response
+from app.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserSessionRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
@@ -52,7 +55,7 @@ async def send_heartbeat(
     else:
         # 会话不存在，返回错误响应
         return error_response(
-            code=404,  # 使用404表示资源未找到
+            code=ResponseCode.SESSION_NOT_FOUND,
             msg=f"浏览器会话不存在: {response.status}",
             data=response,
         )
@@ -110,13 +113,18 @@ async def create_browser_session(
 
     # 立即返回响应，表示任务已启动
     current_time = int(time.time())
+    expiration_time = settings.browser_session_expiration_time
+    expires_at = (
+        current_time + expiration_time
+        if expiration_time
+        else None
+    )
     response_data = CreateSessionResponse(
         success=True,
         session_id=session_key,
         browser_started=False,  # 还未启动，在后台创建中
         created_at=current_time,
-        expires_at=current_time
-        + (request.expiration_time or 3600),
+        expires_at=expires_at,
         message="浏览器会话创建任务已启动，正在后台处理",
     )
 
@@ -146,13 +154,81 @@ async def browser_session_status(
 
     # 确定状态码
     if not status_data.session_exists:
-        code = 404  # 会话不存在
+        code = ResponseCode.SESSION_NOT_FOUND
         msg = "浏览器会话不存在"
     elif not status_data.browser_running:
-        code = 403  # 会话存在但浏览器未运行
+        code = ResponseCode.BROWSER_NOT_STARTED
         msg = "浏览器会话存在但未运行"
     else:
-        code = 200
+        code = ResponseCode.SUCCESS
         msg = "获取会话状态成功"
 
     return StandardResponse(code=code, msg=msg, data=status_data)
+
+
+@router.post(
+    BrowserSessionRouterPath.close,
+    response_model=StandardResponse[CloseSessionResponse],
+)
+async def close_browser_session(
+    auth_info: AuthInfo = Depends(get_auth_info_from_header),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+):
+    """
+    手动关闭浏览器会话
+
+    主动关闭指定的浏览器会话，释放相关资源。
+    如果会话不存在，将返回错误响应。
+
+    Returns:
+        CloseSessionResponse: 会话关闭结果
+    """
+    import time
+    
+    session_key = f"{auth_info.mid}_{browser_info.browser_id}"
+    
+    # 检查会话是否存在
+    if session_key not in LiveService.browser_sessions:
+        return error_response(
+            code=ResponseCode.SESSION_NOT_FOUND,
+            msg="浏览器会话不存在",
+            data=CloseSessionResponse(
+                success=False,
+                session_id=session_key,
+                browser_id=browser_info.browser_id,
+                mid=auth_info.mid,
+                closed_at=int(time.time()),
+                message="浏览器会话不存在",
+            ),
+        )
+    
+    # 释放浏览器会话
+    success = await LiveService.release_browser_session(
+        auth_info.mid, browser_info.browser_id
+    )
+    
+    current_time = int(time.time())
+    
+    if success:
+        response_data = CloseSessionResponse(
+            success=True,
+            session_id=session_key,
+            browser_id=browser_info.browser_id,
+            mid=auth_info.mid,
+            closed_at=current_time,
+            message="浏览器会话已成功关闭",
+        )
+        return success_response(data=response_data)
+    else:
+        return error_response(
+            code=ResponseCode.INTERNAL_ERROR,
+            msg="关闭浏览器会话失败",
+            data=CloseSessionResponse(
+                success=False,
+                session_id=session_key,
+                browser_id=browser_info.browser_id,
+                mid=auth_info.mid,
+                closed_at=current_time,
+                message="关闭浏览器会话时发生错误",
+            ),
+        )

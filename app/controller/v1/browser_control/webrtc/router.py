@@ -1,255 +1,257 @@
-from fastapi import Depends
-from app.models.common.depends import VerifyBrowserDependsReq
-from app.models.runtime.control import VideoStreamStatusResponse
-from app.models.runtime.webrtc import (
-    WebRTCOfferResponse,
-    WebRTCAnswerRequest,
-    WebRTCAnswerResponse,
-    WebRTCIceCandidateRequest,
-    WebRTCIceCandidateResponse,
-    WebRTCConnectionStatusResponse,
-    WebRTCCloseConnectionResponse,
-)
-from app.models.common.depends import BrowserReqAuthInfo
-from app.models.exceptions.base_exception import BrowserNotStartedException
+from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.live_service import LiveService
-from app.services.RPA_browser.webrtc_service import WebRTCService
-from app.utils.depends.session_manager import DatabaseSessionManager
+from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
+from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_webrtc_router
-import loguru
+from pydantic import BaseModel
 
 router = new_webrtc_router()
 
+class WebRTCOfferRequest(BaseModel):
+    page_index: int = 0
 
-@router.post(
-    BrowserControlRouterPath.stream_status,
-    response_model=StandardResponse[VideoStreamStatusResponse],
-)
-async def get_video_stream_status(
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-):
-    """
-    检查浏览器视频流状态
+class WebRTCAnswerRequest(BaseModel):
+    stream_key: str
+    sdp: str
+    type: str
 
-    检查浏览器实例是否启动，如果启动则返回视频流URL。
+class WebRTCIceCandidateRequest(BaseModel):
+    stream_key: str
+    candidate: str
+    sdpMid: str
+    sdpMLineIndex: int
 
-    Returns:
-        dict: 浏览器状态和视频流信息
-    """
-    browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-    # 检查浏览器会话状态
-    session_status = LiveService.get_browser_session_status(mid, browser_id)
+class WebRTCCloseRequest(BaseModel):
+    stream_key: str
 
-    if session_status.session_exists and session_status.browser_running:
-        return success_response(
-            data=VideoStreamStatusResponse(
-                browser_id=browser_id,
-                status="running",
-                message="浏览器正在运行，可以获取视频流",
-                active_connections=session_status.active_connections,
-            )
-        )
-
-
-# WebRTC 视频流接口
-
-
-@router.post(
-    BrowserControlRouterPath.webrtc_offer,
-    response_model=StandardResponse[WebRTCOfferResponse],
-)
+@router.post(BrowserControlRouterPath.webrtc_offer, summary="创建 WebRTC Offer")
 async def create_webrtc_offer(
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+    req: WebRTCOfferRequest,
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
 ):
     """
-    创建 WebRTC offer
-
-    为指定的浏览器实例创建 WebRTC offer，用于建立实时视频流连接。
-
-    Args:
-        request: 包含浏览器ID的请求
-
-    Returns:
-        WebRTCOfferResponse: 包含 SDP offer 的响应
+    创建 WebRTC Offer 以开始视频流传输。
+    此接口会在现有会话上动态启用 WebRTC（如果尚未启用）。
     """
-    browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
+    mid = browser_req.auth_info.mid
+    browser_id = browser_req.browser_id
+    
+    try:
+        # 获取或启用 WebRTC 功能
+        session = await LiveService.create_webrtc_enabled_session(mid, browser_id)
+        
+        # 获取 WebRTC 管理器并启动流
+        webrtc_mgr = session.webrtc_manager
+        logger.info(f"准备启动 WebRTC 流: mid={mid}, browser_id={browser_id}, page_index={req.page_index}")
+        
+        stream = await webrtc_mgr.start_stream(req.page_index)
+        logger.info(f"WebRTC 流已启动: {stream.stream_key}, 当前活跃流: {list(webrtc_mgr.streams.keys())}")
+        
+        offer_data = await stream.create_offer()
+        logger.info(f"Offer 创建成功: stream_key={offer_data['stream_key']}")
+        
+        return success_response(data=offer_data)
+        
+    except IndexError as e:
+        logger.error(f"页面索引超出范围: {e}")
+        return error_response(
+            code=ResponseCode.PAGE_CLOSED,
+            msg=str(e)
+        )
+    except Exception as e:
+        logger.error(f"创建 WebRTC Offer 失败: {e}")
+        return error_response(
+            code=ResponseCode.WEBRTC_OFFER_FAILED,
+            msg=str(e)
+        )
 
-
-    # 检查浏览器会话状态
-    session_status = LiveService.get_browser_session_status(mid, browser_id)
-    if not session_status.session_exists or not session_status.browser_running:
-        raise BrowserNotStartedException()
-
-    # 创建 WebRTC offer
-    offer = await WebRTCService.create_offer(mid, browser_id)
-
-    loguru.logger.info(f"WebRTC offer created successfully for browser_id={browser_id}")
-
-    return success_response(
-        data=WebRTCOfferResponse(sdp=offer["sdp"], type=offer["type"])
-    )
-
-
-@router.post(
-    BrowserControlRouterPath.webrtc_answer,
-    response_model=StandardResponse[WebRTCAnswerResponse],
-)
-async def set_webrtc_answer(
-    request: WebRTCAnswerRequest,
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+@router.post(BrowserControlRouterPath.webrtc_answer, summary="处理 WebRTC Answer")
+async def handle_webrtc_answer(
+    req: WebRTCAnswerRequest,
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
 ):
-    """
-    设置 WebRTC answer
-
-    设置从客户端接收到的 WebRTC answer SDP。
-
-    Args:
-        request: 包含浏览器ID和 SDP answer 的请求
-
-    Returns:
-        WebRTCAnswerResponse: 操作结果
-    """
-    browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-
-
-    success = await WebRTCService.set_answer(mid, browser_id, request.sdp)
-
-    if success:
-        loguru.logger.info(
-            f"WebRTC answer set successfully for browser_id={browser_id}"
-        )
-        return success_response(data=WebRTCAnswerResponse(success=success))
-    else:
-        loguru.logger.warning(
-            f"WebRTC answer failed for browser_id={browser_id}: connection not found"
-        )
+    """处理客户端返回的 SDP Answer"""
+    mid = browser_req.auth_info.mid
+    browser_id = browser_req.browser_id
+    
+    try:
+        logger.info(f"处理 WebRTC Answer: stream_key={req.stream_key}")
+        
+        # 获取会话
+        session_key = LiveService._get_session_key(mid, browser_id)
+        if session_key not in LiveService.browser_sessions:
+            logger.error(f"会话不存在: {session_key}")
+            return error_response(
+                code=ResponseCode.SESSION_NOT_FOUND,
+                msg="会话不存在"
+            )
+        
+        entry = LiveService.browser_sessions[session_key]
+        logger.info(f"会话状态: has_webrtc={entry.has_webrtc()}")
+        
+        # 检查是否启用了 WebRTC
+        if not entry.has_webrtc():
+            logger.warning(
+                f"会话 {session_key} 未启用 WebRTC。"
+                f"请先调用 /webrtc/offer 接口创建流。"
+            )
+            return error_response(
+                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE,
+                msg="WebRTC 未启用，请先调用 /webrtc/offer 创建流"
+            )
+        
+        # 查找匹配的流（stream_key 包含 page_id）
+        webrtc_mgr = entry.plugined_session.webrtc_manager
+        logger.info(f"WebRTC 管理器中的活跃流: {[s.stream_key for s in webrtc_mgr.streams.values()]}")
+        
+        stream = None
+        for s in webrtc_mgr.streams.values():
+            if s.stream_key == req.stream_key:
+                stream = s
+                break
+        
+        if not stream:
+            logger.warning(
+                f"找不到 stream_key={req.stream_key} 的 WebRTC 流。"
+                f"当前活跃流: {[s.stream_key for s in webrtc_mgr.streams.values()]}"
+            )
+            return error_response(
+                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE,
+                msg=f"WebRTC 流 {req.stream_key} 不存在，请先调用 /webrtc/offer 创建"
+            )
+        
+        logger.info(f"找到流: {stream.stream_key}, 状态: {stream.state.value}")
+        
+        # 处理 Answer
+        await stream.handle_answer(req.sdp, req.type)
+        logger.info(f"WebRTC Answer 处理成功: {stream.stream_key}")
+        return success_response(msg="WebRTC Answer 已处理")
+        
+    except Exception as e:
+        logger.error(f"处理 WebRTC Answer 失败: {e}")
         return error_response(
             code=ResponseCode.WEBRTC_ANSWER_FAILED,
-            msg="Failed to set WebRTC answer: connection not found",
+            msg=str(e)
         )
 
-
-@router.post(
-    BrowserControlRouterPath.webrtc_ice_candidate,
-    response_model=StandardResponse[WebRTCIceCandidateResponse],
-)
-async def add_webrtc_ice_candidate(
-    request: WebRTCIceCandidateRequest,
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+@router.post(BrowserControlRouterPath.webrtc_ice_candidate, summary="添加 ICE Candidate")
+async def add_ice_candidate(
+    req: WebRTCIceCandidateRequest,
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
 ):
-    """
-    添加 WebRTC ICE candidate
-
-    添加从客户端接收到的 ICE candidate 数据。
-
-    Args:
-        request: 包含浏览器ID和 ICE candidate 数据的请求
-
-    Returns:
-        WebRTCIceCandidateResponse: 操作结果
-    """
-    browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-
-    # 🔧 调试日志：打印接收到的原始 candidate 数据
-    loguru.logger.info(f"🔍 Received ICE candidate request for browser_id={browser_id}")
-    loguru.logger.info(f"🔍 Candidate data: {request.candidate}")
-    loguru.logger.info(
-        f"🔍 Candidate keys: {list(request.candidate.keys()) if isinstance(request.candidate, dict) else 'Not a dict'}"
-    )
-
-    success = await WebRTCService.add_ice_candidate(mid, browser_id, request.candidate)
-
-    if success:
-        loguru.logger.info(f"WebRTC ICE candidate added for browser_id={browser_id}")
-        return success_response(data=WebRTCIceCandidateResponse(success=success))
-    else:
-        # 这里的 false 只在解析失败时发生
-        loguru.logger.error(
-            f"WebRTC ICE candidate failed for browser_id={browser_id}: invalid format"
-        )
+    """添加 ICE Candidate"""
+    mid = browser_req.auth_info.mid
+    browser_id = browser_req.browser_id
+    
+    try:
+        # 获取会话
+        session_key = LiveService._get_session_key(mid, browser_id)
+        if session_key not in LiveService.browser_sessions:
+            return error_response(
+                code=ResponseCode.SESSION_NOT_FOUND,
+                msg="会话不存在"
+            )
+        
+        entry = LiveService.browser_sessions[session_key]
+        
+        if not entry.has_webrtc():
+            return error_response(
+                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE,
+                msg="WebRTC 未启用，请先调用 /webrtc/offer 创建流"
+            )
+        
+        # 查找匹配的流
+        webrtc_mgr = entry.plugined_session.webrtc_manager
+        stream = None
+        for s in webrtc_mgr.streams.values():
+            if s.stream_key == req.stream_key:
+                stream = s
+                break
+        
+        if not stream:
+            logger.warning(
+                f"找不到 stream_key={req.stream_key} 的 WebRTC 流。"
+                f"当前活跃流: {[s.stream_key for s in webrtc_mgr.streams.values()]}"
+            )
+            return error_response(
+                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE,
+                msg=f"WebRTC 流 {req.stream_key} 不存在"
+            )
+        
+        await stream.add_ice_candidate(req.candidate, req.sdpMid, req.sdpMLineIndex)
+        return success_response(msg="ICE Candidate 已添加")
+        
+    except Exception as e:
+        logger.error(f"添加 ICE Candidate 失败: {e}")
         return error_response(
             code=ResponseCode.WEBRTC_ICE_CANDIDATE_FAILED,
-            msg="Failed to add ICE candidate: invalid candidate format",
+            msg=str(e)
         )
 
-
-
-
-
-@router.get(
-    BrowserControlRouterPath.webrtc_status,
-    response_model=StandardResponse[WebRTCConnectionStatusResponse],
-)
-async def get_webrtc_status(
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+@router.post(BrowserControlRouterPath.webrtc_close, summary="关闭 WebRTC 流")
+async def close_webrtc_stream(
+    req: WebRTCCloseRequest,
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
 ):
-    """
-    获取 WebRTC 连接状态
-
-    获取指定浏览器实例的 WebRTC 连接状态。
-
-    Args:
-        browser_id: 浏览器ID
-
-    Returns:
-        WebRTCConnectionStatusResponse: 连接状态信息
-    """
-    browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-
-    status = WebRTCService.get_connection_status(mid, browser_id)
-
-    # 🔧 调试：显示缓存的 candidate 数量
-    connection_key = f"{mid}_{browser_id}"
-    cached_count = len(WebRTCService.ice_candidate_cache.get(connection_key, []))
-    loguru.logger.info(
-        f"🔍 Debug: Cached candidates for {connection_key}: {cached_count}"
-    )
-
-    return success_response(
-        data=WebRTCConnectionStatusResponse(
-            active=status["active"],
-            ice_connection_state=status["ice_connection_state"],
-            signaling_state=status["signaling_state"],
-        )
-    )
-
-
-@router.post(
-    BrowserControlRouterPath.webrtc_close,
-    response_model=StandardResponse[WebRTCCloseConnectionResponse],
-)
-async def close_webrtc_connection(
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-):
-    """
-    关闭 WebRTC 连接
-
-    关闭指定浏览器实例的 WebRTC 连接。
-
-    Args:
-        request: 包含浏览器ID的请求
-
-    Returns:
-        WebRTCCloseConnectionResponse: 操作结果
-    """
-    browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-
-    success = await WebRTCService.close_connection(mid, browser_id)
-
-    if success:
-        loguru.logger.info(
-            f"WebRTC connection closed successfully for browser_id={browser_id}"
-        )
-        return success_response(data=WebRTCCloseConnectionResponse(success=success))
-    else:
-        loguru.logger.warning(
-            f"WebRTC close failed for browser_id={browser_id}: connection not found"
-        )
+    """关闭指定的 WebRTC 视频流"""
+    mid = browser_req.auth_info.mid
+    browser_id = browser_req.browser_id
+    
+    try:
+        # 获取会话
+        session_key = LiveService._get_session_key(mid, browser_id)
+        if session_key not in LiveService.browser_sessions:
+            return error_response(
+                code=ResponseCode.SESSION_NOT_FOUND,
+                msg="会话不存在"
+            )
+        
+        entry = LiveService.browser_sessions[session_key]
+        
+        if not entry.has_webrtc():
+            return error_response(
+                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE,
+                msg="WebRTC 未启用，请先调用 /webrtc/offer 创建流"
+            )
+        
+        webrtc_mgr = entry.plugined_session.webrtc_manager
+        
+        # 查找匹配的流（stream_key 包含 page_id）
+        stream_to_close = None
+        for page_id, stream in webrtc_mgr.streams.items():
+            if stream.stream_key == req.stream_key:
+                stream_to_close = stream
+                break
+        
+        if not stream_to_close:
+            logger.warning(
+                f"找不到 stream_key={req.stream_key} 的 WebRTC 流。"
+                f"当前活跃流: {[s.stream_key for s in webrtc_mgr.streams.values()]}"
+            )
+            return error_response(
+                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE,
+                msg=f"WebRTC 流 {req.stream_key} 不存在"
+            )
+        
+        # 关闭流
+        await stream_to_close.close()
+        
+        # 从字典中移除
+        page_id = stream_to_close.page_id
+        if page_id in webrtc_mgr.streams:
+            del webrtc_mgr.streams[page_id]
+        
+        logger.info(f"WebRTC 流已关闭: {req.stream_key}")
+        return success_response(msg="WebRTC 流已关闭")
+        
+    except Exception as e:
+        logger.error(f"关闭 WebRTC 流失败: {e}")
         return error_response(
             code=ResponseCode.WEBRTC_CLOSE_FAILED,
-            msg="Failed to close WebRTC connection: connection not found",
+            msg=str(e)
         )

@@ -28,14 +28,36 @@ def success_response(data: DataT | None = None, msg: str = "success") -> Standar
     return StandardResponse(code=ResponseCode.SUCCESS, data=data, msg=msg)
 
 
-def error_response(code: int, msg: str = "error", data: Any | None = None) -> StandardResponse[Any]:
-    """创建错误响应"""
-    return StandardResponse(code=code, data=data, msg=msg)
+def error_response(code: ResponseCode | int, msg: str = "error", data: Any | None = None) -> StandardResponse[Any]:
+    """创建错误响应
+    
+    Args:
+        code: 错误码，推荐使用 ResponseCode 枚举
+        msg: 错误消息
+        data: 可选的附加数据
+    
+    Returns:
+        StandardResponse: 错误响应对象
+    """
+    # 如果传入的是枚举，转换为 int
+    code_value = code.value if isinstance(code, ResponseCode) else code
+    return StandardResponse(code=code_value, data=data, msg=msg)
 
 
-def custom_response(code: int, msg: str = "error", data: Any | None = None) -> StandardResponse[Any]:
-    """创建自定义错误响应"""
-    return StandardResponse(code=code, data=data, msg=msg)
+def custom_response(code: ResponseCode | int, msg: str = "error", data: Any | None = None) -> StandardResponse[Any]:
+    """创建自定义错误响应
+    
+    Args:
+        code: 错误码，推荐使用 ResponseCode 枚举
+        msg: 错误消息
+        data: 可选的附加数据
+    
+    Returns:
+        StandardResponse: 自定义响应对象
+    """
+    # 如果传入的是枚举，转换为 int
+    code_value = code.value if isinstance(code, ResponseCode) else code
+    return StandardResponse(code=code_value, data=data, msg=msg)
 
 
 __all__ = [
