@@ -38,7 +38,6 @@ class BrowserStatus(SQLModel):
     status: BrowserStatusEnum = Field(default=BrowserStatusEnum.RUNNING)
     active_connections: int = Field(default=0, description="活跃连接数")
     last_activity: int
-    last_heartbeat: int
     is_manual_mode: bool = Field(default=False, description="是否处于人工操作模式")
     current_operation_priority: OperationPriority = Field(
         default=OperationPriority.NORMAL
@@ -54,24 +53,6 @@ class LiveControlCommand(SQLModel):
     priority: OperationPriority = Field(default=OperationPriority.NORMAL)
     require_manual_mode: bool = Field(default=False, description="是否需要手动模式")
     interrupt_automation: bool = Field(default=True, description="是否中断自动化任务")
-
-
-class HeartbeatRequest(SQLModel):
-    """心跳请求"""
-
-    client_id: str= Field(..., description="客户端唯一 ID,前端自己生成来提供")
-    timestamp: int
-    page_id: str = Field(...,description="页面唯一 ID（用于更新 WebRTC 活跃时间）")
-
-
-class HeartbeatResponse(SQLModel):
-    """心跳响应"""
-
-    success: bool
-    server_timestamp: int
-    next_heartbeat_interval: int
-    status: str
-    active_clients: int = Field(default=0, description="活跃客户端数量")
 
 
 class ManualOperationRequest(SQLModel):
@@ -94,7 +75,6 @@ class BrowserCleanupPolicy(SQLModel):
     """浏览器清理策略"""
 
     max_idle_time: int = Field(default_factory=lambda: settings.browser_session_max_idle_time, description="最大闲置时间（秒）")
-    max_no_heartbeat_time: int = Field(default_factory=lambda: settings.browser_session_max_no_heartbeat_time, description="最大无心跳时间（秒）")
     cleanup_interval: int = Field(default_factory=lambda: settings.browser_session_cleanup_interval, description="清理检查间隔（秒）")
 
 
@@ -115,7 +95,6 @@ class BrowserSessionStatus(SQLModel):
     session_exists: bool = Field(description="会话是否存在")
     browser_running: bool = Field(description="浏览器是否正在运行")
     lifecycle_state: SessionLifecycleState = Field(description="会话生命周期状态")
-    last_heartbeat: int = Field(description="最后心跳时间")
     active_connections: int = Field(default=0, description="活跃连接数")
     video_streaming: bool = Field(default=False, description="是否正在视频流（已废弃）")
     manual_mode: bool = Field(default=False, description="是否为手动模式")
@@ -214,12 +193,6 @@ class JavaScriptExecuteWithParamsRequest(SQLModel):
 
 class ForceReleaseRequest(SQLModel):
     """强制释放浏览器请求"""
-
-    browser_id: str = Field(description="浏览器实例ID")
-
-
-class HeartbeatWithBrowserIdRequest(HeartbeatRequest):
-    """包含browser_id的心跳请求"""
 
     browser_id: str = Field(description="浏览器实例ID")
 
@@ -432,9 +405,7 @@ class OperationStatusData(SQLModel):
     current_priority: str = Field(description="当前优先级")
     active_connections: int = Field(description="活跃连接数")
     last_activity: int = Field(description="最后活动时间")
-    last_heartbeat: int = Field(description="最后心跳时间")
     manual_operation_duration: int = Field(description="手动操作持续时间")
-    heartbeat_clients: list = Field(description="心跳客户端列表")
 
 
 
@@ -449,9 +420,7 @@ class SessionStatisticsData(SQLModel):
     )
     manual_mode_sessions: int = Field(description="手动模式会话数")
     total_active_connections: int = Field(description="总活跃连接数")
-    total_heartbeat_clients: int = Field(description="总心跳客户端数")
     session_timeout: int = Field(description="会话超时时间")
-    heartbeat_interval: int = Field(description="心跳间隔")
     cleanup_interval: int = Field(description="清理间隔")
 
 
@@ -473,7 +442,6 @@ class BrowserSessionStatusData(SQLModel):
     session_exists: bool = Field(description="会话是否存在")
     browser_running: bool = Field(description="浏览器是否运行")
     lifecycle_state: SessionLifecycleState = Field(description="生命周期状态")
-    last_heartbeat: int = Field(description="最后心跳时间")
     active_connections: int = Field(description="活跃连接数")
     video_streaming: bool = Field(description="是否视频流中")
     manual_mode: bool = Field(description="是否手动模式")
@@ -521,8 +489,6 @@ __all__ = [
     "OperationPriority",
     "BrowserStatus",
     "LiveControlCommand",
-    "HeartbeatRequest",
-    "HeartbeatResponse",
     "ManualOperationRequest",
     "AutomationResumeRequest",
     "BrowserCleanupPolicy",
@@ -539,7 +505,6 @@ __all__ = [
     "BrowserClickRequest",
     "JavaScriptExecuteWithParamsRequest",
     "ForceReleaseRequest",
-    "HeartbeatWithBrowserIdRequest",
     "CreateSessionWithBrowserIdRequest",
     "ManualOperationWithBrowserIdRequest",
     "AutomationResumeWithBrowserIdRequest",

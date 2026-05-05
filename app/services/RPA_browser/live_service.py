@@ -20,8 +20,6 @@ from app.models.runtime.control import (
     BrowserStatusEnum,
     OperationPriority,
     BrowserStatus,
-    HeartbeatRequest,
-    HeartbeatResponse,
     ManualOperationRequest,
     AutomationResumeRequest,
     BrowserCleanupPolicy,
@@ -69,7 +67,6 @@ class LiveService:
     browser_sessions: Dict[str, BrowserSessionEntry] = {}  # key: f"{mid}_{browser_id}"
     # 默认配置
     DEFAULT_SESSION_TIMEOUT = 3600  # 1小时
-    DEFAULT_HEARTBEAT_INTERVAL = 30  # 心跳间隔30秒
     DEFAULT_CLEANUP_INTERVAL = 300  # 清理间隔5分钟
     
     # 🔑 添加会话级别的锁，防止并发操作导致的状态不一致
@@ -113,29 +110,13 @@ class LiveService:
             raise
 
     @staticmethod
-    async def _check_heartbeat_timeouts():
-        """检查心跳超时 - 使用状态机判断会话清理"""
+    async def _check_session_cleanup():
+        """检查会话清理 - 使用状态机判断会话清理"""
         current_time = int(time.time())
         sessions_to_cleanup = []
 
         # 🔑 第一阶段：收集需要清理的会话（不加锁，快速扫描）
         for session_key, entry in list(LiveService.browser_sessions.items()):
-            # 清理过期的心跳客户端（超过最大无心跳时间的客户端）
-            expired_clients = [
-                client_id
-                for client_id, last_heartbeat in entry.heartbeat_clients.items()
-                if current_time - last_heartbeat > entry.cleanup_policy.max_no_heartbeat_time
-            ]
-            
-            for client_id in expired_clients:
-                entry.heartbeat_clients.pop(client_id, None)
-                entry.active_connections.discard(client_id)
-                logger.debug(
-                    f"会话 {session_key} 清理过期客户端: {client_id}, "
-                    f"最后心跳: {last_heartbeat}, 当前时间: {current_time}"
-                )
-            
-            # 🔑 注意：已迁移到 SSE 方案，不再需要清理 WebRTC 连接
             # 使用状态机评估会话状态
             cleanup_decision = LiveService._evaluate_session_cleanup(
                 entry, current_time
@@ -175,9 +156,8 @@ class LiveService:
         
         优先级顺序（从高到低）:
         1. 过期时间检查 (expires_at)
-        2. 心跳超时检查 (heartbeat timeout)
-        3. 闲置时间检查 (idle timeout)
-        4. 直播流超时检查 (live stream timeout)
+        2. 闲置时间检查 (idle timeout)
+        3. 直播流超时检查 (live stream timeout)
         
         Returns:
             CleanupDecision: 清理决策，包含是否清理、原因、下一个状态
@@ -201,30 +181,7 @@ class LiveService:
                 priority=1
             )
         
-        # === 优先级 2: 检查心跳超时 ===
-        time_since_last_heartbeat = entry.heartbeat_duration
-        has_active_clients = entry.has_active_clients
-        
-        # 如果有活跃客户端，不会因心跳超时而清理
-        if not has_active_clients and time_since_last_heartbeat > policy.max_no_heartbeat_time:
-            # 如果处于人工操作模式，先恢复自动化
-            if entry.is_manual_mode:
-                return CleanupDecision(
-                    should_cleanup=False,
-                    reason="无活跃心跳，需要恢复自动化",
-                    next_state=SessionLifecycleState.ACTIVE,
-                    priority=2
-                )
-            
-            # 心跳超时，需要清理
-            return CleanupDecision(
-                should_cleanup=True,
-                reason=f"心跳超时 ({time_since_last_heartbeat}s > {policy.max_no_heartbeat_time}s)",
-                next_state=SessionLifecycleState.TERMINATING,
-                priority=2
-            )
-        
-        # === 优先级 3: 检查闲置超时 ===
+        # === 优先级 2: 检查闲置超时 ===
         time_since_last_activity = entry.idle_duration
         is_idle = entry.is_idle
         no_active_connections = entry.no_active_connections
@@ -282,60 +239,6 @@ class LiveService:
                 logger.warning(f"恢复自动化失败（继续清理）: {e}")
 
 
-
-    @staticmethod
-    async def handle_heartbeat(
-        mid: int, browser_id: int, heartbeat: HeartbeatRequest
-    ) -> HeartbeatResponse:
-        """处理心跳请求（带锁保护）"""
-        session_key = LiveService._get_session_key(mid, browser_id)
-        current_time = int(time.time())
-
-        # 🔑 获取会话级别的锁
-        lock = await LiveService._get_session_lock(session_key)
-        async with lock:
-            if session_key not in LiveService.browser_sessions:
-                return HeartbeatResponse(
-                    success=False,
-                    server_timestamp=current_time,
-                    next_heartbeat_interval=LiveService.DEFAULT_HEARTBEAT_INTERVAL,
-                    status="session_not_found",
-                )
-
-            entry = LiveService.browser_sessions[session_key]
-
-            # 🔑 关键修复：先清理该客户端的旧记录，避免重复计数
-            if heartbeat.client_id in entry.heartbeat_clients:
-                logger.debug(
-                    f"更新客户端 {heartbeat.client_id} 的心跳时间 "
-                    f"(之前: {entry.heartbeat_clients[heartbeat.client_id]}, 现在: {current_time})"
-                )
-            
-            # 更新心跳时间（这会覆盖旧的时间戳，不会增加数量）
-            entry.heartbeat_clients[heartbeat.client_id] = current_time
-            entry.last_heartbeat = current_time
-            entry.last_activity = current_time
-
-            # ✅ 更新指定页面的 WebRTC 活跃时间
-            if entry.has_webrtc():
-                webrtc_mgr = entry.plugined_session.webrtc_manager
-                webrtc_mgr.update_page_activity(heartbeat.page_id)
-
-            # 更新活跃连接（使用集合去重，不会重复添加）
-            entry.active_connections.add(heartbeat.client_id)
-            
-            # 🔑 计算真正的活跃客户端数：基于 WebRTC 视频流连接
-            active_stream_count = 0
-            if entry.has_webrtc():
-                active_stream_count = entry.plugined_session.webrtc_active_streams
-
-        return HeartbeatResponse(
-            success=True,
-            server_timestamp=current_time,
-            next_heartbeat_interval=LiveService.DEFAULT_HEARTBEAT_INTERVAL,
-            status="heartbeat_received",
-            active_clients=active_stream_count,  # 🔑 使用视频流连接数作为活跃客户端数
-        )
 
     @staticmethod
     async def start_manual_operation(
@@ -544,7 +447,6 @@ class LiveService:
                     browser_id=browser_id,
                     plugined_session=plugined_session,
                     last_activity=current_time,
-                    last_heartbeat=current_time,
                 )
                 
                 LiveService.browser_sessions[session_key] = entry
@@ -756,7 +658,6 @@ class LiveService:
             status=entry.status,
             active_connections=active_connections_count,
             last_activity=entry.last_activity,
-            last_heartbeat=entry.last_heartbeat,
             is_manual_mode=entry.is_manual_mode,
             current_operation_priority=entry.current_operation_priority,
         )
@@ -786,11 +687,6 @@ class LiveService:
             len(entry.webrtc_connections)
             for entry in LiveService.browser_sessions.values()
         )
-        
-        total_heartbeat_clients = sum(
-            len(entry.heartbeat_clients)
-            for entry in LiveService.browser_sessions.values()
-        )
 
         return SessionStatisticsData(
             total_sessions=total_sessions,
@@ -803,9 +699,7 @@ class LiveService:
             },
             manual_mode_sessions=manual_mode_sessions,
             total_active_connections=total_webrtc_connections,
-            total_heartbeat_clients=total_heartbeat_clients,
             session_timeout=LiveService.DEFAULT_SESSION_TIMEOUT,
-            heartbeat_interval=LiveService.DEFAULT_HEARTBEAT_INTERVAL,
             cleanup_interval=LiveService.DEFAULT_CLEANUP_INTERVAL,
         )
 
@@ -861,7 +755,6 @@ class LiveService:
             if settings.browser_session_auto_cleanup:
                 entry.cleanup_policy = BrowserCleanupPolicy(
                     max_idle_time=settings.browser_session_max_idle_time,
-                    max_no_heartbeat_time=settings.browser_session_max_no_heartbeat_time,
                     cleanup_interval=settings.browser_session_cleanup_interval,
                 )
 
@@ -928,7 +821,6 @@ class LiveService:
                 if settings.browser_session_auto_cleanup:
                     entry.cleanup_policy = BrowserCleanupPolicy(
                         max_idle_time=settings.browser_session_max_idle_time,
-                        max_no_heartbeat_time=settings.browser_session_max_no_heartbeat_time,
                         cleanup_interval=settings.browser_session_cleanup_interval,
                     )
 
@@ -962,7 +854,6 @@ class LiveService:
                 session_exists=False,
                 browser_running=False,
                 lifecycle_state=SessionLifecycleState.TERMINATED,
-                last_heartbeat=0,
                 active_connections=0,
                 video_streaming=False,
                 manual_mode=False,
@@ -993,7 +884,6 @@ class LiveService:
             session_exists=True,
             browser_running=browser_running,
             lifecycle_state=lifecycle_state,
-            last_heartbeat=entry.last_heartbeat,
             active_connections=0,
             video_streaming=False,
             manual_mode=entry.is_manual_mode,

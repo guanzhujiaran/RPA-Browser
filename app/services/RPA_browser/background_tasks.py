@@ -183,13 +183,12 @@ class BackgroundTasks:
         统一清理任务 - 每5分钟执行一次
         
         整合所有清理逻辑到一个任务中，包括：
-        1. 心跳超时检查（包含状态机评估和自动清理）
+        1. 会话状态检查（包含状态机评估和自动清理）
         2. 直播流超时检查
         
         注意：
-        - 状态机 _check_heartbeat_timeouts() 已经处理了：
+        - 状态机 _check_session_cleanup() 已经处理了：
           * 过期会话清理 (expires_at)
-          * 心跳超时清理
           * 闲置会话清理 (idle timeout)
           * 状态转换 (ACTIVE <-> IDLE)
         
@@ -202,8 +201,8 @@ class BackgroundTasks:
         try:
             logger.info("🧹 开始执行会话清理任务")
             if settings.RUNNING_MODE == ConfigRunningModeEnum.PROD:
-                # 1. 心跳超时检查（包含状态机评估和自动清理）
-                await LiveService._check_heartbeat_timeouts()
+                # 1. 会话状态检查（包含状态机评估和自动清理）
+                await LiveService._check_session_cleanup()
                 
                 logger.info("✅ 会话清理任务完成")
             else:

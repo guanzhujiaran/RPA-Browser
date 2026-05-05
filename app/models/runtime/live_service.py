@@ -32,13 +32,11 @@ class BrowserSessionEntry:
     plugined_session: PluginedSessionInfo
     active_connections: Set[str] = field(default_factory=set)
     last_activity: int = 0
-    last_heartbeat: int = 0
     status: BrowserStatusEnum = BrowserStatusEnum.RUNNING
     is_manual_mode: bool = False
     current_operation_priority: OperationPriority = OperationPriority.NORMAL
     automation_paused_time: int = 0
     manual_operation_start_time: int = 0
-    heartbeat_clients: Dict[str, int] = field(default_factory=dict)
     cleanup_policy: BrowserCleanupPolicy = field(default_factory=BrowserCleanupPolicy)
     created_at: int = field(default_factory=lambda: int(time.time()))
     lifecycle_state: SessionLifecycleState = SessionLifecycleState.ACTIVE
@@ -63,21 +61,6 @@ class BrowserSessionEntry:
         return int(time.time()) - self.last_activity
 
     @property
-    def heartbeat_duration(self) -> int:
-        """获取距离上次心跳的时长（秒）"""
-        return int(time.time()) - self.last_heartbeat
-
-    @property
-    def has_active_clients(self) -> bool:
-        """检查是否有活跃的心跳客户端"""
-        return len(self.heartbeat_clients) > 0
-
-    @property
-    def active_client_count(self) -> int:
-        """获取活跃客户端数量"""
-        return len(self.heartbeat_clients)
-
-    @property
     def is_idle(self) -> bool:
         """检查是否处于闲置状态"""
         return self.status == BrowserStatusEnum.IDLE
@@ -96,11 +79,6 @@ class BrowserSessionEntry:
         current_time = int(time.time())
         policy = self.cleanup_policy
         calculated = None
-
-        # 基于心跳的过期时间
-        if not self.has_active_clients:
-            heartbeat_expires = self.last_heartbeat + policy.max_no_heartbeat_time
-            calculated = heartbeat_expires
 
         # 基于闲置的过期时间
         if self.is_idle and self.no_active_connections:

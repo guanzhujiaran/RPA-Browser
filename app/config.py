@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     # 浏览器会话默认配置
     browser_session_auto_cleanup: bool = True  # 是否启用自动清理
     browser_session_max_idle_time: int = 1800  # 最大闲置时间（秒）
-    browser_session_max_no_heartbeat_time: int = 300  # 最大无心跳时间（秒）
     browser_session_cleanup_interval: int = 300  # 清理检查间隔（秒）
     browser_session_expiration_time: int | None = None  # 会话过期时间（秒），None表示不过期
     

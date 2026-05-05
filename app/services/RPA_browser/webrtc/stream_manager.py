@@ -39,7 +39,7 @@ class WebRTCStreamManager:
         """
         启动指定页面的 WebRTC 视频流
         
-        如果该页面已有活跃的流，则返回现有流；否则创建新流。
+        每次调用都会创建全新的流实例，不依赖缓存机制。
         
         Args:
             page_index: 页面索引（从 0 开始）
@@ -61,19 +61,22 @@ class WebRTCStreamManager:
         
         # 获取页面对象
         page = pages[page_index]
-        page_id = page._webrtc_page_id  # 从 Page 对象获取 page_id
         
-        # 如果流已存在，直接返回（确保一个 page 只有一个 WebRTC 流）
-        if page_id in self.streams:
-            existing_stream = self.streams[page_id]
-            logger.debug(f"复用现有 WebRTC 流: page_id={page_id}")
-            existing_stream.update_activity()
-            return existing_stream
+        # 如果该 page_index 已有活跃的流，先关闭它
+        if page_index in self.streams:
+            logger.info(f"检测到 page_index={page_index} 已有活跃流，先关闭旧流")
+            old_stream = self.streams[page_index]
+            try:
+                await old_stream.close()
+            except Exception as e:
+                logger.warning(f"关闭旧流时出错（继续创建新流）: {e}")
+            finally:
+                del self.streams[page_index]
         
-        # 生成 stream_key
+        # 生成 stream_key（使用 page_index 而非 page_id）
         mid = self.session.playwright_instance.mid
         browser_id = self.session.playwright_instance.browser_id
-        stream_key = f"{mid}:{browser_id}:{page_id}"
+        stream_key = f"{mid}:{browser_id}:page_{page_index}"
         
         # 创建配置
         config = WebRTCSessionConfig(
@@ -82,13 +85,13 @@ class WebRTCStreamManager:
         )
         
         # 创建并启动流
-        stream = WebRTCStreamSession(stream_key, page, config)
+        stream = WebRTCStreamSession(stream_key, page, config, page_index)
         await stream.start()
         
-        # 存储流（使用 page_id 作为 key）
-        self.streams[page_id] = stream
+        # 存储流（使用 page_index 作为 key）
+        self.streams[page_index] = stream
         
-        logger.info(f"WebRTC 流已创建: {stream_key} (page_id={page_id})")
+        logger.info(f"WebRTC 流已创建: {stream_key} (page_index={page_index})")
         
         # 启动清理任务（如果尚未启动）
         if not self._is_cleanup_running:
@@ -96,20 +99,6 @@ class WebRTCStreamManager:
             self._is_cleanup_running = True
             
         return stream
-        
-    def update_page_activity(self, page_id: str):
-        """
-        更新指定页面的活跃时间（用于 heartbeat）
-        
-        Args:
-            page_id: 页面唯一 ID
-        """
-        if page_id in self.streams:
-            stream = self.streams[page_id]
-            stream.webrtc_state.update_activity()
-            logger.debug(f"更新页面活跃时间: page_id={page_id}")
-        else:
-            logger.debug(f"页面流不存在，无法更新活跃时间: page_id={page_id}")
         
     async def get_stream(self, page) -> Optional[WebRTCStreamSession]:
         """
@@ -124,27 +113,27 @@ class WebRTCStreamManager:
         page_id = page._webrtc_page_id
         return self.streams.get(page_id)
         
-    async def close_stream_by_page(self, page):
+    async def close_stream(self, page_index: int):
         """
-        关闭指定页面的视频流
+        关闭指定页面索引的视频流
         
         Args:
-            page: Playwright Page 对象
+            page_index: 页面索引（从 0 开始）
         """
-        page_id = page._webrtc_page_id
-        if page_id not in self.streams:
-            logger.debug(f"尝试关闭不存在的流: page_id={page_id}")
+        if page_index not in self.streams:
+            logger.debug(f"尝试关闭不存在的流: page_index={page_index}")
             return
-            
-        stream = self.streams[page_id]
+        
+        stream = self.streams[page_index]
         try:
             await stream.close()
-            logger.info(f"WebRTC 流已关闭: page_id={page_id}")
+            logger.info(f"WebRTC 流已关闭: page_index={page_index}")
         except Exception as e:
-            logger.error(f"关闭 WebRTC 流时出错 page_id={page_id}: {e}")
+            logger.error(f"关闭 WebRTC 流时出错 page_index={page_index}: {e}")
         finally:
             # 从字典中移除
-            del self.streams[page_id]
+            if page_index in self.streams:
+                del self.streams[page_index]
             
     async def close_all_streams(self):
         """关闭所有视频流"""
@@ -155,8 +144,8 @@ class WebRTCStreamManager:
         
         # 并行关闭所有流
         tasks = []
-        for page_id in list(self.streams.keys()):
-            stream = self.streams[page_id]
+        for page_index in list(self.streams.keys()):
+            stream = self.streams[page_index]
             tasks.append(stream.close())
             
         if tasks:
@@ -180,25 +169,24 @@ class WebRTCStreamManager:
                 current_time = time.time()
                 streams_to_close = []
                 
-                # 检查每个流的闲置时间（使用 page 级别的活跃时间）
-                for page_id, stream in self.streams.items():
-                    # ✅ 从 webrtc_state 获取活跃时间
+                # 检查每个流的闲置时间
+                for page_index, stream in self.streams.items():
                     idle_time = stream.webrtc_state.idle_duration
                     
                     if idle_time > stream.config.idle_timeout:
                         logger.warning(
                             f"WebRTC 流因闲置超时而关闭: "
-                            f"page_id={page_id}, "
+                            f"page_index={page_index}, "
                             f"idle_time={idle_time:.0f}s, "
                             f"timeout={stream.config.idle_timeout}s"
                         )
-                        streams_to_close.append(page_id)
+                        streams_to_close.append(page_index)
                         
                 # 关闭超时的流
-                for page_id in streams_to_close:
-                    stream = self.streams[page_id]
+                for page_index in streams_to_close:
+                    stream = self.streams[page_index]
                     await stream.close()
-                    del self.streams[page_id]
+                    del self.streams[page_index]
                     
         except asyncio.CancelledError:
             logger.info("WebRTC 清理任务被取消")

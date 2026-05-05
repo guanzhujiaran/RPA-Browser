@@ -60,7 +60,6 @@ async def get_browser_session_config():
         response = BrowserSessionConfigResponse(
             auto_cleanup=settings.browser_session_auto_cleanup,
             max_idle_time=settings.browser_session_max_idle_time,
-            max_no_heartbeat_time=settings.browser_session_max_no_heartbeat_time,
             cleanup_interval=settings.browser_session_cleanup_interval,
             expiration_time=settings.browser_session_expiration_time,
         )
@@ -89,8 +88,6 @@ async def update_browser_session_config(request: UpdateBrowserSessionConfigReque
             settings.browser_session_auto_cleanup = request.auto_cleanup
         if request.max_idle_time is not None:
             settings.browser_session_max_idle_time = request.max_idle_time
-        if request.max_no_heartbeat_time is not None:
-            settings.browser_session_max_no_heartbeat_time = request.max_no_heartbeat_time
         if request.cleanup_interval is not None:
             settings.browser_session_cleanup_interval = request.cleanup_interval
         if request.expiration_time is not None:
@@ -100,7 +97,6 @@ async def update_browser_session_config(request: UpdateBrowserSessionConfigReque
             f"✅ Browser session config updated: "
             f"auto_cleanup={settings.browser_session_auto_cleanup}, "
             f"max_idle_time={settings.browser_session_max_idle_time}s, "
-            f"max_no_heartbeat_time={settings.browser_session_max_no_heartbeat_time}s, "
             f"cleanup_interval={settings.browser_session_cleanup_interval}s, "
             f"expiration_time={settings.browser_session_expiration_time}s"
         )
@@ -108,7 +104,6 @@ async def update_browser_session_config(request: UpdateBrowserSessionConfigReque
         response = BrowserSessionConfigResponse(
             auto_cleanup=settings.browser_session_auto_cleanup,
             max_idle_time=settings.browser_session_max_idle_time,
-            max_no_heartbeat_time=settings.browser_session_max_no_heartbeat_time,
             cleanup_interval=settings.browser_session_cleanup_interval,
             expiration_time=settings.browser_session_expiration_time,
         )

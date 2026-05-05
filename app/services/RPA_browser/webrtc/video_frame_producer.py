@@ -22,6 +22,8 @@ class VideoFrameProducer:
     
     使用 Playwright 的 page.screencast.start() API 捕获页面帧，
     并通过异步队列提供给消费者（WebRTCMediaTrack）。
+    
+    每次启动都会创建全新的 screencast 会话，不依赖任何缓存机制。
     """
     
     def __init__(self, page:Page, config: WebRTCSessionConfig):
@@ -47,10 +49,36 @@ class VideoFrameProducer:
             
         try:
             logger.info(f"启动 VideoFrameProducer，质量: {self.config.quality}")
-            self.screencast_session = await self.page.screencast.start(
-                on_frame=self._on_frame_callback,
-                quality=self.config.quality
-            )
+            
+            # 尝试启动 screencast，如果失败则先停止再重新启动
+            try:
+                self.screencast_session = await self.page.screencast.start(
+                    on_frame=self._on_frame_callback,
+                    quality=self.config.quality
+                )
+                logger.info("Screencast 会话启动成功")
+            except Exception as e:
+                error_msg = str(e)
+                if "already started" in error_msg.lower():
+                    logger.warning(f"检测到 Screencast 已启动，执行恢复流程: {e}")
+                    # 先停止现有的异常会话
+                    try:
+                        await self.page.screencast.stop()
+                        logger.info("已停止异常的 Screencast 会话")
+                    except Exception as stop_error:
+                        logger.warning(f"停止异常会话时出错（继续重试）: {stop_error}")
+                    
+                    # 重新尝试启动
+                    logger.info("重新尝试启动 Screencast 会话...")
+                    self.screencast_session = await self.page.screencast.start(
+                        on_frame=self._on_frame_callback,
+                        quality=self.config.quality
+                    )
+                    logger.info("Screencast 会话重新启动成功")
+                else:
+                    # 其他错误直接抛出
+                    raise
+            
             self._is_running = True
             
             # 初始化最后一帧为绿屏（避免一开始返回 None）
@@ -69,6 +97,7 @@ class VideoFrameProducer:
             return
             
         try:
+            # 停止 screencast session
             if self.screencast_session:
                 await self.screencast_session.stop()
                 logger.info("Screencast session 已停止")

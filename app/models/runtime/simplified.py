@@ -7,7 +7,6 @@ Runtime 模块 - 简化版模型
 from sqlmodel import SQLModel, Field
 
 from app.models.runtime.control import (
-    HeartbeatRequest,
     CreateSessionRequest,
     ManualOperationRequest,
     AutomationResumeRequest,
@@ -15,11 +14,6 @@ from app.models.runtime.control import (
     BrowserCleanupPolicy,
     EmptyRequest,
 )
-
-
-class SimplifiedHeartbeatRequest(HeartbeatRequest):
-    """简化版心跳请求（不包含browser_id）"""
-    pass
 
 
 class SimplifiedCreateSessionRequest(CreateSessionRequest):
@@ -95,7 +89,6 @@ class SimplifiedPausePluginsRequest(SQLModel):
 
 
 __all__ = [
-    "SimplifiedHeartbeatRequest",
     "SimplifiedCreateSessionRequest",
     "SimplifiedManualOperationRequest",
     "SimplifiedAutomationResumeRequest",

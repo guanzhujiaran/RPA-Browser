@@ -30,7 +30,6 @@ class BrowserFingerprintRouterPath(StrEnum):
 class BrowserSessionRouterPath(StrEnum):
     """会话管理路由路径 - prefix: /browser/session"""
 
-    heartbeat = "/heartbeat"
     create = "/create"
     status = "/status"
     close = "/close"

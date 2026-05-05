@@ -50,7 +50,6 @@ class BrowserSessionConfigResponse(SQLModel):
     """浏览器会话配置响应"""
     auto_cleanup: bool = Field(description="是否启用自动清理")
     max_idle_time: int = Field(description="最大闲置时间（秒）")
-    max_no_heartbeat_time: int = Field(description="最大无心跳时间（秒）")
     cleanup_interval: int = Field(description="清理检查间隔（秒）")
     expiration_time: int | None = Field(None, description="会话过期时间（秒），None表示不过期")
 
@@ -59,7 +58,6 @@ class UpdateBrowserSessionConfigRequest(SQLModel):
     """更新浏览器会话配置请求"""
     auto_cleanup: bool | None = Field(None, description="是否启用自动清理")
     max_idle_time: int | None = Field(None, description="最大闲置时间（秒）", ge=60)
-    max_no_heartbeat_time: int | None = Field(None, description="最大无心跳时间（秒）", ge=30)
     cleanup_interval: int | None = Field(None, description="清理检查间隔（秒）", ge=60)
     expiration_time: int | None = Field(None, description="会话过期时间（秒），None表示不过期", ge=300)
 

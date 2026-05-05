@@ -2,13 +2,11 @@ from fastapi import Depends, BackgroundTasks
 import time
 from app.config import settings
 from app.models.runtime.control import (
-    HeartbeatResponse,
     CreateSessionResponse,
     CloseSessionResponse,
     BrowserSessionStatus,
 )
 from app.models.runtime.simplified import (
-    SimplifiedHeartbeatRequest,
     SimplifiedCreateSessionRequest,
 )
 from app.models.response import StandardResponse, success_response, error_response
@@ -21,45 +19,6 @@ from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_session_router
 
 router = new_session_router()
-
-
-@router.post(
-    BrowserSessionRouterPath.heartbeat,
-    response_model=StandardResponse[HeartbeatResponse],
-)
-async def send_heartbeat(
-    request: SimplifiedHeartbeatRequest,
-    auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-):
-    """
-    发送心跳信号
-
-    客户端定期发送心跳以保持连接活跃，防止会话被清理。
-    支持多客户端同时连接同一个浏览器实例。
-
-    Args:
-        request: 心跳数据请求
-
-    Returns:
-        HeartbeatResponse: 心跳响应，包含下次心跳间隔和状态信息
-    """
-    # 处理心跳
-    response = await LiveService.handle_heartbeat(
-        auth_info.mid, browser_info.browser_id, request
-    )
-
-    # 根据心跳结果决定返回成功还是错误响应
-    if response.success:
-        return success_response(data=response)
-    else:
-        # 会话不存在，返回错误响应
-        return error_response(
-            code=ResponseCode.SESSION_NOT_FOUND,
-            msg=f"浏览器会话不存在: {response.status}",
-            data=response,
-        )
-
 
 @router.post(
     BrowserSessionRouterPath.create,

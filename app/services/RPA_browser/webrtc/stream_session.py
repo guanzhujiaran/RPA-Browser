@@ -53,25 +53,26 @@ class WebRTCStreamSession:
     每个页面对应一个独立的 WebRTCStreamSession 实例，确保流之间互不干扰。
     """
     
-    def __init__(self, stream_key: str, page, config: WebRTCSessionConfig):
+    def __init__(self, stream_key: str, page, config: WebRTCSessionConfig, page_index: int = 0):
         """
         初始化 WebRTC 流会话
         
         Args:
-            stream_key: 流的唯一标识符，格式: {mid}:{browser_id}:{page_id}
+            stream_key: 流的唯一标识符，格式: {mid}:{browser_id}:page_{page_index}
             page: Playwright Page 对象
             config: WebRTC 会话配置
+            page_index: 页面索引（从 0 开始）
         """
         self.stream_key = stream_key
         self.page = page
-        self.page_id = page._webrtc_page_id  # 从 Page 对象获取 page_id
+        self.page_index = page_index
         self.config = config
         self.pc = RTCPeerConnection()
         self.producer = VideoFrameProducer(page, config)
         self.track: Optional[WebRTCMediaTrack] = None
         self.state = WebRTCStreamState.INITIALIZING
         
-        # ✅ 初始化或获取 Page 的 WebRTC 状态管理器
+        # 初始化或获取 Page 的 WebRTC 状态管理器
         if not hasattr(page, '_webrtc_state'):
             page._webrtc_state = PageWebRTCState(page)
         self.webrtc_state: PageWebRTCState = page._webrtc_state
@@ -83,7 +84,7 @@ class WebRTCStreamSession:
         self.pc.on("iceconnectionstatechange")(self._on_ice_state_change)
         self.pc.on("connectionstatechange")(self._on_connection_state_change)
         
-        logger.info(f"WebRTCStreamSession 已创建: {stream_key} (page_id={self.page_id})")
+        logger.info(f"WebRTCStreamSession 已创建: {stream_key} (page_index={self.page_index})")
         
     async def start(self):
         """
@@ -226,7 +227,7 @@ class WebRTCStreamSession:
         logger.info(f"关闭 WebRTC 流: {self.stream_key}")
         
         try:
-            # 停止帧生产者（这会停止 screencast）
+            # 停止帧生产者
             if self.producer:
                 logger.info(f"正在停止 VideoFrameProducer...")
                 await self.producer.stop()
@@ -283,13 +284,13 @@ class WebRTCStreamSession:
     @property
     def stream_info(self) -> WebRTCStreamInfo:
         """获取流信息"""
-        # ✅ 从 webrtc_state 获取活跃时间
+        # 从 webrtc_state 获取活跃时间
         last_activity = self.webrtc_state.last_activity
         
         return WebRTCStreamInfo(
             stream_key=self.stream_key,
-            page_index=0,  # TODO: 需要从外部传入 page_index
+            page_index=self.page_index,
             state=self.state,
-            created_at=last_activity,  # 简化处理
+            created_at=last_activity,
             last_activity=last_activity
         )
