@@ -17,20 +17,14 @@ from app.models.runtime.api import (
     BrowserFingerprintQueryParams,
 )
 from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
-from app.models.core.plugin.models import PluginBaseModel
 from app.services.RPA_browser.base.base_engines import BaseUndetectedPlaywright
-from app.services.site_rpa_operation.base.base_plugin import (
-    BasePlugin,
-    PluginMethodType,
-)
-from app.services.site_rpa_operation.plugins import PluginTypeEnum
 from app.utils.decorator import log_class_decorator
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.services.RPA_browser.browser_db_service import BrowserDBService
 from pydantic import computed_field
 from app.config import settings
 from app.services.RPA_browser.webrtc.stream_manager import WebRTCStreamManager
-
+from loguru import logger
 # 🔑 全局锁字典，用于保护浏览器创建过程（key: f"{mid}_{browser_id}"）
 _browser_creation_locks: Dict[str, asyncio.Lock] = {}
 _global_browser_lock = asyncio.Lock()  # 用于保护 _browser_creation_locks 字典本身
@@ -503,8 +497,18 @@ class PluginedSessionInfo(SessionInfo):
                 if not fingerprint_info:
                     raise ValueError("浏览器指纹信息不存在")
 
+                # 🔑 调试日志：记录指纹信息类型和字段
+                logger.debug(f"指纹信息类型: {type(fingerprint_info).__name__}")
+                fingerprint_dict = fingerprint_info.model_dump(exclude_none=True)
+                logger.debug(f"指纹信息字段: {list(fingerprint_dict.keys())}")
+                
+                # 🔑 确保 fingerprint 字段存在（如果为 None 会被 exclude_none 排除）
+                if 'fingerprint' not in fingerprint_dict:
+                    logger.warning(f"⚠️ fingerprint 字段不存在或为 None，设置为默认值 0")
+                    fingerprint_dict['fingerprint'] = 0
+
                 fingerprint_params = BaseFingerprintBrowserInitParams(
-                    **fingerprint_info.model_dump(exclude_none=True)
+                    **fingerprint_dict
                 )
 
                 playwright_instance = BaseUndetectedPlaywright(

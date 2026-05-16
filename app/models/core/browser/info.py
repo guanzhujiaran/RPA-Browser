@@ -4,29 +4,18 @@ Core 模块 - 浏览器信息模型
 定义用户浏览器信息、默认设置等数据库模型。
 """
 
-from typing import TYPE_CHECKING
-
 from app.config import settings
 from pydantic import computed_field
 from sqlalchemy import BIGINT
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, SQLModel
 
 from app.models.core.browser.fingerprint import (
     BaseFingerprintBrowserInitParams,
     PlatformEnum,
     BrowserEnum,
-    LogPluginLogLevelEnum,
 )
 from app.models.base.base_sqlmodel import BaseSQLModel
 from snowflake import SnowflakeGenerator
-
-if TYPE_CHECKING:
-    from app.models.core.plugin.models import (
-        LogPluginModel,
-        PageLimitPluginModel,
-        RandomWaitPluginModel,
-        RetryPluginModel,
-    )
 
 # 初始化雪花ID生成器
 snowflake_generator = SnowflakeGenerator(
@@ -61,12 +50,6 @@ class UserBrowserInfoBase(UserBrowserUserId):
 
 class UserBrowserServerSideDefaultSetting(UserBrowserInfoBase):
     default_proxy_server:str | None = settings.default_proxy_server
-    default_log_level:LogPluginLogLevelEnum | None = LogPluginLogLevelEnum.INFO
-    default_max_pages:int | None = 5
-    default_retry_times:int | None = 3
-    default_retry_delay:float | None = 30.0
-    default_min_wait:float | None = 1.0
-    default_max_wait:float | None = 30.0
     default_platform:PlatformEnum | None = PlatformEnum.windows
     default_browser:BrowserEnum | None = BrowserEnum.chrome
     default_lang:str | None = "zh-CN"
@@ -78,27 +61,11 @@ class UserBrowserServerSideDefaultSetting(UserBrowserInfoBase):
 class UserBrowserDefaultSetting(UserBrowserServerSideDefaultSetting, table=True):
     """用户浏览器默认设置模型
 
-    这些配置项分别对应各个功能模块的默认参数：
-    - default_max_pages: PageLimitPluginModel.max_pages 的默认值
-    - default_retry_times: RetryPluginModel.retry_times 的默认值
-    - default_retry_delay: RetryPluginModel.delay 的默认值
-    - default_min_wait: RandomWaitPluginModel.min_wait 的默认值
-    - default_max_wait: RandomWaitPluginModel.max_wait 的默认值
+    注意：原有的插件配置（重试、等待、页面限制等）已移除，
+    现在统一通过“自定义动作”或“工作流”来实现。
+    此处仅保留最基础的指纹和浏览器环境默认值。
     """
     default_proxy_server: str | None = Field(default=None)
-    # === 插件默认配置 ===
-    default_log_level: LogPluginLogLevelEnum | None = Field(...,description="默认日志级别")
-    default_max_pages: int | None = Field(..., ge=1, description="默认最大页面数")
-    default_retry_times: int | None = Field(..., ge=0, description="默认重试次数")
-    default_retry_delay: float | None = Field(
-        ..., ge=0, description="默认重试延迟(秒)"
-    )
-    default_min_wait: float | None = Field(
-        ..., ge=0, description="默认最小等待(秒)"
-    )
-    default_max_wait: float | None = Field(
-        ..., ge=0, description="默认最大等待(秒)"
-    )
 
     # === 指纹默认配置 ===
     default_platform: PlatformEnum | None = Field(
@@ -150,22 +117,6 @@ class UserBrowserInfo(UserBrowserInfoWithoutPlugin, table=True):
         description="用户自定义的浏览器名称",
     )
 
-    # 建立一对一关系
-    log_plugin: "LogPluginModel" = Relationship(
-        back_populates="log_browser_info", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-    page_limit_plugin: "PageLimitPluginModel" = Relationship(
-        back_populates="page_limit_browser_info",
-        sa_relationship_kwargs={"lazy": "selectin"},
-    )
-    random_wait_plugin: "RandomWaitPluginModel" = Relationship(
-        back_populates="random_wait_browser_info",
-        sa_relationship_kwargs={"lazy": "selectin"},
-    )
-    retry_plugin: "RetryPluginModel" = Relationship(
-        back_populates="retry_browser_info", sa_relationship_kwargs={"lazy": "selectin"}
-    )
-
 
 # ============ UserBrowserDefaultSetting 请求/响应模型 ============
 
@@ -174,13 +125,6 @@ class UserBrowserDefaultSettingRequest(SQLModel):
     """用户浏览器默认设置请求模型"""
 
     default_proxy_server: str | None = None
-    # === 插件默认配置 ===
-    default_log_level: LogPluginLogLevelEnum | None = None
-    default_max_pages: int | None = None
-    default_retry_times: int | None = None
-    default_retry_delay: float | None = None
-    default_min_wait: float | None = None
-    default_max_wait: float | None = None
 
     # === 指纹默认配置 ===
     default_platform: PlatformEnum | None = None
@@ -197,14 +141,6 @@ class UserBrowserDefaultSettingRequest(SQLModel):
 class UserBrowserDefaultSettingResponse(SQLModel):
     """用户浏览器默认设置响应模型"""
     default_proxy_server: str | None = None
-
-    # === 插件默认配置 ===
-    default_log_level: LogPluginLogLevelEnum | None = None
-    default_max_pages: int | None = None
-    default_retry_times: int | None = None
-    default_retry_delay: float | None = None
-    default_min_wait: float | None = None
-    default_max_wait: float | None = None
 
     # === 指纹默认配置 ===
     default_platform: PlatformEnum | None = None

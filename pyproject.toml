@@ -35,6 +35,8 @@ dependencies = [
     "av>=14.0.0",
     "numpy>=1.26.0",
     "Pillow>=10.0.0",
+    "alembic>=1.18.4",
+    "pymysql>=1.1.2",
 ]
 [tool.uv]
 python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
@@ -42,3 +44,4 @@ python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-st
 [[tool.uv.index]]
 name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true

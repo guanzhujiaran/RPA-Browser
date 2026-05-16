@@ -103,3 +103,12 @@ class FingerprintLimitExceededException(BaseException):
 
     def __init__(self, max_fingerprints: int):
         self.msg = self.msg.format(max=max_fingerprints)
+
+
+class NameAlreadyExistsException(BaseException):
+    """名称已存在异常（同一用户下）"""
+    code = ResponseCode.BAD_REQUEST
+    msg = "您已存在名为 '{name}' 的{name_type}，请使用其他名称"
+
+    def __init__(self, name: str, name_type: str = "项目"):
+        self.msg = self.msg.format(name=name, name_type=name_type)

@@ -76,12 +76,26 @@ browser_control_operation_router = RouterInfo(
     description="自动化控制 - 暂停/恢复",
 )
 
-# 操作管理子路由
-browser_control_execution_router = RouterInfo(
+# 操作管理子路由 - 分为三个独立的 router
+browser_control_action_router = RouterInfo(
     version_tag=DEFAULT_VERSION,
     router_tag=RouterTag.action_management,
     router_prefix=RouterPrefix.BROWSER_CONTROL,
-    description="操作管理 - 操作执行、插件、工作流",
+    description="自定义操作管理 - Custom Action CRUD",
+)
+
+browser_control_workflow_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.workflow_management,
+    router_prefix=RouterPrefix.BROWSER_CONTROL,
+    description="工作流管理 - Workflow CRUD 和执行",
+)
+
+browser_control_plugin_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.plugin_management,
+    router_prefix=RouterPrefix.BROWSER_CONTROL,
+    description="插件挂载管理 - Plugin 生命周期钩子配置",
 )
 
 
@@ -124,7 +138,9 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_router,  # /browser/control
     # browser_control 子模块
     browser_control_operation_router,
-    browser_control_execution_router,
+    browser_control_action_router,      # 自定义操作管理
+    browser_control_workflow_router,    # 工作流管理
+    browser_control_plugin_router,      # 插件挂载管理
     browser_control_security_router,
     browser_control_system_router,
 ]
@@ -173,7 +189,9 @@ __all__ = [
     "browser_session_router",
     "browser_control_router",
     "browser_control_operation_router",
-    "browser_control_execution_router",
+    "browser_control_action_router",
+    "browser_control_workflow_router",
+    "browser_control_plugin_router",
     "browser_control_webrtc_router",
     "browser_control_session_router",
     "admin_router",

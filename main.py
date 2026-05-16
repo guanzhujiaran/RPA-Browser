@@ -5,12 +5,16 @@ from pathlib import Path
 import fastapi_cdn_host
 import uvicorn
 import sys
+import logging
 from app.routes import setup_routes
 from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
 from app.models.consts.enums import ConfigRunningModeEnum
 from scripts.initd.main import init_dependencies
+from app.utils.alembic_migration import run_alembic_migrations
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -31,6 +35,26 @@ async def lifespan(app: FastAPI):
         except Exception:
             with suppress(Exception):
                 asyncio.set_event_loop(asyncio.SelectorEventLoop())
+
+    # 执行 Alembic 数据库迁移
+    if settings.alembic_auto_migrate:
+        logger.info("🔄 开始数据库迁移检查...")
+        try:
+            # 在开发模式下启用自动生成迁移
+            auto_generate = (settings.RUNNING_MODE == ConfigRunningModeEnum.DEV)
+            
+            run_alembic_migrations(
+                upgrade_to=settings.alembic_upgrade_target,
+                auto_upgrade=True,
+                auto_generate=auto_generate,  # 开发环境自动检测并生成迁移
+            )
+            logger.info("✅ 数据库迁移检查完成")
+        except Exception as e:
+            logger.error(f"❌ 数据库迁移失败: {e}")
+            logger.error("   应用将继续启动，但可能存在数据不一致风险")
+            logger.error("   建议：手动执行 './scripts/alembic_manage.sh upgrade' 进行迁移")
+    else:
+        logger.info("ℹ️  跳过自动数据库迁移（alembic_auto_migrate=False）")
 
     await init_dependencies()
 

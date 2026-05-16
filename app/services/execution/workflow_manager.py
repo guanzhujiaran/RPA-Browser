@@ -1,3 +1,14 @@
+import sys
+
+# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+    class StrEnum(str, Enum):
+        """Python 3.10 兼容的 StrEnum"""
+        pass
+
 """
 工作流管理器
 
@@ -10,22 +21,13 @@
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
-from enum import Enum
-
-
-# 兼容 Python 3.10 的 StrEnum
-class StrEnum(str, Enum):
-    """字符串枚举，兼容 Python 3.10"""
-    def __str__(self):
-        return str(self.value)
-
 
 import json
 import uuid
 import time
 from loguru import logger
 
-from app.services.execution.action_registry import Workflow, WorkflowStep
+from app.services.execution.execution_engine import Workflow, WorkflowStep
 
 
 class WorkflowTriggerType(StrEnum):

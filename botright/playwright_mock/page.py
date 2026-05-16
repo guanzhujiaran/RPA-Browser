@@ -3,7 +3,17 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 from re import Pattern
-from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Sequence, TypedDict, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    TypedDict,
+    Union,
+)
 
 from playwright._impl._async_base import AsyncEventContextManager
 from playwright._impl._impl_to_api_mapping import ImplToApiMapping
@@ -26,7 +36,17 @@ from botright.modules import Faker, hcaptcha  # , geetest
 if TYPE_CHECKING:
     from .browser import BrowserContext
 
-from . import ElementHandle, Frame, FrameLocator, JSHandle, Keyboard, Locator, Mouse, Request, Route
+from . import (
+    ElementHandle,
+    Frame,
+    FrameLocator,
+    JSHandle,
+    Keyboard,
+    Locator,
+    Mouse,
+    Request,
+    Route,
+)
 
 mapping = ImplToApiMapping()
 
@@ -116,7 +136,11 @@ class Page(PlaywrightPage):
 
     def __eq__(self, obj):
         if isinstance(obj, Page):
-            if (obj._page == self._page) and (obj.browser == self.browser) and (obj.faker == self.faker):
+            if (
+                (obj._page == self._page)
+                and (obj.browser == self.browser)
+                and (obj.faker == self.faker)
+            ):
                 return True
         return False
 
@@ -147,27 +171,34 @@ class Page(PlaywrightPage):
         # Opening CDP Session
         self.cdp = await self.browser.new_cdp_session(self)
 
-        nav_hints_platforms = {"Windows": "Win32", "macOS": "MacIntel", "Linux": "Linux x86_64"}
+        nav_hints_platforms = {
+            "Windows": "Win32",
+            "macOS": "MacIntel",
+            "Linux": "Linux x86_64",
+        }
 
         if self.browser.mask_fingerprint:
             user_agent_metadata = {
-                "brands": self.fingerprint.navigator.brands,
-                "fullVersionList": self.fingerprint.navigator.full_version_list,
-                "fullVersion": self.fingerprint.navigator.full_version,
-                "platform": self.fingerprint.navigator.platform.name,
-                "architecture": self.fingerprint.navigator.platform.architecture,
-                "bitness": self.fingerprint.navigator.platform.bitness,
-                "platformVersion": self.fingerprint.navigator.platform.version,
-                "model": self.fingerprint.navigator.platform.model,
+                "brands": self.fingerprint.navigator.userAgentData.get("brands",[]),
+                "fullVersionList": self.fingerprint.navigator.userAgentData.get('fullVersionList',[]),
+                "fullVersion": self.fingerprint.navigator.userAgentData.get('uaFullVersion','144.0.7559.109'),
+                "platform": self.fingerprint.navigator.platform,
+                "architecture": self.fingerprint.navigator.userAgentData.get('architecture','x86'),
+                "bitness": self.fingerprint.navigator.userAgentData.get('bitness','64'),
+                "platformVersion": self.fingerprint.navigator.userAgentData.get('platformVersion','10.0.0'),
+                "model": self.fingerprint.navigator.userAgentData.get('model',''),
                 "mobile": False,
             }
 
             await self.cdp.send(
                 "Emulation.setUserAgentOverride",
                 {
-                    "userAgent": self.fingerprint.navigator.user_agent,
+                    "userAgent": self.fingerprint.navigator.userAgent,
                     "acceptLanguage": "en-US",
-                    "platform": nav_hints_platforms.get(self.fingerprint.navigator.platform.name, self.fingerprint.navigator.platform.name),
+                    "platform": nav_hints_platforms.get(
+                        self.fingerprint.navigator.platform,
+                        self.fingerprint.navigator.platform,
+                    ),
                     "userAgentMetadata": user_agent_metadata,
                 },
             )
@@ -175,9 +206,12 @@ class Page(PlaywrightPage):
             await self.cdp.send(
                 "Network.setUserAgentOverride",
                 {
-                    "userAgent": self.fingerprint.navigator.user_agent,
+                    "userAgent": self.fingerprint.navigator.userAgent,
                     "acceptLanguage": "en-US",
-                    "platform": nav_hints_platforms.get(self.fingerprint.navigator.platform.name, self.fingerprint.navigator.platform.name),
+                    "platform": nav_hints_platforms.get(
+                        self.fingerprint.navigator.platform,
+                        self.fingerprint.navigator.platform,
+                    ),
                     "userAgentMetadata": user_agent_metadata,
                 },
             )
@@ -205,7 +239,11 @@ class Page(PlaywrightPage):
         """
         return await self.hcaptcha_solver.solve_hcaptcha(rq_data=rq_data)
 
-    async def get_hcaptcha(self, site_key: Optional[str] = "00000000-0000-0000-0000-000000000000", rq_data: Optional[str] = None) -> Optional[str]:
+    async def get_hcaptcha(
+        self,
+        site_key: Optional[str] = "00000000-0000-0000-0000-000000000000",
+        rq_data: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Get a hCaptcha Key with Sitekey & rqData
 
@@ -216,7 +254,9 @@ class Page(PlaywrightPage):
         Returns:
             Optional[str]: The hCaptcha token if the challenge is retrieved successfully, otherwise None.
         """
-        return await self.hcaptcha_solver.get_hcaptcha(site_key=site_key, rq_data=rq_data)
+        return await self.hcaptcha_solver.get_hcaptcha(
+            site_key=site_key, rq_data=rq_data
+        )
 
     async def solve_geetest(self, mode: Optional[str] = "canny") -> str:
         """
@@ -231,8 +271,9 @@ class Page(PlaywrightPage):
         # return await geetest.solve_geetest(self, mode=mode)
         raise NotImplementedError("Geetest challenge currently unavailable!")
 
-
-    async def close(self, run_before_unload: Optional[bool] = None, reason: Optional[str] = None):
+    async def close(
+        self, run_before_unload: Optional[bool] = None, reason: Optional[str] = None
+    ):
         await self._origin_close(run_before_unload=run_before_unload, reason=reason)
 
         if self in self.browser.pages:
@@ -246,7 +287,12 @@ class Page(PlaywrightPage):
         page = Page(_page, self.browser, self.faker)
         return page
 
-    def frame(self, name: Optional[str] = None, *, url: Optional[Union[str, Pattern[str], Callable[[str], bool]]] = None) -> Optional[Frame]:
+    def frame(
+        self,
+        name: Optional[str] = None,
+        *,
+        url: Optional[Union[str, Pattern[str], Callable[[str], bool]]] = None,
+    ) -> Optional[Frame]:
         _frame = self._origin_frame(name=name, url=url)
         if not _frame:
             return None
@@ -255,8 +301,12 @@ class Page(PlaywrightPage):
         return frame
 
     # ElementHandle
-    async def query_selector(self, selector: str, strict: Optional[bool] = False) -> Optional[ElementHandle]:
-        _element_handle = await self._origin_query_selector(selector=selector, strict=strict)
+    async def query_selector(
+        self, selector: str, strict: Optional[bool] = False
+    ) -> Optional[ElementHandle]:
+        _element_handle = await self._origin_query_selector(
+            selector=selector, strict=strict
+        )
         if not _element_handle:
             return None
 
@@ -273,22 +323,43 @@ class Page(PlaywrightPage):
         return element_handles
 
     async def wait_for_selector(
-        self, selector: str, state: Optional[Literal["attached", "detached", "hidden", "visible"]] = None, strict: Optional[bool] = False, timeout: Optional[float] = None
+        self,
+        selector: str,
+        state: Optional[Literal["attached", "detached", "hidden", "visible"]] = None,
+        strict: Optional[bool] = False,
+        timeout: Optional[float] = None,
     ) -> Optional[ElementHandle]:
-        _element_handle = await self._origin_wait_for_selector(selector=selector, state=state, strict=strict, timeout=timeout)
+        _element_handle = await self._origin_wait_for_selector(
+            selector=selector, state=state, strict=strict, timeout=timeout
+        )
         if not _element_handle:
             return None
 
         element_handle = ElementHandle(_element_handle, self)
         return element_handle
 
-    async def add_script_tag(self, content: Optional[str] = None, path: Optional[Union[str, Path]] = None, type: Optional[str] = None, url: Optional[str] = None) -> ElementHandle:
-        _element_handle = await self._origin_add_script_tag(content=content, path=path, type=type, url=url)
+    async def add_script_tag(
+        self,
+        content: Optional[str] = None,
+        path: Optional[Union[str, Path]] = None,
+        type: Optional[str] = None,
+        url: Optional[str] = None,
+    ) -> ElementHandle:
+        _element_handle = await self._origin_add_script_tag(
+            content=content, path=path, type=type, url=url
+        )
         element_handle = ElementHandle(_element_handle, self)
         return element_handle
 
-    async def add_style_tag(self, content: Optional[str] = None, path: Optional[Union[str, Path]] = None, url: Optional[str] = None) -> ElementHandle:
-        _element_handle = await self._origin_add_style_tag(content=content, path=path, url=url)
+    async def add_style_tag(
+        self,
+        content: Optional[str] = None,
+        path: Optional[Union[str, Path]] = None,
+        url: Optional[str] = None,
+    ) -> ElementHandle:
+        _element_handle = await self._origin_add_style_tag(
+            content=content, path=path, url=url
+        )
         element_handle = ElementHandle(_element_handle, self)
         return element_handle
 
@@ -301,21 +372,33 @@ class Page(PlaywrightPage):
         has_text: Optional[Union[str, Pattern[str]]] = None,
         has_not_text: Optional[Union[str, Pattern[str]]] = None,
     ) -> Locator:
-        _locator = self._origin_locator(selector=selector, has=has, has_not=has_not, has_text=has_text, has_not_text=has_not_text)
+        _locator = self._origin_locator(
+            selector=selector,
+            has=has,
+            has_not=has_not,
+            has_text=has_text,
+            has_not_text=has_not_text,
+        )
         locator = Locator(_locator, self)
         return locator
 
-    def get_by_alt_text(self, text: Union[str, Pattern[str]], exact: Optional[bool] = False) -> Locator:
+    def get_by_alt_text(
+        self, text: Union[str, Pattern[str]], exact: Optional[bool] = False
+    ) -> Locator:
         _locator = self._origin_get_by_alt_text(text=text, exact=exact)
         locator = Locator(_locator, self)
         return locator
 
-    def get_by_label(self, text: Union[str, Pattern[str]], exact: Optional[bool] = False) -> Locator:
+    def get_by_label(
+        self, text: Union[str, Pattern[str]], exact: Optional[bool] = False
+    ) -> Locator:
         _locator = self._origin_get_by_label(text=text, exact=exact)
         locator = Locator(_locator, self)
         return locator
 
-    def get_by_placeholder(self, text: Union[str, Pattern[str]], exact: Optional[bool] = False) -> Locator:
+    def get_by_placeholder(
+        self, text: Union[str, Pattern[str]], exact: Optional[bool] = False
+    ) -> Locator:
         _locator = self._origin_get_by_placeholder(text=text, exact=exact)
         locator = Locator(_locator, self)
         return locator
@@ -334,7 +417,16 @@ class Page(PlaywrightPage):
         exact: Optional[bool] = None,
     ) -> Locator:
         _locator = self._origin_get_by_role(
-            role=role, checked=checked, disabled=disabled, expanded=expanded, include_hidden=include_hidden, level=level, name=name, pressed=pressed, selected=selected, exact=exact
+            role=role,
+            checked=checked,
+            disabled=disabled,
+            expanded=expanded,
+            include_hidden=include_hidden,
+            level=level,
+            name=name,
+            pressed=pressed,
+            selected=selected,
+            exact=exact,
         )
 
         locator = Locator(_locator, self)
@@ -345,18 +437,24 @@ class Page(PlaywrightPage):
         locator = Locator(_locator, self)
         return locator
 
-    def get_by_text(self, text: Union[str, Pattern[str]], exact: Optional[bool] = False) -> Locator:
+    def get_by_text(
+        self, text: Union[str, Pattern[str]], exact: Optional[bool] = False
+    ) -> Locator:
         _locator = self._origin_get_by_text(text=text, exact=exact)
         locator = Locator(_locator, self)
         return locator
 
-    def get_by_title(self, text: Union[str, Pattern[str]], exact: Optional[bool] = False) -> Locator:
+    def get_by_title(
+        self, text: Union[str, Pattern[str]], exact: Optional[bool] = False
+    ) -> Locator:
         _locator = self._origin_get_by_title(text=text, exact=exact)
         locator = Locator(_locator, self)
         return locator
 
     # JsHandle
-    async def evaluate_handle(self, expression: str, arg: Optional[Any] = None) -> Union[JSHandle, ElementHandle]:
+    async def evaluate_handle(
+        self, expression: str, arg: Optional[Any] = None
+    ) -> Union[JSHandle, ElementHandle]:
         _js_handle = await self._origin_evaluate_handle(expression=expression, arg=arg)
 
         if isinstance(_js_handle, PlaywrightElementHandle):
@@ -366,10 +464,18 @@ class Page(PlaywrightPage):
             js_handle = JSHandle(_js_handle, self)
             return js_handle
 
-    async def wait_for_function(self, expression: str, arg: Optional[Any] = None, polling: Optional[Union[float, Literal["raf"]]] = "raf", timeout: Optional[float] = None) -> JSHandle:
+    async def wait_for_function(
+        self,
+        expression: str,
+        arg: Optional[Any] = None,
+        polling: Optional[Union[float, Literal["raf"]]] = "raf",
+        timeout: Optional[float] = None,
+    ) -> JSHandle:
         from . import JSHandle
 
-        _js_handle = await self._origin_wait_for_function(expression=expression, arg=arg, polling=polling, timeout=timeout)
+        _js_handle = await self._origin_wait_for_function(
+            expression=expression, arg=arg, polling=polling, timeout=timeout
+        )
         js_handle = JSHandle(_js_handle, self)
         return js_handle
 
@@ -381,19 +487,31 @@ class Page(PlaywrightPage):
         frame_locator = FrameLocator(_frame_locator, self)
         return frame_locator
 
-    def expect_console_message(self, predicate: Optional[Callable[..., bool]] = None, timeout: Optional[float] = None) -> AsyncEventContextManager[PlaywrightConsoleMessage]:
+    def expect_console_message(
+        self,
+        predicate: Optional[Callable[..., bool]] = None,
+        timeout: Optional[float] = None,
+    ) -> AsyncEventContextManager[PlaywrightConsoleMessage]:
         if self.browser.use_undetected_playwright:
             from botright.extended_typing import NotSupportedError
 
-            raise NotSupportedError("Page.expect_console_message is currently unsupported, due to CDP Runtime Patches.")
+            raise NotSupportedError(
+                "Page.expect_console_message is currently unsupported, due to CDP Runtime Patches."
+            )
 
         return self._origin_expect_console_message(predicate=predicate, timeout=timeout)
 
-    def expect_worker(self, predicate: Optional[Callable[..., bool]] = None, timeout: Optional[float] = None) -> AsyncEventContextManager[PlaywrightWorker]:
+    def expect_worker(
+        self,
+        predicate: Optional[Callable[..., bool]] = None,
+        timeout: Optional[float] = None,
+    ) -> AsyncEventContextManager[PlaywrightWorker]:
         if self.browser.use_undetected_playwright:
             from botright.extended_typing import NotSupportedError
 
-            raise NotSupportedError("Page.expect_worker is currently unsupported, due to CDP Runtime Patches.")
+            raise NotSupportedError(
+                "Page.expect_worker is currently unsupported, due to CDP Runtime Patches."
+            )
 
         return self._origin_expect_worker(predicate=predicate, timeout=timeout)
 
@@ -401,15 +519,21 @@ class Page(PlaywrightPage):
         if self.browser.use_undetected_playwright:
             from botright.extended_typing import NotSupportedError
 
-            raise NotSupportedError("Page.expose_function is currently unsupported, due to CDP Runtime Patches.")
+            raise NotSupportedError(
+                "Page.expose_function is currently unsupported, due to CDP Runtime Patches."
+            )
 
         return await self._origin_expose_function(name=name, callback=callback)
 
-    async def expose_binding(self, name: str, callback: Callable[..., None], handle: Optional[bool] = None):
+    async def expose_binding(
+        self, name: str, callback: Callable[..., None], handle: Optional[bool] = None
+    ):
         if self.browser.use_undetected_playwright:
             from botright.extended_typing import NotSupportedError
 
-            raise NotSupportedError("Page.expose_binding is currently unsupported, due to CDP Runtime Patches.")
+            raise NotSupportedError(
+                "Page.expose_binding is currently unsupported, due to CDP Runtime Patches."
+            )
 
         from .browser import BrowserContext
 
@@ -445,7 +569,9 @@ class Page(PlaywrightPage):
 
                 return callback(source, element)
 
-            await self._origin_expose_binding(name, callback_proxy_handle, handle=handle)
+            await self._origin_expose_binding(
+                name, callback_proxy_handle, handle=handle
+            )
 
         else:
 
@@ -469,12 +595,21 @@ class Page(PlaywrightPage):
 
                 return callback(source, *args, **kwargs)
 
-            await self._origin_expose_binding(name=name, callback=callback_proxy, handle=handle)
+            await self._origin_expose_binding(
+                name=name, callback=callback_proxy, handle=handle
+            )
 
     async def route(
-        self, url: Union[str, Pattern[str], Callable[[str], bool]], handler: Union[Callable[[Route], Any], Callable[[PlaywrightRoute, PlaywrightRequest], Any]], times: Optional[int] = None
+        self,
+        url: Union[str, Pattern[str], Callable[[str], bool]],
+        handler: Union[
+            Callable[[Route], Any], Callable[[PlaywrightRoute, PlaywrightRequest], Any]
+        ],
+        times: Optional[int] = None,
     ):
-        if len(inspect.signature(handler).parameters) == 2:  # Checking how many parameters the callable expects
+        if (
+            len(inspect.signature(handler).parameters) == 2
+        ):  # Checking how many parameters the callable expects
 
             def handler_proxy(route: PlaywrightRoute, request: PlaywrightRequest):
                 route = Route(route, Page(self, self.browser, self.faker))
@@ -488,7 +623,9 @@ class Page(PlaywrightPage):
                 route = Route(route, Page(self, self.browser, self.faker))
                 return handler(route)  # type: ignore
 
-            await self._origin_route(url=url, handler=handler_proxy_no_request, times=times)
+            await self._origin_route(
+                url=url, handler=handler_proxy_no_request, times=times
+            )
 
     # Custom Methods
     async def click(
@@ -499,7 +636,9 @@ class Page(PlaywrightPage):
         strict: Optional[bool] = False,
         delay: Optional[float] = 20.0,
         force: Optional[bool] = True,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         timeout: Optional[float] = None,
@@ -522,7 +661,12 @@ class Page(PlaywrightPage):
 
             # await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -531,7 +675,9 @@ class Page(PlaywrightPage):
             for modifier in modifiers:
                 await self.keyboard.down(modifier)
 
-            await self.mouse.click(x, y, button=button, click_count=click_count, delay=delay)
+            await self.mouse.click(
+                x, y, button=button, click_count=click_count, delay=delay
+            )
 
             for modifier in modifiers:
                 await self.keyboard.up(modifier)
@@ -543,7 +689,9 @@ class Page(PlaywrightPage):
         strict: Optional[bool] = False,
         delay: Optional[float] = 20.0,
         force: Optional[bool] = True,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         timeout: Optional[float] = None,
@@ -566,7 +714,12 @@ class Page(PlaywrightPage):
 
             # await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -609,7 +762,12 @@ class Page(PlaywrightPage):
 
             # await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -648,7 +806,12 @@ class Page(PlaywrightPage):
 
             # await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -688,7 +851,12 @@ class Page(PlaywrightPage):
 
             # await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -702,7 +870,9 @@ class Page(PlaywrightPage):
         self,
         selector: str,
         force: Optional[bool] = True,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         position: Optional[Position] = None,
         strict: Optional[bool] = False,
         timeout: Optional[float] = None,
@@ -726,7 +896,12 @@ class Page(PlaywrightPage):
 
             # await element.scroll_into_view_if_needed(timeout=timeout)
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -740,8 +915,18 @@ class Page(PlaywrightPage):
             for modifier in modifiers:
                 await self.keyboard.up(modifier)
 
-    async def type(self, selector: str, text: str, delay: Optional[float] = 200.0, no_wait_after: Optional[bool] = False, strict: Optional[bool] = False, timeout: Optional[float] = None) -> None:
-        element = await self.wait_for_selector(selector, state="visible", strict=strict, timeout=timeout)
+    async def type(
+        self,
+        selector: str,
+        text: str,
+        delay: Optional[float] = 200.0,
+        no_wait_after: Optional[bool] = False,
+        strict: Optional[bool] = False,
+        timeout: Optional[float] = None,
+    ) -> None:
+        element = await self.wait_for_selector(
+            selector, state="visible", strict=strict, timeout=timeout
+        )
         if not element:
             raise PlaywrightError("Element is not attached to the DOM")
 
@@ -753,7 +938,12 @@ class Page(PlaywrightPage):
 
         # await element.scroll_into_view_if_needed(timeout=timeout)
 
-        x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+        x, y, width, height = (
+            bounding_box["x"],
+            bounding_box["y"],
+            bounding_box["width"],
+            bounding_box["height"],
+        )
         x, y = x + width // 2, y + height // 2
 
         await self.mouse.click(x, y, button="left", click_count=1, delay=20)

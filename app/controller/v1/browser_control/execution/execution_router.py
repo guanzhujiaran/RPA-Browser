@@ -7,7 +7,7 @@ from loguru import logger
 import time
 from app.models.response_code import ResponseCode
 from fastapi import Depends
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, Field
 from typing import Any, List
 import uuid
 from app.models.response import StandardResponse, success_response, error_response
@@ -20,8 +20,8 @@ from fastapi import APIRouter
 from app.services.execution.action_registry import action_registry
 from app.services.execution.execution_engine import execution_engine, Workflow, WorkflowStep
 from app.services.execution.crud_service import action_crud, workflow_crud
-
-# 导入自定义执行模型（直接从源文件导入）
+from app.models.core.workflow.models import ActionMetadataResponse
+# 导入自定义执行模型
 from app.models.workflow.models import (
     # 操作执行
     ActionExecuteRequest,
@@ -51,10 +51,10 @@ from app.models.workflow.models import (
     ExecuteStepResponse,
     # 系统
     StepPreviewItem,
-    ActionParameterResponse,
-    ActionMetadataResponse,
     ReloadActionsResponse,
 )
+# 核心执行模型（直接从 core 层导入）
+from app.models.core.workflow.models import ActionMetadata
 from ..base import new_execution_router
 
 router = new_execution_router()
@@ -65,36 +65,20 @@ router = new_execution_router()
 
 @router.post(BrowserControlRouterPath.actions_registered)
 async def list_registered_actions() -> StandardResponse[List[ActionMetadataResponse]]:
-    """获取系统预注册操作列表（公开，只读）"""
+    """获取系统预注册操作列表（公开，只读）
+    
+    返回精简版 Action 元数据，仅包含 action_id 和 json_schema
+    """
     actions = action_registry.get_all_actions()
-    response = []
-    for a in actions:
-        params = []
-        for p in getattr(a, "parameters", []):
-            params.append(
-                ActionParameterResponse(
-                    name=p.name,
-                    type=str(p.type) if hasattr(p, "type") else "",
-                    required=p.required,
-                    default=p.default,
-                    description=p.description,
-                )
-            )
-        response.append(
-            ActionMetadataResponse(
-                id=a.id,
-                name=a.name,
-                type=str(a.type) if hasattr(a, "type") else "",
-                description=a.description,
-                parameters=params,
-                timeout=getattr(a, "timeout", 30000),
-                retry_on_error=getattr(a, "retry_on_error", False),
-                retry_times=getattr(a, "retry_times", 0),
-                retry_delay=getattr(a, "retry_delay", 1.0),
-                requires_browser=getattr(a, "requires_browser", True),
-            )
+    # 转换为精简版响应
+    response_actions = [
+        ActionMetadataResponse(
+            action_id=action.id,
+            json_schema=action.json_schema or {},
         )
-    return success_response(response)
+        for action in actions
+    ]
+    return success_response(response_actions)
 
 
 @router.post(BrowserControlRouterPath.actions_execute)
@@ -176,14 +160,41 @@ class IdListRequest(SQLModel):
     limit: int = 100
 
 
+class CustomActionListRequest(SQLModel):
+    """自定义操作列表请求"""
+    skip: int = Field(default=0, description="跳过记录数")
+    limit: int = Field(default=100, description="返回记录数")
+    # 筛选条件
+    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
+    # 排序条件
+    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, created_at=最近创建, name=名称")
+    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
+
+
+class WorkflowListRequest(SQLModel):
+    """工作流列表请求"""
+    skip: int = Field(default=0, description="跳过记录数")
+    limit: int = Field(default=100, description="返回记录数")
+    # 筛选条件
+    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
+    # 排序条件
+    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, created_at=最近创建, name=名称")
+    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
+
+
 @router.post(BrowserControlRouterPath.custom_actions_list)
 async def list_custom_actions(
-    request: IdListRequest,
+    request: CustomActionListRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[List[CustomActionListItemResponse]]:
     """获取用户自定义操作列表"""
     models = await action_crud.list_by_user(
-        mid=auth.mid, skip=request.skip, limit=request.limit
+        mid=auth.mid, 
+        skip=request.skip, 
+        limit=request.limit,
+        filter_type=request.filter_type,
+        sort_by=request.sort_by,
+        sort_order=request.sort_order
     )
     response = [
         CustomActionListItemResponse(
@@ -192,9 +203,14 @@ async def list_custom_actions(
             name=m.name,
             action_type=m.action_type,
             description=m.description,
-            steps_count=len(m.get_steps()) if m.is_composite else 0,
+            steps_count=len(m.steps) if m.is_composite else 0,
             is_enabled=m.is_enabled,
+            is_public=m.is_public,
+            likes_count=m.likes_count,
+            reports_count=m.reports_count,
+            is_verified=m.is_verified,
             created_at=m.created_at,
+            updated_at=m.updated_at,
         )
         for m in models
     ]
@@ -209,8 +225,8 @@ async def reload_custom_actions(
     mid = str(auth.mid)
 
     # 统计启用的操作数量
-    models = await action_crud.list_by_user(mid=mid)
-    count = sum(1 for m in models if m.is_enabled and m.get_steps())
+    models = await action_crud.list_by_user(mid=auth.mid)
+    count = sum(1 for m in models if m.is_enabled and m.steps)
 
     return success_response(ReloadActionsResponse(loaded=count))
 
@@ -224,6 +240,12 @@ async def get_custom_action(
     model = await action_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("操作不存在")
+    
+    # 获取关联的插件列表
+    enabled_plugins = await action_crud.get_enabled_plugins(model.action_id)
+    # 提取 plugin_id 列表用于响应
+    enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
+    
     return success_response(
         CustomActionDetailResponse(
             id=model.id,
@@ -232,12 +254,17 @@ async def get_custom_action(
             version=model.version,
             action_type=model.action_type,
             description=model.description,
-            parameters_schema=model.get_parameters_schema(),
-            steps=model.get_steps(),
-            tags=model.get_tags(),
-            user_data=model.get_user_data(),
+            parameters_schema=model.parameters_schema,
+            steps=model.steps,
+            tags=model.tags,
+            user_data=model.user_data,
+            enabled_plugins=enabled_plugin_ids,
             is_enabled=model.is_enabled,
+            is_public=model.is_public,
             timeout=model.timeout,
+            likes_count=model.likes_count,
+            reports_count=model.reports_count,
+            is_verified=model.is_verified,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -253,6 +280,12 @@ async def create_custom_action(
     # 自动生成 action_id
     action_id = f"custom_{uuid.uuid4().hex[:8]}"
 
+    # 转换 enabled_plugins 格式：从 List[str] 转为 List[Dict]
+    enabled_plugins_data = [
+        {"plugin_id": pid, "config_params": {}}
+        for pid in request.enabled_plugins
+    ] if request.enabled_plugins else None
+
     model = await action_crud.create(
         action_id=action_id,
         name=request.name,
@@ -261,8 +294,11 @@ async def create_custom_action(
         mid=auth.mid,
         parameters_schema=request.parameters_schema,
         steps=request.steps,
+        tags=request.tags,
+        user_data=request.user_data,
         is_composite=True,
-        code=request.code,
+        is_public=request.is_public,
+        enabled_plugins=enabled_plugins_data,
     )
 
     return success_response(model)
@@ -278,15 +314,26 @@ async def update_custom_action(
     if not model or model.mid != auth.mid:
         return error_response("操作不存在")
 
+    # 转换 enabled_plugins 格式：从 List[str] 转为 List[Dict]
+    enabled_plugins_data = None
+    if request.enabled_plugins is not None:
+        enabled_plugins_data = [
+            {"plugin_id": pid, "config_params": {}}
+            for pid in request.enabled_plugins
+        ]
+
     await action_crud.update(
         id=request.id,
         name=request.name,
         description=request.description,
         parameters_schema=request.parameters_schema,
         steps=request.steps,
+        tags=request.tags,
+        user_data=request.user_data,
         is_composite=True,
-        code=request.code,
         timeout=request.timeout,
+        is_public=request.is_public,
+        enabled_plugins=enabled_plugins_data,
     )
 
     if request.is_enabled is not None:
@@ -317,12 +364,17 @@ async def delete_custom_action(
 
 @router.post(BrowserControlRouterPath.workflows_list)
 async def list_workflows(
-    request: IdListRequest,
+    request: WorkflowListRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[List[WorkflowListItemResponse]]:
     """获取用户工作流列表"""
     models = await workflow_crud.list_by_user(
-        mid=auth.mid, skip=request.skip, limit=request.limit
+        mid=auth.mid, 
+        skip=request.skip, 
+        limit=request.limit,
+        filter_type=request.filter_type,
+        sort_by=request.sort_by,
+        sort_order=request.sort_order
     )
     response = [
         WorkflowListItemResponse(
@@ -330,9 +382,14 @@ async def list_workflows(
             workflow_id=m.workflow_id,
             name=m.name,
             description=m.description,
-            tags=m.get_tags(),
+            tags=m.tags,
             is_enabled=m.is_enabled,
+            is_public=m.is_public,
+            likes_count=m.likes_count,
+            reports_count=m.reports_count,
+            is_verified=m.is_verified,
             created_at=m.created_at,
+            updated_at=m.updated_at,
         )
         for m in models
     ]
@@ -348,18 +405,29 @@ async def get_workflow(
     model = await workflow_crud.get_by_id(request.id)
     if not model or model.mid != auth.mid:
         return error_response("工作流不存在")
+    
+    # 获取关联的插件列表
+    enabled_plugins = await workflow_crud.get_enabled_plugins(model.workflow_id)
+    # 提取 plugin_id 列表用于响应
+    enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
+    
     return success_response(
         WorkflowDetailResponse(
             id=model.id,
             workflow_id=model.workflow_id,
             name=model.name,
             version=model.version,
-            steps=model.get_steps(),
+            steps=model.steps,
             on_error=model.on_error,
             description=model.description,
-            tags=model.get_tags(),
-            user_data=model.get_user_data(),
+            tags=model.tags,
+            user_data=model.user_data,
+            enabled_plugins=enabled_plugin_ids,
             is_enabled=model.is_enabled,
+            is_public=model.is_public,
+            likes_count=model.likes_count,
+            reports_count=model.reports_count,
+            is_verified=model.is_verified,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -394,6 +462,12 @@ async def create_workflow(
         }
         steps_data.append(step_dict)
 
+    # 转换 enabled_plugins 格式：从 List[str] 转为 List[Dict]
+    enabled_plugins_data = [
+        {"plugin_id": pid, "config_params": {}}
+        for pid in request.enabled_plugins
+    ] if request.enabled_plugins else None
+
     model = await workflow_crud.create(
         workflow_id=workflow_id,
         name=request.name,
@@ -401,6 +475,10 @@ async def create_workflow(
         on_error=request.on_error,
         mid=auth.mid,
         steps=steps_data,
+        tags=request.tags,
+        user_data=request.user_data,
+        is_public=False, # 默认私有
+        enabled_plugins=enabled_plugins_data,
     )
 
     return success_response(
@@ -439,6 +517,14 @@ async def update_workflow(
             }
             steps_data.append(step_dict)
 
+    # 转换 enabled_plugins 格式：从 List[str] 转为 List[Dict]
+    enabled_plugins_data = None
+    if request.enabled_plugins is not None:
+        enabled_plugins_data = [
+            {"plugin_id": pid, "config_params": {}}
+            for pid in request.enabled_plugins
+        ]
+
     await workflow_crud.update(
         id=request.id,
         name=request.name,
@@ -446,6 +532,8 @@ async def update_workflow(
         steps=steps_data,
         on_error=request.on_error,
         tags=request.tags,
+        user_data=request.user_data,
+        enabled_plugins=enabled_plugins_data,
     )
 
     if request.is_enabled is not None:
@@ -504,19 +592,28 @@ async def execute_workflow(
 
     支持模板变量和自定义数据。
     """
-        # 构建工作流步骤
-    workflow_steps = []
-    for step_req in request.steps:
-        step = WorkflowStep(
-            action_id=step_req.action_id,
-            params=step_req.params,
-            retry=step_req.retry,
-            loop_count=step_req.loop_count,
-            loop_while=step_req.loop_while,
-            loop_until=step_req.loop_until,
-            condition=None,
-        )
-        workflow_steps.append(step)
+    # 构建工作流步骤（支持嵌套）
+    def build_steps(step_reqs):
+        steps = []
+        for step_req in step_reqs:
+            children = None
+            if hasattr(step_req, 'children') and step_req.children:
+                children = build_steps(step_req.children)
+            
+            step = WorkflowStep(
+                action_id=step_req.action_id,
+                params=step_req.params,
+                retry=step_req.retry,
+                loop_count=step_req.loop_count,
+                loop_while=step_req.loop_while,
+                loop_until=step_req.loop_until,
+                condition=step_req.condition,
+                children=children,
+            )
+            steps.append(step)
+        return steps
+
+    workflow_steps = build_steps(request.steps)
 
     # 构建工作流
     workflow = Workflow(
@@ -751,3 +848,42 @@ async def execute_action_step(
         )
     except ValueError as e:
         return error_response(str(e))
+
+
+# ============ 社区互动功能 (Community Interaction) ============
+
+@router.post("/custom_actions/{action_id}/like")
+async def like_custom_action(
+    action_id: int,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[str]:
+    """点赞自定义动作"""
+    # TODO: 在 crud_service 中实现 increment_likes 方法
+    # await action_crud.increment_likes(action_id)
+    return success_response("点赞成功")
+
+@router.post("/workflows/{workflow_id}/fork")
+async def fork_workflow(
+    workflow_id: int,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[WorkflowDuplicateResponse]:
+    """克隆（Fork）公开工作流到自己的空间"""
+    original = await workflow_crud.get_by_id(workflow_id)
+    if not original:
+        return error_response("工作流不存在")
+    
+    # 如果是自己的，直接走 duplicate 逻辑；如果是公开的，则复制一份
+    if original.mid == auth.mid:
+        model = await workflow_crud.duplicate(workflow_id)
+    else:
+        # 这里需要 crud_service 支持跨用户复制
+        # model = await workflow_crud.fork(workflow_id, auth.mid)
+        return error_response("暂不支持克隆他人工作流（待实现）")
+        
+    return success_response(
+        WorkflowDuplicateResponse(
+            id=model.id,
+            workflow_id=model.workflow_id,
+            name=model.name,
+        )
+    )

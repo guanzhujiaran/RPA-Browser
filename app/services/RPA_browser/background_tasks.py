@@ -91,13 +91,21 @@ class BackgroundTaskService:
             # 获取页面视口大小
             viewport = page.viewport_size
             if not viewport:
-                # 如果没有设置视口，获取页面尺寸
-                viewport = await page.evaluate("""
-                () => ({
-                    width: window.innerWidth || document.documentElement.clientWidth,
-                    height: window.innerHeight || document.documentElement.clientHeight
-                })
-                """)
+                # 🔒 安全修复：使用 Playwright 原生 API，避免执行 JS
+                # 尝试从浏览器上下文获取默认视口
+                try:
+                    context = page.context
+                    # 获取第一个页面的视口作为参考
+                    if context.pages:
+                        first_page_viewport = context.pages[0].viewport_size
+                        if first_page_viewport:
+                            viewport = first_page_viewport
+                except:
+                    pass
+                
+                # 如果仍然没有，使用默认值
+                if not viewport:
+                    viewport = {"width": 1920, "height": 1080}
 
             # 计算绝对坐标
             abs_x = int(click_params["x"] * viewport["width"])

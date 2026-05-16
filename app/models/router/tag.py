@@ -1,14 +1,17 @@
+import sys
+
+# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+    class StrEnum(str, Enum):
+        """Python 3.10 兼容的 StrEnum"""
+        pass
+
 """
 Router 模块 - 路由标签定义
 """
-
-from enum import Enum
-
-
-class StrEnum(str, Enum):
-    """字符串枚举，兼容 Python 3.10"""
-    def __str__(self):
-        return str(self.value)
 
 
 class RouterTag(StrEnum):
@@ -22,7 +25,9 @@ class RouterTag(StrEnum):
     browser_control = "浏览器实时控制"
     session_management = "会话管理"
     operation_control = "自动化控制"
-    action_management = "操作管理"
+    action_management = "自定义操作管理"
+    workflow_management = "工作流管理"
+    plugin_management = "插件挂载管理"
     video_stream = "视频流"
     plugin_control = "插件控制"
     security_control = "安全控制"

@@ -1,3 +1,14 @@
+import sys
+
+# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+    class StrEnum(str, Enum):
+        """Python 3.10 兼容的 StrEnum"""
+        pass
+
 """
 Runtime 模块 - 实时控制模型
 
@@ -5,13 +16,12 @@ Runtime 模块 - 实时控制模型
 """
 
 from sqlmodel import SQLModel, Field
-from enum import Enum
 from typing import Any, Dict, Optional
 import time
 from app.config import settings
 
 
-class BrowserStatusEnum(str, Enum):
+class BrowserStatusEnum(StrEnum):
     """浏览器状态枚举"""
 
     RUNNING = "running"  # 正常运行中
@@ -21,7 +31,7 @@ class BrowserStatusEnum(str, Enum):
     ERROR = "error"  # 错误状态
 
 
-class OperationPriority(str, Enum):
+class OperationPriority(StrEnum):
     """操作优先级"""
 
     LOW = "low"  # 低优先级，可被中断
@@ -78,7 +88,7 @@ class BrowserCleanupPolicy(SQLModel):
     cleanup_interval: int = Field(default_factory=lambda: settings.browser_session_cleanup_interval, description="清理检查间隔（秒）")
 
 
-class SessionLifecycleState(str, Enum):
+class SessionLifecycleState(StrEnum):
     """会话生命周期状态"""
 
     INITIALIZING = "initializing"

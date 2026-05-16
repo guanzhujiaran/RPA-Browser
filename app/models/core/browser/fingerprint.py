@@ -1,3 +1,14 @@
+import sys
+
+# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+    class StrEnum(str, Enum):
+        """Python 3.10 兼容的 StrEnum"""
+        pass
+
 """
 Core 模块 - 浏览器指纹模型
 
@@ -5,7 +16,6 @@ Core 模块 - 浏览器指纹模型
 """
 
 from typing import Annotated
-from enum import StrEnum
 from sqlmodel import Field, SQLModel, Column, JSON
 from browserforge.fingerprints import (
     Fingerprint,

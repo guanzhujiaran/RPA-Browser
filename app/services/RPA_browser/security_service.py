@@ -255,7 +255,12 @@ class SecurityChecker:
 
 
 class JavaScriptSandbox:
-    """JavaScript代码执行沙箱"""
+    """
+    【已禁用】JavaScript代码执行沙箱
+    
+    ⚠️ 安全警告：此类已被禁用以防止恶意代码执行
+    请使用系统提供的预定义操作（如 click, input, scroll 等）来替代
+    """
     
     @staticmethod
     async def execute_with_safety(
@@ -265,70 +270,12 @@ class JavaScriptSandbox:
         safety_check: bool = True
     ) -> JavaScriptExecutionResult:
         """
-        在沙箱环境中安全执行JavaScript代码
+        【已禁用】在沙箱环境中安全执行JavaScript代码
         
-        Args:
-            page: Playwright页面对象
-            code: 要执行的JavaScript代码
-            timeout: 执行超时时间
-            safety_check: 是否进行安全检查
-            
-        Returns:
-            JavaScriptExecutionResult: 执行结果
+        ⚠️ 此方法已被禁用以防止安全风险
         """
-        start_time = time.time()
-        
-        if safety_check:
-            # 执行安全检查
-            check_params = SecurityCheckParams(code=code)
-            check_result = SecurityChecker.check_code_security(check_params)
-            
-            if not check_result.safe_to_execute:
-                return JavaScriptExecutionResult(
-                    success=False,
-                    error=f'代码安全检查失败: {check_result.level} 风险等级',
-                    execution_time=int((time.time() - start_time) * 1000),
-                    risks=[risk.dict() for risk in check_result.risks]
-                )
-        
-        try:
-            # 在浏览器中执行代码，包装在try-catch中
-            wrapped_code = f'''
-            (async function() {{
-                try {{
-                    {code}
-                }} catch (error) {{
-                    return {{
-                        success: false,
-                        error: error.toString(),
-                        stack: error.stack
-                    }};
-                }}
-            }})()
-            '''
-            
-            # 设置页面默认超时时间
-            original_timeout = page.timeout
-            page.set_default_timeout(timeout)
-            
-            try:
-                js_result = await page.evaluate(wrapped_code)
-            finally:
-                # 恢复原始超时设置
-                page.set_default_timeout(original_timeout)
-            
-            execution_time = int((time.time() - start_time) * 1000)
-            
-            return JavaScriptExecutionResult(
-                success=True,
-                result=js_result,
-                execution_time=execution_time
-            )
-            
-        except Exception as e:
-            execution_time = int((time.time() - start_time) * 1000)
-            return JavaScriptExecutionResult(
-                success=False,
-                error=f'执行失败: {str(e)}',
-                execution_time=execution_time
-            )
+        return JavaScriptExecutionResult(
+            success=False,
+            error="❌ JavaScriptSandbox.execute_with_safety 已被禁用以防止安全风险。请使用系统提供的预定义操作来完成自动化任务。",
+            execution_time=0
+        )

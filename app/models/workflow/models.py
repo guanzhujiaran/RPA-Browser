@@ -6,17 +6,10 @@ Workflow 模块 - 工作流请求/响应模型
 
 from typing import Any, Dict, List
 from datetime import datetime
-
 from sqlmodel import SQLModel, Field
+from app.models.base.base_sqlmodel import BasePaginationReq
+from app.models.core.workflow.models import ActionType
 
-from app.models.core.workflow.models import (
-    ActionTypeEnum,
-    ErrorHandlingEnum,
-    PluginHookEnum,
-)
-
-
-# ============ 工作流请求/响应 ============
 
 class WorkflowStepRequest(SQLModel):
     """
@@ -25,6 +18,7 @@ class WorkflowStepRequest(SQLModel):
     """
     action_id: str = Field(description="操作ID，如 click, input, llm, my_custom_action")
     params: Dict[str, Any] = Field(default_factory=dict, description="操作参数，支持模板")
+    children: List['WorkflowStepRequest'] | None = Field(default=None, description="子步骤列表（用于循环体或分支）")
     loop_count: int | None = Field(default=None, description="固定循环次数")
     loop_while: str | None = Field(default=None, description="条件循环，表达式为true时继续")
     loop_until: str | None = Field(default=None, description="条件退出，表达式为true时退出")
@@ -41,6 +35,7 @@ class WorkflowCreateRequest(SQLModel):
     description: str = Field(default="", description="工作流描述")
     tags: List[str] = Field(default_factory=list, description="标签列表")
     user_data: Dict[str, Any] | None = Field(default=None, description="自定义数据")
+    enabled_plugins: List[str] = Field(default_factory=list, description="启用的插件ID列表")
 
 
 class WorkflowUpdateRequest(SQLModel):
@@ -53,12 +48,16 @@ class WorkflowUpdateRequest(SQLModel):
     tags: List[str] | None = Field(default=None, description="标签列表")
     user_data: Dict[str, Any] | None = Field(default=None, description="自定义数据")
     is_enabled: bool | None = Field(default=None, description="是否启用")
+    enabled_plugins: List[str] | None = Field(default=None, description="启用的插件ID列表")
 
 
-class WorkflowListRequest(SQLModel):
+class WorkflowListRequest(BasePaginationReq):
     """获取工作流列表请求"""
-    skip: int = Field(default=0, description="跳过记录数")
-    limit: int = Field(default=100, description="返回记录数")
+    # 筛选条件
+    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
+    # 排序条件
+    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, forks_count=最多Fork, created_at=最近创建, name=名称")
+    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
 
 
 class WorkflowExecuteRequest(SQLModel):
@@ -80,8 +79,15 @@ class WorkflowDetailResponse(SQLModel):
     on_error: str
     description: str
     tags: List[str]
-    user_data: Dict[str, Any]
+    user_data: Dict[str, Any] | None = None
+    enabled_plugins: List[str] = []
     is_enabled: bool
+    is_public: bool = False
+    likes_count: int = 0
+    reports_count: int = 0
+    is_verified: bool = False
+    forks_count: int = 0
+    forked_from_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -94,7 +100,14 @@ class WorkflowListItemResponse(SQLModel):
     description: str
     tags: List[str]
     is_enabled: bool
+    is_public: bool = False
+    likes_count: int = 0
+    reports_count: int = 0
+    is_verified: bool = False
+    forks_count: int = 0
+    forked_from_id: int | None = None
     created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class WorkflowCreateResponse(SQLModel):
@@ -111,6 +124,20 @@ class WorkflowDuplicateResponse(SQLModel):
     name: str
 
 
+class WorkflowForkRequest(SQLModel):
+    """Fork 工作流请求"""
+    id: int = Field(description="原工作流ID")
+    new_name: str | None = Field(default=None, description="新名称，如果不提供则使用原名称 + ' (Fork)'")
+
+
+class WorkflowForkResponse(SQLModel):
+    """Fork 工作流响应"""
+    id: int
+    workflow_id: str
+    name: str
+    forked_from: str = Field(description="Fork 自哪个工作流")
+
+
 class WorkflowExecuteResponse(SQLModel):
     """执行工作流响应"""
     execution_id: str
@@ -118,18 +145,40 @@ class WorkflowExecuteResponse(SQLModel):
     summary: Dict[str, int]
 
 
+class WorkflowStepExecuteRequest(SQLModel):
+    """单步执行工作流请求"""
+    browser_id: str = Field(description="浏览器会话 ID")
+    step_index: int = Field(description="步骤索引（从 0 开始）")
+    steps: List[WorkflowStepRequest] = Field(description="完整步骤列表")
+    user_data: Dict[str, Any] | None = Field(default=None, description="自定义数据")
+    page_index: int | None = Field(default=None, description="页面索引")
+
+
+class WorkflowStepExecuteResponse(SQLModel):
+    """单步执行工作流响应"""
+    success: bool = Field(description="是否成功")
+    step_index: int = Field(description="执行的步骤索引")
+    action_id: str = Field(description="执行的动作 ID")
+    result: Any = Field(default=None, description="执行结果")
+    error: str | None = Field(default=None, description="错误信息")
+    duration: float = Field(description="执行耗时（毫秒）")
+    current_step: int = Field(description="当前执行到的步骤索引")
+    total_steps: int = Field(description="总步骤数")
+
+
 # ============ 自定义操作请求/响应 ============
 
 class CustomActionCreateRequest(SQLModel):
     """创建自定义操作请求"""
     name: str = Field(description="操作显示名称（必填）")
-    action_type: str = Field(default="composite", description="操作类型: composite, code")
+    action_type: ActionType = Field(default=ActionType.COMPOSITE, description="操作类型")
     description: str = Field(default="", description="操作描述")
     parameters_schema: List[Dict[str, Any]] = Field(default_factory=list)
     steps: List[Dict[str, Any]] = Field(default_factory=list, description="步骤列表JSON")
     tags: List[str] = Field(default_factory=list)
     user_data: Dict[str, Any] | None = Field(default=None, description="自定义数据")
-    code: str | None = Field(default=None, description="自定义代码")
+    is_public: bool = Field(default=False, description="是否公开给所有用户")
+    enabled_plugins: List[str] = Field(default_factory=list, description="该动作内部引用的插件ID列表")
 
 
 class CustomActionUpdateRequest(SQLModel):
@@ -141,9 +190,19 @@ class CustomActionUpdateRequest(SQLModel):
     steps: List[Dict[str, Any]] | None = Field(default=None)
     tags: List[str] | None = Field(default=None)
     user_data: Dict[str, Any] | None = Field(default=None)
-    code: str | None = Field(default=None)
     is_enabled: bool | None = Field(default=None)
+    is_public: bool | None = Field(default=None)
     timeout: int | None = Field(default=None)
+    enabled_plugins: List[str] | None = Field(default=None)
+
+
+class CustomActionListRequest(BasePaginationReq):
+    """获取自定义操作列表请求"""
+    # 筛选条件
+    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
+    # 排序条件
+    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, forks_count=最多Fork, created_at=最近创建, name=名称")
+    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
 
 
 class CustomActionDetailResponse(SQLModel):
@@ -157,9 +216,16 @@ class CustomActionDetailResponse(SQLModel):
     parameters_schema: List[Dict[str, Any]]
     steps: List[Dict[str, Any]]
     tags: List[str]
-    user_data: Dict[str, Any]
+    user_data: Dict[str, Any] | None = None
+    enabled_plugins: List[str] = []
     is_enabled: bool
+    is_public: bool = False
     timeout: int
+    likes_count: int = 0
+    reports_count: int = 0
+    is_verified: bool = False
+    forks_count: int = 0
+    forked_from_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -173,7 +239,14 @@ class CustomActionListItemResponse(SQLModel):
     description: str
     steps_count: int
     is_enabled: bool
+    is_public: bool = False
+    likes_count: int = 0
+    reports_count: int = 0
+    is_verified: bool = False
+    forks_count: int = 0
+    forked_from_id: int | None = None
     created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class CustomActionCreateResponse(SQLModel):
@@ -181,6 +254,20 @@ class CustomActionCreateResponse(SQLModel):
     id: int
     action_id: str
     name: str
+
+
+class ActionForkRequest(SQLModel):
+    """Fork 自定义操作请求"""
+    id: int = Field(description="原操作ID")
+    new_name: str | None = Field(default=None, description="新名称，如果不提供则使用原名称 + ' (Fork)'")
+
+
+class ActionForkResponse(SQLModel):
+    """Fork 自定义操作响应"""
+    id: int
+    action_id: str
+    name: str
+    forked_from: str = Field(description="Fork 自哪个操作")
 
 
 # ============ 操作执行请求/响应 ============
@@ -277,29 +364,101 @@ class ActionParameterResponse(SQLModel):
     required: bool
     default: Any | None = None
     description: str = ""
-
-
-class ActionMetadataResponse(SQLModel):
-    """操作元数据响应"""
-    id: str
-    name: str
-    type: str
-    description: str
-    parameters: List[ActionParameterResponse]
-    timeout: int = 30000
-    requires_browser: bool = True
-
+    # SQLModel 验证规则（根据类型设置，数值类型用 min/max，字符串类型用 min_length/max_length）
+    min: float | None = Field(default=None, description="最小值（仅数值类型：int/float），字符串类型为 None")
+    max: float | None = Field(default=None, description="最大值（仅数值类型：int/float），字符串类型为 None")
+    min_length: int | None = Field(default=None, description="最小长度（仅字符串类型：str），数值类型为 None")
+    max_length: int | None = Field(default=None, description="最大长度（仅字符串类型：str），数值类型为 None")
+    enum: List[Any] | None = Field(default=None, description="枚举值列表，无枚举时为 None")
+    format: str | None = Field(default=None, description="格式要求（如 email, uri 等），无格式要求时为 None")
 
 class ReloadActionsResponse(SQLModel):
     """重新加载响应"""
     loaded: int
 
 
+# ============ 插件挂载相关模型 ============
+
+class PluginCreateRequest(SQLModel):
+    """创建插件挂载请求"""
+    name: str = Field(description="插件名称")
+    hook_type: str = Field(description="钩子类型: before_action, after_action, on_error")
+    custom_action_id: str = Field(description="要执行的自定义动作ID")
+    description: str = Field(default="", description="描述")
+    priority: int = Field(default=100, description="优先级")
+    is_public: bool = Field(default=False, description="是否公开")
+
+
+class PluginUpdateRequest(SQLModel):
+    """更新插件挂载请求"""
+    id: int = Field(description="插件ID")
+    name: str | None = Field(default=None)
+    description: str | None = Field(default=None)
+    hook_type: str | None = Field(default=None)
+    custom_action_id: str | None = Field(default=None)
+    priority: int | None = Field(default=None)
+    is_enabled: bool | None = Field(default=None)
+    is_public: bool | None = Field(default=None)
+
+
+class PluginDetailResponse(SQLModel):
+    """插件详情响应"""
+    id: int
+    plugin_id: str
+    name: str
+    hook_type: str
+    custom_action_id: str
+    description: str
+    is_enabled: bool
+    priority: int
+    is_public: bool
+    forks_count: int = 0
+    forked_from_id: int | None = None
+
+
+class PluginListItemResponse(SQLModel):
+    """插件列表项响应"""
+    id: int
+    plugin_id: str
+    name: str
+    hook_type: str
+    custom_action_id: str
+    is_enabled: bool
+    priority: int
+    is_public: bool = False
+    likes_count: int = 0
+    reports_count: int = 0
+    is_verified: bool = False
+    forks_count: int = 0
+    forked_from_id: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class PluginListRequest(BasePaginationReq):
+    """获取插件列表请求"""
+    # 筛选条件
+    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
+    # 排序条件
+    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, forks_count=最多Fork, created_at=最近创建, name=名称")
+    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
+
+
+class PluginForkRequest(SQLModel):
+    """Fork 插件请求"""
+    id: int = Field(description="原插件ID")
+    new_name: str | None = Field(default=None, description="新名称，如果不提供则使用原名称 + ' (Fork)'")
+
+
+class PluginForkResponse(SQLModel):
+    """Fork 插件响应"""
+    id: int
+    plugin_id: str
+    name: str
+    forked_from: str = Field(description="Fork 自哪个插件")
+
+
 __all__ = [
-    # 枚举
-    "ActionTypeEnum",
-    "ErrorHandlingEnum",
-    "PluginHookEnum",
     # 请求/响应
     "WorkflowStepRequest",
     "WorkflowCreateRequest",
@@ -310,12 +469,18 @@ __all__ = [
     "WorkflowListItemResponse",
     "WorkflowCreateResponse",
     "WorkflowDuplicateResponse",
+    "WorkflowForkRequest",
+    "WorkflowForkResponse",
     "WorkflowExecuteResponse",
+    "WorkflowStepExecuteRequest",
+    "WorkflowStepExecuteResponse",
     "CustomActionCreateRequest",
     "CustomActionUpdateRequest",
     "CustomActionDetailResponse",
     "CustomActionListItemResponse",
     "CustomActionCreateResponse",
+    "ActionForkRequest",
+    "ActionForkResponse",
     "ActionExecuteRequest",
     "BatchActionRequest",
     "ActionPreviewRequest",
@@ -327,6 +492,12 @@ __all__ = [
     "ActionValidateResponse",
     "ExecuteStepResponse",
     "ActionParameterResponse",
-    "ActionMetadataResponse",
     "ReloadActionsResponse",
+    "PluginCreateRequest",
+    "PluginUpdateRequest",
+    "PluginDetailResponse",
+    "PluginListItemResponse",
+    "PluginListRequest",
+    "PluginForkRequest",
+    "PluginForkResponse",
 ]

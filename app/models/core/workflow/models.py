@@ -3,20 +3,17 @@ Core 模块 - 工作流数据库模型
 
 定义工作流、自定义操作、用户插件等数据库模型。
 """
-
-import json
-from sqlmodel import SQLModel, Field
-from typing import Any, Dict, List, Optional, Type, Callable
-from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 from datetime import datetime
-from enum import Enum
 import uuid
+from sqlalchemy import Column, JSON, Index
+from sqlmodel import SQLModel, Field
+from dataclasses import dataclass
 from playwright.async_api import Page, BrowserContext
-
-
+from enum import StrEnum
 # ============ 枚举定义 ============
 
-class ActionType(str, Enum):
+class ActionType(StrEnum):
     """操作类型"""
     NAVIGATION = "navigation"
     CLICK = "click"
@@ -30,30 +27,20 @@ class ActionType(str, Enum):
     KEYBOARD = "keyboard"
     MOUSE = "mouse"
     LLM = "llm"
+    LOOP = "loop"
+    IF_ELSE = "if_else"
     CUSTOM = "custom"
+    COMPOSITE = "composite"  # 组合动作（用户自定义的动作序列）
 
 
-class ActionTypeEnum(str, Enum):
-    """操作类型（数据库用，兼容旧代码）"""
-    NAVIGATION = "navigation"
-    CLICK = "click"
-    INPUT = "input"
-    SCROLL = "scroll"
-    WAIT = "wait"
-    SCREENSHOT = "screenshot"
-    EVALUATE = "evaluate"
-    LLM = "llm"
-    CUSTOM = "custom"
-
-
-class ErrorHandlingEnum(str, Enum):
+class ErrorHandlingEnum(StrEnum):
     """错误处理策略"""
     STOP = "stop"
     CONTINUE = "continue"
     ROLLBACK = "rollback"
 
 
-class PluginHookEnum(str, Enum):
+class PluginHookEnum(StrEnum):
     """插件钩子类型"""
     BEFORE_ACTION = "before_action"
     AFTER_ACTION = "after_action"
@@ -65,26 +52,30 @@ class PluginHookEnum(str, Enum):
 # ============ 执行相关模型 ============
 
 class ActionParameter(SQLModel):
-    """操作参数定义"""
+    """操作参数定义（内部使用）"""
     name: str = Field(description="参数名称")
-    type: str = Field(default="str", description="参数类型")
-    required: bool = Field(default=True, description="是否必需")
-    default: Any = Field(default=None, description="默认值")
-    description: str = Field(default="", description="参数描述")
+    json_schema: dict[str, Any] = Field(description="完整的 JSON Schema，包含类型、验证规则、嵌套结构等所有信息")
 
 
 class ActionMetadata(SQLModel):
-    """操作元数据"""
+    """操作元数据（内部使用，包含完整信息）"""
     id: str = Field(description="操作ID")
     name: str = Field(description="操作名称")
     type: str = Field(description="操作类型")
     description: str = Field(default="", description="操作描述")
     parameters: List[ActionParameter] = Field(default_factory=list, description="参数列表")
+    json_schema: dict[str, Any] | None = Field(default=None, description="完整的 JSON Schema 定义（包含 $defs），用于前端解析 $ref 引用")
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
     retry_on_error: bool = Field(default=False, description="错误时重试")
     retry_times: int = Field(default=0, description="重试次数")
     retry_delay: float = Field(default=1.0, description="重试延迟(秒)")
     requires_browser: bool = Field(default=True, description="是否需要浏览器上下文")
+
+
+class ActionMetadataResponse(SQLModel):
+    """操作元数据响应（API 返回，精简版）"""
+    action_id: str
+    json_schema: dict[str, Any]
 
 
 class ActionResult(SQLModel):
@@ -95,6 +86,7 @@ class ActionResult(SQLModel):
     execution_time: float = Field(default=0.0, description="执行时间(秒)")
     action_id: str = Field(default="", description="操作ID")
     action_name: str = Field(default="", description="操作名称")
+    logs: List[str] = Field(default_factory=list, description="执行过程中的日志记录")
 
 
 @dataclass
@@ -102,159 +94,168 @@ class ActionContext:
     """操作执行上下文（包含运行时对象，使用 dataclass）"""
     session_id: str
     browser_id: str
-    page: Page  # Playwright Page 对象
-    browser: BrowserContext  # Playwright BrowserContext 对象
-    params: Dict[str, Any] = field(default_factory=dict)
-    user_data: Dict[str, Any] = field(default_factory=dict)
+    page: "Page"  # Playwright Page 对象 (使用字符串注解避免循环导入)
+    browser: "BrowserContext"  # Playwright BrowserContext 对象
+    params: Dict[str, Any] = Field(default_factory=dict)
+    user_data: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ============ 数据库模型 ============
 
-class WorkflowStepModel(SQLModel, table=True):
+class WorkflowStep(SQLModel):
     """
-    工作流步骤模型
-    定义工作流中的单个步骤配置。
+    工作流步骤定义（运行时模型，支持嵌套）
     """
-    __tablename__ = "workflow_step"
-
-    id: int | None = Field(default=None, primary_key=True)
-    workflow_id: str = Field(index=True, max_length=100)
-    step_index: int = Field(default=0, description="步骤索引")
-    action_id: str = Field(max_length=100, description="操作ID")
-    params: str = Field(default="{}", description="参数字典JSON，支持 {{变量名}} 模板")
-    loop_count: int | None = Field(default=None, description="循环次数")
-    loop_while: str | None = Field(default=None, description="条件循环表达式")
-    loop_until: str | None = Field(default=None, description="条件退出表达式")
+    action_id: str = Field(description="操作ID")
+    params: Dict[str, Any] = Field(default_factory=dict, description="参数字典，支持 {{变量名}} 模板")
+    children: Optional[List['WorkflowStep']] = Field(default=None, description="子步骤列表（用于循环体或分支）")
+    condition: Optional[str] = Field(default=None, description="执行条件表达式（如：state.loop.index < 5）")
+    output_var: Optional[str] = Field(default=None, description="将结果存入 state.variables 的键名")
+    loop_count: Optional[int] = Field(default=None, description="固定循环次数")
+    loop_while: Optional[str] = Field(default=None, description="条件循环表达式")
+    loop_until: Optional[str] = Field(default=None, description="条件退出表达式")
     retry: int = Field(default=0, description="失败重试次数")
-    condition: str | None = Field(default=None, description="执行条件表达式")
-    user_data: str | None = Field(default=None, description="自定义数据JSON，步骤级变量")
+    user_data: Optional[Dict[str, Any]] = Field(default=None, description="步骤级自定义数据")
 
 
 class CustomActionModel(SQLModel, table=True):
     """
-    自定义操作模型
-    用户自定义的组合操作，可以包含多个步骤。
+    自定义组合动作模型
+    
+    用户定义的、可复用的动作组合（类似函数）。
+    包含多个步骤（steps），可以被 Workflow 引用和调用。
+    
+    与 Workflow 的区别：
+    - CustomAction: 轻量级、可复用、有明确输入输出参数的动作组合
+    - Workflow: 完整的业务流程，支持复杂的控制流、错误处理等
+    
+    概念层次：
+    1. 原子动作 (Atomic Actions) - 系统预注册，如 Click, Input, Navigate
+    2. 组合动作 (Composite Actions) - 用户定义的步骤序列（本模型）
+    3. 工作流 (Workflows) - 完整的业务流程，可调用原子动作和组合动作
     """
     __tablename__ = "custom_action"
+    __table_args__ = (
+        # 同一用户下名称必须唯一（类似 GitHub 仓库命名）
+        Index('idx_user_action_name_unique', 'mid', 'name', unique=True),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
-    action_id: str = Field(index=True, max_length=100, description="操作唯一标识")
-    name: str = Field(max_length=200, description="显示名称")
+    action_id: str = Field(
+        index=True, 
+        unique=True, 
+        max_length=100, 
+        description="操作唯一标识（系统自动生成，格式：ca_xxx，用户不可修改）"
+    )
+    name: str = Field(max_length=200, description="显示名称（用户可编辑的业务名称）")
     version: str = Field(default="1.0.0", max_length=50)
-    action_type: str = Field(max_length=50, description="操作类型: composite, code")
-    parameters_schema: str = Field(default="[]", description="参数定义JSON")
-    steps: str = Field(default="[]", description="步骤列表JSON")
-    is_composite: bool = Field(default=True, description="是否为组合操作")
-    code: str | None = Field(default=None, description="自定义代码")
-    description: str = Field(default="", max_length=500, description="操作描述")
+    action_type: ActionType = Field(
+        default=ActionType.COMPOSITE,
+        description="操作类型（组合动作）"
+    )
+    parameters_schema: List[Dict[str, Any]] = Field(
+        default_factory=list, 
+        sa_column=Column(JSON), 
+        description="参数定义JSON（定义此组合动作的输入参数）"
+    )
+    steps: List[Dict[str, Any]] = Field(
+        default_factory=list, 
+        sa_column=Column(JSON), 
+        description="步骤列表JSON（引用原子动作或其他组合动作的执行序列）"
+    )
+    is_composite: bool = Field(default=True, description="是否为组合动作")
+    description: str = Field(default="", max_length=500, description="动作描述")
     author: str = Field(default="", max_length=100)
-    tags: str = Field(default="[]", description="标签JSON数组")
-    user_data: str | None = Field(default=None, description="自定义数据JSON")
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON), description="标签JSON数组")
+    user_data: Dict[str, Any] | None = Field(default=None, sa_column=Column(JSON), description="自定义数据JSON")
     mid: int = Field(index=True, description="用户ID")
     is_enabled: bool = Field(default=True)
+    is_public: bool = Field(default=False, description="是否公开给所有用户")
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
     retry_on_error: bool = Field(default=False)
     retry_times: int = Field(default=0)
     retry_delay: float = Field(default=1.0)
+    likes_count: int = Field(default=0, description="点赞数")
+    reports_count: int = Field(default=0, description="举报数")
+    is_verified: bool = Field(default=False, description="是否经过官方验证")
+    forks_count: int = Field(default=0, description="被 Fork 次数")
+    forked_from_id: int | None = Field(
+        default=None,
+        foreign_key="custom_action.id",
+        description="Fork 来源的操作ID"
+    )
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
-    def get_parameters_schema(self) -> List[Dict[str, Any]]:
-        try:
-            return json.loads(self.parameters_schema)
-        except:
-            return []
 
-    def set_parameters_schema(self, schema: List[Dict[str, Any]]):
-        self.parameters_schema = json.dumps(schema, ensure_ascii=False)
+class WorkflowPluginLink(SQLModel, table=True):
+    """
+    工作流与插件的多对多关联表
+    用于存储工作流引用的插件及其特定配置参数
+    """
+    __tablename__ = "workflow_plugin_link"
 
-    def get_steps(self) -> List[Dict[str, Any]]:
-        try:
-            return json.loads(self.steps)
-        except:
-            return []
+    id: int | None = Field(default=None, primary_key=True)
+    workflow_id: str = Field(foreign_key="user_workflow.workflow_id", index=True, description="关联的工作流ID")
+    plugin_id: str = Field(foreign_key="user_plugin.plugin_id", index=True, description="关联的插件ID")
+    config_params: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON), description="该工作流下此插件的特定配置参数")
 
-    def set_steps(self, steps: List[Dict[str, Any]]):
-        self.steps = json.dumps(steps, ensure_ascii=False)
 
-    def get_tags(self) -> List[str]:
-        try:
-            return json.loads(self.tags)
-        except:
-            return []
+class ActionPluginLink(SQLModel, table=True):
+    """
+    自定义动作与插件的多对多关联表
+    """
+    __tablename__ = "action_plugin_link"
 
-    def set_tags(self, tags: List[str]):
-        self.tags = json.dumps(tags, ensure_ascii=False)
-
-    def get_user_data(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.user_data) if self.user_data else {}
-        except:
-            return {}
-
-    def set_user_data(self, data: Dict[str, Any]):
-        self.user_data = json.dumps(data, ensure_ascii=False)
+    id: int | None = Field(default=None, primary_key=True)
+    action_id: str = Field(foreign_key="custom_action.action_id", index=True, description="关联的动作ID")
+    plugin_id: str = Field(foreign_key="user_plugin.plugin_id", index=True, description="关联的插件ID")
+    config_params: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON), description="该动作下此插件的特定配置参数")
 
 
 class UserPluginModel(SQLModel, table=True):
     """
-    用户插件模型
-    用户自定义的插件，可以在操作执行时插入钩子逻辑。
+    用户插件模型（挂载机制）
+    用于在特定的生命周期钩子处自动插入并执行自定义动作。
     """
     __tablename__ = "user_plugin"
+    __table_args__ = (
+        # 同一用户下名称必须唯一（类似 GitHub 仓库命名）
+        Index('idx_user_plugin_name_unique', 'mid', 'name', unique=True),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
-    plugin_id: str = Field(index=True, max_length=100)
-    name: str = Field(max_length=200)
-    version: str = Field(default="1.0.0", max_length=50)
-    hooks: str = Field(default="[]", description="钩子列表JSON")
-    code: str | None = Field(default=None)
+    plugin_id: str = Field(index=True, unique=True, max_length=100, description="插件唯一标识")
+    name: str = Field(max_length=200, description="插件名称")
+    
+    # 核心逻辑：关联到具体的自定义动作
+    custom_action_id: str = Field(
+        max_length=100, 
+        description="要执行的自定义动作ID (关联 CustomActionModel.action_id)"
+    )
+    
+    # 钩子类型：决定在什么时候执行
+    hook_type: str = Field(
+        max_length=50, 
+        description="钩子类型: before_action, after_action, on_error, on_success"
+    )
+    
     description: str = Field(default="", max_length=500)
-    author: str = Field(default="", max_length=100)
-    config_schema: str = Field(default="{}", description="配置定义JSON")
-    default_config: str = Field(default="{}", description="默认配置JSON")
-    user_data: str | None = Field(default=None, description="自定义数据JSON")
-    mid: int = Field(index=True)
+    mid: int = Field(index=True, description="用户ID")
     is_enabled: bool = Field(default=True)
-    priority: int = Field(default=100)
+    is_public: bool = Field(default=False, description="是否公开给所有用户")
+    priority: int = Field(default=100, description="执行优先级，数值越小越先执行")
+    likes_count: int = Field(default=0, description="点赞数")
+    reports_count: int = Field(default=0, description="举报数")
+    is_verified: bool = Field(default=False, description="是否经过官方验证")
+    forks_count: int = Field(default=0, description="被 Fork 次数")
+    forked_from_id: int | None = Field(
+        default=None,
+        foreign_key="user_plugin.id",
+        description="Fork 来源的插件ID"
+    )
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
-
-    def get_hooks(self) -> List[str]:
-        try:
-            return json.loads(self.hooks)
-        except:
-            return []
-
-    def set_hooks(self, hooks: List[str]):
-        self.hooks = json.dumps(hooks, ensure_ascii=False)
-
-    def get_config_schema(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.config_schema)
-        except:
-            return {}
-
-    def set_config_schema(self, schema: Dict[str, Any]):
-        self.config_schema = json.dumps(schema, ensure_ascii=False)
-
-    def get_default_config(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.default_config)
-        except:
-            return {}
-
-    def set_default_config(self, config: Dict[str, Any]):
-        self.default_config = json.dumps(config, ensure_ascii=False)
-
-    def get_user_data(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.user_data) if self.user_data else {}
-        except:
-            return {}
-
-    def set_user_data(self, data: Dict[str, Any]):
-        self.user_data = json.dumps(data, ensure_ascii=False) if data else None
 
 
 class UserWorkflowModel(SQLModel, table=True):
@@ -264,26 +265,42 @@ class UserWorkflowModel(SQLModel, table=True):
     workflow_id 自动生成 UUID。
     """
     __tablename__ = "user_workflow"
+    __table_args__ = (
+        # 同一用户下名称必须唯一（类似 GitHub 仓库命名）
+        Index('idx_user_workflow_name_unique', 'mid', 'name', unique=True),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     workflow_id: str = Field(
         index=True,
+        unique=True,  # 外键引用需要唯一性
         max_length=100,
         default="",
         description="工作流唯一标识，自动生成UUID"
     )
     name: str = Field(max_length=200, description="显示名称，支持重命名")
     version: str = Field(default="1.0.0", max_length=50)
-    steps: str = Field(default="[]", description="步骤列表JSON")
+    steps: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON), description="步骤列表JSON")
     on_error: str = Field(default="stop", max_length=50)
     description: str = Field(default="", max_length=500)
     author: str = Field(default="", max_length=100)
-    tags: str = Field(default="[]")
-    user_data: str | None = Field(default=None, description="自定义数据JSON，支持工作流级变量")
+    tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    user_data: Dict[str, Any] | None = Field(default=None, sa_column=Column(JSON), description="自定义数据JSON，支持工作流级变量")
     mid: int = Field(index=True)
     is_enabled: bool = Field(default=True)
+    is_public: bool = Field(default=False, description="是否公开给所有用户")
     trigger_type: str = Field(default="manual", max_length=50)
-    trigger_config: str = Field(default="{}")
+    trigger_config: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # 移除了 enabled_plugins JSON 字段，改用 WorkflowPluginLink 关联表
+    likes_count: int = Field(default=0, description="点赞数")
+    reports_count: int = Field(default=0, description="举报数")
+    is_verified: bool = Field(default=False, description="是否经过官方验证")
+    forks_count: int = Field(default=0, description="被 Fork 次数")
+    forked_from_id: int | None = Field(
+        default=None,
+        foreign_key="user_workflow.id",
+        description="Fork 来源的工作流ID"
+    )
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -292,42 +309,6 @@ class UserWorkflowModel(SQLModel, table=True):
         # 自动生成 workflow_id
         if not self.workflow_id:
             self.workflow_id = str(uuid.uuid4())
-
-    def get_steps(self) -> List[Dict[str, Any]]:
-        try:
-            return json.loads(self.steps)
-        except:
-            return []
-
-    def set_steps(self, steps: List[Dict[str, Any]]):
-        self.steps = json.dumps(steps, ensure_ascii=False)
-
-    def get_tags(self) -> List[str]:
-        try:
-            return json.loads(self.tags)
-        except:
-            return []
-
-    def set_tags(self, tags: List[str]):
-        self.tags = json.dumps(tags, ensure_ascii=False)
-
-    def get_trigger_config(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.trigger_config)
-        except:
-            return {}
-
-    def set_trigger_config(self, config: Dict[str, Any]):
-        self.trigger_config = json.dumps(config, ensure_ascii=False)
-
-    def get_user_data(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.user_data) if self.user_data else {}
-        except:
-            return {}
-
-    def set_user_data(self, data: Dict[str, Any]):
-        self.user_data = json.dumps(data, ensure_ascii=False) if data else None
 
 
 class WorkflowExecutionLogModel(SQLModel, table=True):
@@ -345,34 +326,15 @@ class WorkflowExecutionLogModel(SQLModel, table=True):
     steps_count: int = Field(default=0)
     success_count: int = Field(default=0)
     failed_count: int = Field(default=0)
-    results: str = Field(default="[]")
-    user_data: str | None = Field(default=None, description="执行时的自定义数据")
+    results: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
+    user_data: Dict[str, Any] | None = Field(default=None, sa_column=Column(JSON), description="执行时的自定义数据")
     started_at: datetime = Field(default_factory=datetime.now)
     finished_at: datetime | None = Field(default=None)
-
-    def get_results(self) -> List[Dict[str, Any]]:
-        try:
-            return json.loads(self.results)
-        except:
-            return []
-
-    def set_results(self, results: List[Dict[str, Any]]):
-        self.results = json.dumps(results, ensure_ascii=False)
-
-    def get_user_data(self) -> Dict[str, Any]:
-        try:
-            return json.loads(self.user_data) if self.user_data else {}
-        except:
-            return {}
-
-    def set_user_data(self, data: Dict[str, Any]):
-        self.user_data = json.dumps(data, ensure_ascii=False) if data else None
 
 
 __all__ = [
     # 枚举
     "ActionType",
-    "ActionTypeEnum",
     "ErrorHandlingEnum",
     "PluginHookEnum",
     # 执行相关模型
@@ -381,9 +343,12 @@ __all__ = [
     "ActionResult",
     "ActionContext",
     # 数据库模型
-    "WorkflowStepModel",
+    "WorkflowStep",
     "CustomActionModel",
+    "WorkflowPluginLink",
+    "ActionPluginLink",
     "UserPluginModel",
     "UserWorkflowModel",
     "WorkflowExecutionLogModel",
+    "ActionMetadataResponse"
 ]

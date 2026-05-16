@@ -47,8 +47,15 @@ class Settings(BaseSettings):
     # 浏览器页面数量限制配置
     browser_max_pages_per_context: int = 10  # 每个浏览器上下文的最大页面数
     
+    # 工作流控制流嵌套深度限制
+    workflow_max_nesting_depth: int = 10  # 最大嵌套深度（Loop/IfElse）
+    
     # WebRTC 视频流配置
     browser_webrtc_idle_timeout: int = 300  # WebRTC 流最大闲置时间（秒），默认5分钟
+    
+    # Alembic 数据库迁移配置
+    alembic_auto_migrate: bool = True  # 是否在应用启动时自动执行数据库迁移
+    alembic_upgrade_target: str = "head"  # 迁移目标版本，默认为最新版本
 
 
 

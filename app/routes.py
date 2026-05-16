@@ -19,13 +19,13 @@ def setup_routes(app: FastAPI):
     """设置应用的所有路由和异常处理器"""
     # 注册路由 - 按层级顺序
     # 1. 配置管理层
-    app.include_router(browser.router)  # /api/v1/browser/*
+    app.include_router(browser.router)
 
     # 2. 运行时管理层
-    app.include_router(browser_control.router)  # /api/v1/browser/session/*
+    app.include_router(browser_control.router)
 
     # 3. 系统管理层
-    app.include_router(admin.router)  # /api/{admin_base_path}/*
+    app.include_router(admin.router)
 
     # 注册异常处理器
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)

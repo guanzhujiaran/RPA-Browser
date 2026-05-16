@@ -2,11 +2,8 @@ import os
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
-
 from playwright.async_api import BrowserContext
 from pydantic import computed_field
-
-from app.config import settings
 from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
 from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
     browser_exec_info_helper,
@@ -70,7 +67,7 @@ class BaseUndetectedPlaywright:
         botright_instance: Botright = await Botright(
             headless=self.headless,
             block_images=False,
-            user_action_layer=False,
+            user_action_layer=True, # 操作的时候显示操作的内容
             fingerprint=fingerprint_params.browserforge_fingerprint_object,
             execute_path=browser_exec_info.exec_path,
         )
@@ -81,5 +78,6 @@ class BaseUndetectedPlaywright:
             viewport=fingerprint_params.viewport,
             screen=fingerprint_params.screen,
         )
+        await browser.new_page()  # 使用新的mock好的页面,直接调用new_page就行了,botright会自动处理关闭初始页面
         yield browser
         await browser.close()

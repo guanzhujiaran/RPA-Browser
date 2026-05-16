@@ -67,9 +67,8 @@ class RPAOperationService:
     async def scroll_page(page: Page, params: RPAScrollParams) -> RPAResponse:
         """滚动页面"""
         try:
-            await page.evaluate(
-                f"window.scrollTo({{top: {params.y}, left: {params.x}, behavior: '{params.behavior}'}})"
-            )
+            # 🔒 安全修复：使用 Playwright 原生 API 替代 page.evaluate()
+            await page.mouse.wheel(params.x, params.y)
             return RPAResponse(success=True, data={"message": "滚动成功"})
         except Exception as e:
             return RPAResponse(success=False, error=str(e))
@@ -96,12 +95,15 @@ class RPAOperationService:
 
     @staticmethod
     async def evaluate_script(page: Page, params: RPAEvaluateParams) -> RPAResponse:
-        """执行JavaScript"""
-        try:
-            result = await page.evaluate(params.script, *params.args)
-            return RPAResponse(success=True, data={"result": result})
-        except Exception as e:
-            return RPAResponse(success=False, error=str(e))
+        """
+        【已禁用】执行JavaScript
+        
+        ⚠️ 安全警告：此操作已被禁用以防止恶意代码执行
+        """
+        return RPAResponse(
+            success=False, 
+            error="❌ evaluate_script 操作已被禁用以防止安全风险。请使用系统提供的预定义操作来完成自动化任务。"
+        )
 
     @staticmethod
     async def wait_for_element(page: Page, params: RPAWaitParams) -> RPAResponse:

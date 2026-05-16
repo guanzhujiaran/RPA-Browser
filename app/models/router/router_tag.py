@@ -1,13 +1,13 @@
-from enum import Enum
+import sys
 
-
-# 兼容 Python 3.10 的 StrEnum
-class StrEnum(str, Enum):
-    """字符串枚举，兼容 Python 3.10"""
-    def __str__(self):
-        return str(self.value)
-
-
+# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
+if sys.version_info >= (3, 11):
+    from enum import StrEnum
+else:
+    from enum import Enum
+    class StrEnum(str, Enum):
+        """Python 3.10 兼容的 StrEnum"""
+        pass
 
 
 class RouterTag(StrEnum):
@@ -20,7 +20,9 @@ class RouterTag(StrEnum):
     browser_control = "浏览器实时控制"  # 运行时操作控制
     session_management = "会话管理"  # 心跳、状态查询
     operation_control = "自动化控制"  # 暂停/恢复
-    action_management = "操作管理"  # 操作执行、插件、工作流
+    action_management = "自定义操作管理"  # Custom Action CRUD
+    workflow_management = "工作流管理"  # Workflow CRUD 和执行
+    plugin_management = "插件挂载管理"  # Plugin 生命周期钩子配置
     webrtc_video_stream = "WebRTC 视频流"  # WebRTC 超低延迟实时画面传输
     session_control = "浏览器会话控制"
     # === 系统管理 ===
