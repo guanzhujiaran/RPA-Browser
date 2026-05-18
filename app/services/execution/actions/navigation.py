@@ -11,7 +11,7 @@ from loguru import logger
 
 from app.services.execution.actions.base import BaseAction
 from app.models.execution.params import NavigateParams, NewPageParams
-from app.models.core.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext
+from app.models.database.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext
 from app.models.core.browser.security import SecurityCheckResult
 from app.config import settings
 

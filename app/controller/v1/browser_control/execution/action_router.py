@@ -21,7 +21,7 @@ from app.models.workflow.models import (
     ActionForkRequest,
     ActionForkResponse,
 )
-from app.models.core.workflow.models import ActionMetadataResponse
+from app.models.database.workflow.models import ActionMetadataResponse
 from app.models.base.base_sqlmodel import BasePaginationResp
 from ..base import new_action_router
 

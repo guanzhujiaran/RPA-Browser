@@ -6,15 +6,12 @@ from typing import Any, Type
 from sqlmodel import SQLModel
 from loguru import logger
 
-from app.models.core.workflow.models import (
+from app.models.database.workflow.models import (
     ActionParameter,
     ActionMetadata,
     ActionResult,
     ActionContext,
 )
-import typing
-import types
-from enum import Enum
 
 class BaseAction(ABC):
     """操作基类"""
@@ -75,6 +72,4 @@ class BaseAction(ABC):
     
     def get_full_schema(self) -> dict[str, Any] | None:
         """获取完整的 JSON Schema（包含 $defs），用于前端解析 $ref 引用"""
-        if not self.params_model:
-            return None
-        return self.params_model.model_json_schema()
+        return None if not self.params_model else self.params_model.model_json_schema()

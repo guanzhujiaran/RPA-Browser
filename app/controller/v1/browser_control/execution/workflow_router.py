@@ -11,6 +11,7 @@ from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from fastapi import APIRouter, Depends
 from app.services.execution.crud_service import workflow_crud
+from app.services.RPA_browser.rpa_operation_service import RPAOperationService
 from app.models.workflow.models import (
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
@@ -413,9 +414,6 @@ async def execute_workflow_step(
     
     执行工作流中的指定步骤，用于调试和逐步执行
     """
-    from app.services.execution.rpa_operation_service import RPAOperationService
-    from app.models.browser_control.page_model import BrowserPageActivateRequest
-    
     try:
         # 验证步骤索引
         if request.step_index < 0 or request.step_index >= len(request.steps):
@@ -432,12 +430,21 @@ async def execute_workflow_step(
         # 激活页面（如果指定了 page_index）
         if request.page_index is not None:
             try:
-                from ..page_management import page_crud
-                pages = await page_crud.list_by_browser(request.browser_id)
+                # 获取浏览器会话
+                from app.services.RPA_browser.live_service import LiveService
+                session = await LiveService.get_or_create_browser_session(
+                    auth.mid, request.browser_id, headless=False
+                )
+                
+                # 获取页面列表
+                pages_response = await RPAOperationService.get_pages_list(session)
+                pages = pages_response.pages
+                
                 if request.page_index < len(pages):
-                    page = pages[request.page_index]
-                    await page_crud.activate_page(page.page_id)
-                    logger.info(f"[Workflow Step Execute] 已激活页面: {page.title}")
+                    page_info = pages[request.page_index]
+                    # 切换到指定页面
+                    result = await RPAOperationService.switch_page(session, request.page_index)
+                    logger.info(f"[Workflow Step Execute] 已激活页面: {page_info.title}")
             except Exception as e:
                 logger.warning(f"[Workflow Step Execute] 激活页面失败: {e}")
         

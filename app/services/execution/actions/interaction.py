@@ -12,7 +12,7 @@ from app.models.execution.params import (
     ScrollParams,
     WaitParams,
 )
-from app.models.core.workflow.models import (
+from app.models.database.workflow.models import (
     ActionType,
     ActionMetadata,
     ActionResult,

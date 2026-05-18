@@ -5,14 +5,13 @@ Runtime 模块 - 浏览器 API 模型
 """
 
 from typing import List
-
-from pydantic import computed_field, field_validator
+from pydantic import field_validator
 from sqlmodel import SQLModel
-
 from app.models.base.base_sqlmodel import BasePaginationReq
-from app.models.core.browser.fingerprint import Int32
-from app.models.core.browser.info import UserBrowserInfoWithoutPlugin
-from botright.modules.proxy_manager import ProxyManager, SplitError
+from app.models.core.browser.fingerprint import Int32, BaseBrowserId,\
+    BaseBrowserIdOptional, BaseUserMid, BaseFeedbackInfo
+from app.models.database.browser.info import UserBrowserInfoWithoutPlugin
+from botright.modules.proxy_manager import SplitError
 
 
 # ========================
@@ -27,10 +26,8 @@ class BrowserFingerprintCreateParams(SQLModel):
     is_desktop: bool = True
 
 
-class BrowserFingerprintUpdateParams(SQLModel):
+class BrowserFingerprintUpdateParams(BaseBrowserId):
     """更新浏览器指纹参数"""
-
-    id: int | str
     fingerprint_int: Int32 | None = None
     fingerprint_platform: str | None = None
     fingerprint_platform_version: str | None = None
@@ -45,18 +42,10 @@ class BrowserFingerprintUpdateParams(SQLModel):
     proxy_server: str | None = None
     custom_name: str | None = None
 
-    @field_validator("id", mode="before")
-    @classmethod
-    def validate_id(cls, v):
-        if isinstance(v, str):
-            return int(v)
-        return v
 
-
-class BrowserFingerprintUpsertParams(SQLModel):
+class BrowserFingerprintUpsertParams(BaseBrowserIdOptional):
     """创建或更新浏览器指纹参数 (upsert)"""
 
-    id: int | str | None = None
     fingerprint_int: Int32 | None = None
     fingerprint_platform: str | None = None
     fingerprint_platform_version: str | None = None
@@ -70,13 +59,6 @@ class BrowserFingerprintUpsertParams(SQLModel):
     timezone: str | None = None
     proxy_server: str | None = None
     custom_name: str | None = None
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def validate_id(cls, v):
-        if v is not None and isinstance(v, str):
-            return int(v)
-        return v
 
     @field_validator("proxy_server", mode="before")
     @classmethod
@@ -84,7 +66,7 @@ class BrowserFingerprintUpsertParams(SQLModel):
         if v is not None:
             split_proxy = v.split(":")
             if len(split_proxy) == 2:
-                pass
+                ...
             elif len(split_proxy) == 3:
                 if "@" in v:
                     helper = [_.split(":") for _ in v.split("@")]
@@ -106,143 +88,60 @@ class BrowserFingerprintUpsertParams(SQLModel):
         Args:
             split_proxy (List[str]): A list containing the components of the proxy string.
         """
-        if not any([_.isdigit() for _ in split_proxy]):
+        if not any(_.isdigit() for _ in split_proxy):
             raise SplitError("No ProxyPort could be detected")
-        if split_proxy[1].isdigit():
-            pass
-        elif split_proxy[3].isdigit():
-            pass
-        else:
+        elif not split_proxy[3].isdigit():
+            ...
+        elif not split_proxy[3].isdigit():
             raise SplitError(f"Proxy Format ({proxy}) isnt supported")
 
 
-class BrowserFingerprintQueryParams(SQLModel):
+class BrowserFingerprintQueryParams(BaseBrowserId):
     """查询浏览器指纹参数"""
-
-    id: int | str
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def validate_id(cls, v):
-        if isinstance(v, str):
-            return int(v)
-        return v
+    ...
 
 
-class BrowserFingerprintDeleteParams(SQLModel):
+class BrowserFingerprintDeleteParams(BaseBrowserId):
     """删除浏览器指纹参数"""
 
-    id: int | str
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def validate_id(cls, v):
-        if isinstance(v, str):
-            return int(v)
-        return v
+    ...
 
 
 class BrowserFingerprintListParams(BasePaginationReq):
     """分页查询浏览器指纹参数"""
 
-    pass
+    ...
 
 
-class BrowserFingerprintRenameParams(SQLModel):
+class BrowserFingerprintRenameParams(BaseBrowserId):
     """重命名浏览器指纹参数"""
-
-    id: int | str
     custom_name: str | None = None
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def validate_id(cls, v):
-        if isinstance(v, str):
-            return int(v)
-        return v
-
 
 # ========================
 # 浏览器指纹相关响应
 # ========================
 
 
-class BrowserFingerprintCreateResp(SQLModel):
+class BrowserFingerprintCreateResp(BaseUserMid,BaseBrowserId):
     """创建浏览器指纹响应"""
-
-    mid: int
-    id: int
-
-    @computed_field
-    @property
-    def mid_str(self) -> str:
-        return str(self.mid)
-
-    @computed_field
-    @property
-    def id_str(self) -> str:
-        return str(self.id)
+    ...
 
 
-class BrowserFingerprintUpdateResp(SQLModel):
+class BrowserFingerprintUpdateResp(BaseUserMid,BaseBrowserId,BaseFeedbackInfo):
     """更新浏览器指纹响应"""
+    ...
 
-    mid: int
-    id: int
-    is_success: bool = True
-
-    @computed_field
-    @property
-    def mid_str(self) -> str:
-        return str(self.mid)
-
-    @computed_field
-    @property
-    def id_str(self) -> str:
-        return str(self.id)
-
-
-class BrowserFingerprintDeleteResp(SQLModel):
+class BrowserFingerprintDeleteResp(BaseUserMid,BaseBrowserId,BaseFeedbackInfo):
     """删除浏览器指纹响应"""
-
-    mid: int
-    id: int
-    is_success: bool = True
-
-    @computed_field
-    @property
-    def mid_str(self) -> str:
-        return str(self.mid)
-
-    @computed_field
-    @property
-    def id_str(self) -> str:
-        return str(self.id)
-
-
-class BrowserFingerprintRenameResp(SQLModel):
+    ...
+class BrowserFingerprintRenameResp(BaseUserMid,BaseBrowserId,BaseFeedbackInfo):
     """重命名浏览器指纹响应"""
-
-    mid: int
-    id: int
     custom_name: str | None = None
-    is_success: bool = True
-
-    @computed_field
-    @property
-    def mid_str(self) -> str:
-        return str(self.mid)
-
-    @computed_field
-    @property
-    def id_str(self) -> str:
-        return str(self.id)
 
 
 class BrowserFingerprintQueryResp(UserBrowserInfoWithoutPlugin):
     """查询浏览器指纹响应"""
-
-    pass
+    ...
 
 
 # ========================
@@ -250,49 +149,22 @@ class BrowserFingerprintQueryResp(UserBrowserInfoWithoutPlugin):
 # ========================
 
 
-class BrowserOperationOpenUrlParams(SQLModel):
+class BrowserOperationOpenUrlParams(BaseBrowserId):
     """打开浏览器URL参数"""
-
-    browser_id: int | str
     url: str
     headless: bool = False
 
-    @field_validator("browser_id", mode="before")
-    @classmethod
-    def validate_browser_id(cls, v):
-        if isinstance(v, str):
-            return int(v)
-        return v
 
-
-class BrowserOperationScreenshotParams(SQLModel):
+class BrowserOperationScreenshotParams(BaseBrowserId):
     """浏览器截图参数"""
-
-    browser_id: int | str
     full_page: bool = True
     headless: bool = False
     image_type: str | None = "png"
 
-    @field_validator("browser_id", mode="before")
-    @classmethod
-    def validate_browser_id(cls, v):
-        if isinstance(v, str):
-            return int(v)
-        return v
 
-
-class BrowserOperationReleaseParams(SQLModel):
+class BrowserOperationReleaseParams(BaseBrowserId):
     """释放浏览器参数"""
-
-    browser_id: int | str
-
-    @field_validator("browser_id", mode="before")
-    @classmethod
-    def validate_browser_id(cls, v):
-        if isinstance(v, str):
-            return int(v)
-        return v
-
+    ...
 
 # ========================
 # 浏览器操作相关响应
@@ -312,47 +184,9 @@ class BrowserOperationScreenshotResp(SQLModel):
     image_base64: str
 
 
-class BrowserOperationReleaseResp(SQLModel):
+class BrowserOperationReleaseResp(BaseUserMid,BaseBrowserId):
     """释放浏览器响应"""
-
-    mid: int
-    browser_id: int
     is_success: bool = True
-
-    @computed_field
-    @property
-    def mid_str(self) -> str:
-        return str(self.mid)
-
-    @computed_field
-    @property
-    def browser_id_str(self) -> str:
-        return str(self.browser_id)
-
-
-# ========================
-# 向后兼容的别名
-# ========================
-
-
-UserBrowserInfoCreateParams = BrowserFingerprintCreateParams
-UserBrowserInfoUpsertParams = BrowserFingerprintUpsertParams
-UserBrowserInfoCreateResp = BrowserFingerprintCreateResp
-UserBrowserInfoCountParams = SQLModel
-UserBrowserInfoListParams = BrowserFingerprintListParams
-UserBrowserInfoReadParams = BrowserFingerprintQueryParams
-UserBrowserInfoReadResp = BrowserFingerprintQueryResp
-UserBrowserInfoUpdateParams = BrowserFingerprintUpdateParams
-UserBrowserInfoUpdateResp = BrowserFingerprintUpdateResp
-UserBrowserInfoDeleteParams = BrowserFingerprintDeleteParams
-UserBrowserInfoDeleteResp = BrowserFingerprintDeleteResp
-BrowserOpenUrlParams = BrowserOperationOpenUrlParams
-BrowserOpenUrlResp = BrowserOperationOpenUrlResp
-BrowserScreenshotParams = BrowserOperationScreenshotParams
-BrowserScreenshotResp = BrowserOperationScreenshotResp
-BrowserReleaseParams = BrowserOperationReleaseParams
-BrowserReleaseResp = BrowserOperationReleaseResp
-
 
 __all__ = [
     # Fingerprint Params
@@ -377,22 +211,4 @@ __all__ = [
     "BrowserOperationOpenUrlResp",
     "BrowserOperationScreenshotResp",
     "BrowserOperationReleaseResp",
-    # Aliases
-    "UserBrowserInfoCreateParams",
-    "UserBrowserInfoUpsertParams",
-    "UserBrowserInfoCreateResp",
-    "UserBrowserInfoCountParams",
-    "UserBrowserInfoListParams",
-    "UserBrowserInfoReadParams",
-    "UserBrowserInfoReadResp",
-    "UserBrowserInfoUpdateParams",
-    "UserBrowserInfoUpdateResp",
-    "UserBrowserInfoDeleteParams",
-    "UserBrowserInfoDeleteResp",
-    "BrowserOpenUrlParams",
-    "BrowserOpenUrlResp",
-    "BrowserScreenshotParams",
-    "BrowserScreenshotResp",
-    "BrowserReleaseParams",
-    "BrowserReleaseResp",
 ]

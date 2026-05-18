@@ -6,7 +6,7 @@ import httpx
 
 from app.services.execution.actions.base import BaseAction
 from app.models.execution.params import LLMParams
-from app.models.core.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext
+from app.models.database.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext
 
 
 class LLMAction(BaseAction):

@@ -8,17 +8,13 @@
 4. 操作执行结果可以传递给下一个操作
 """
 
-from typing import Any, Type
+from typing import Type
 from sqlmodel import select
-from loguru import logger
 
 # 从模型层导入
-from app.models.core.workflow.models import (
+from app.models.database.workflow.models import (
     CustomActionModel,
-    ActionType,
     ActionMetadata,
-    ActionResult,
-    ActionContext,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
 
@@ -138,10 +134,8 @@ class ActionRegistry:
     def get_all_actions(self) -> list[ActionMetadata]:
         """获取所有系统级操作的元数据（内置 + 系统自定义）"""
         result = []
-        for action_class in self._builtin_actions.values():
-            result.append(action_class().get_metadata())
-        for action_class in self._actions.values():
-            result.append(action_class().get_metadata())
+        result.extend(action_class().get_metadata() for action_class in self._builtin_actions.values())
+        result.extend(action_class().get_metadata() for action_class in self._actions.values())
         return result
 
     def get_action_metadata(self, action_id: str) -> ActionMetadata | None:

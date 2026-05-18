@@ -1,14 +1,3 @@
-import sys
-
-# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:
-    from enum import Enum
-    class StrEnum(str, Enum):
-        """Python 3.10 兼容的 StrEnum"""
-        pass
-
 """
 Core 模块 - 浏览器指纹模型
 
@@ -25,9 +14,9 @@ from browserforge.fingerprints import (
 )
 from dacite import from_dict
 from playwright.async_api import ViewportSize
-from pydantic import model_validator
-from pydantic import computed_field
+from pydantic import model_validator,computed_field, field_validator
 import sys
+from enum import StrEnum
 
 Int32 = Annotated[int, Field(ge=-2147483648, le=2147483647)]
 
@@ -57,6 +46,55 @@ class LogPluginLogLevelEnum(StrEnum):
     WARNING = "WARNING"
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
+
+class BaseBrowserId(SQLModel):
+    """
+    浏览器指纹基础参数模型
+    """
+    browser_id: int | str
+    @field_validator("browser_id", mode="before")
+    @classmethod
+    def validate_id(cls, v):
+        return int(v) if v is not None and isinstance(v, str) else v
+
+    @computed_field
+    @property
+    def browser_id_str(self) -> str:
+        return str(self.browser_id)
+    
+
+class BaseBrowserIdOptional(SQLModel):
+    """
+    浏览器指纹基础参数模型
+    """
+    browser_id: int | str | None = None
+    @field_validator("browser_id", mode="before")
+    @classmethod
+    def validate_id(cls, v):
+        return int(v) if v is not None and isinstance(v, str) else v
+
+    @computed_field
+    @property
+    def browser_id_str(self) -> str:
+        return str(self.browser_id or '')
+
+class BaseUserMid(SQLModel):
+    """
+    用户ID基础参数模型
+    """
+    mid: int | str
+    @field_validator("mid", mode="before")
+    @classmethod
+    def validate_id(cls, v):
+        return int(v) if v is not None and isinstance(v, str) else v
+    
+    @computed_field
+    @property
+    def mid_str(self) -> str:
+        return str(self.mid)
+
+class BaseFeedbackInfo(SQLModel):
+    is_success: bool = True
 
 
 class BaseFingerprintBrowserInitParams(SQLModel):
@@ -219,4 +257,8 @@ __all__ = [
     "LogPluginLogLevelEnum",
     "Int32",
     "BaseFingerprintBrowserInitParams",
+    "BaseBrowserIdOptional",
+    "BaseBrowserId",
+    "BaseUserMid",
+    "BaseFeedbackInfo"
 ]

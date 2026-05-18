@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import uuid
 from sqlmodel import select, update
 
-from app.models.core.workflow.models import (
+from app.models.database.workflow.models import (
     CustomActionModel,
     UserPluginModel,
     UserWorkflowModel,

@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 from datetime import datetime
 from sqlmodel import SQLModel, Field
 from app.models.base.base_sqlmodel import BasePaginationReq
-from app.models.core.workflow.models import ActionType
+from app.models.database.workflow.models import ActionType
 
 
 class WorkflowStepRequest(SQLModel):

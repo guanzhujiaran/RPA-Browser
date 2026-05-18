@@ -18,7 +18,7 @@ from app.models.workflow.models import (
     PluginForkRequest,
     PluginForkResponse,
 )
-from app.models.core.workflow.models import UserPluginModel
+from app.models.database.workflow.models import UserPluginModel
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.services.execution.crud_service import plugin_crud, action_crud, workflow_crud

@@ -1,13 +1,34 @@
 """Alembic 数据库迁移工具"""
-import logging
 from pathlib import Path
 from alembic.config import Config
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from sqlalchemy.exc import OperationalError
-
-logger = logging.getLogger(__name__)
-
+from alembic.script import ScriptDirectory
+from alembic.runtime.migration import MigrationContext
+from app.models.database.workflow.models import (
+    CustomActionModel,
+    UserPluginModel,
+    UserWorkflowModel,
+    WorkflowPluginLink,
+    ActionPluginLink,
+    WorkflowExecutionLogModel,
+)
+from app.models.database.browser.info import (
+    UserBrowserInfo,
+    UserBrowserDefaultSetting,
+)
+from app.models.database.notify.models import NotificationConfig
+import pymysql
+from urllib.parse import urlparse, parse_qs, urlencode
+# 检查当前版本
+from alembic.script import ScriptDirectory
+from alembic.runtime.migration import MigrationContext
+from app.config import settings
+from alembic.script import ScriptDirectory
+from alembic.runtime.migration import MigrationContext
+from app.config import settings
+from loguru import logger
 
 def _ensure_database_exists(db_url: str) -> None:
     """
@@ -16,8 +37,7 @@ def _ensure_database_exists(db_url: str) -> None:
     Args:
         db_url: 数据库连接 URL
     """
-    import pymysql
-    from urllib.parse import urlparse, parse_qs, urlencode
+
     
     # 解析 URL
     parsed = urlparse(db_url)
@@ -130,10 +150,7 @@ def run_alembic_migrations(
         script_location = str(project_root / "alembic")
         alembic_cfg.set_main_option("script_location", script_location)
     
-    # 检查当前版本
-    from alembic.script import ScriptDirectory
-    from alembic.runtime.migration import MigrationContext
-    from app.config import settings
+
     
     # 获取同步引擎用于迁移检查
     sync_url = settings.mysql_browser_info_url
@@ -227,9 +244,7 @@ def check_alembic_status(alembic_ini_path: str | None = None) -> dict:
         script_location = str(project_root / "alembic")
         alembic_cfg.set_main_option("script_location", script_location)
     
-    from alembic.script import ScriptDirectory
-    from alembic.runtime.migration import MigrationContext
-    from app.config import settings
+
     
     # 获取同步 URL
     sync_url = settings.mysql_browser_info_url
@@ -264,57 +279,37 @@ def _check_and_autogenerate_if_needed(alembic_cfg: Config, engine) -> bool:
     Returns:
         bool: 是否生成了新的迁移脚本
     """
-    try:
-        from alembic.script import ScriptDirectory
-        from alembic.runtime.migration import MigrationContext
-        from app.models.core.workflow.models import (
-            CustomActionModel,
-            UserPluginModel,
-            UserWorkflowModel,
-            WorkflowPluginLink,
-            ActionPluginLink,
-            WorkflowExecutionLogModel,
+    
+    # 获取所有模型的 metadata
+    target_metadata = CustomActionModel.metadata
+    
+    # 比较差异
+    script_dir = ScriptDirectory.from_config(alembic_cfg)
+    with engine.connect() as conn:
+        migration_context = MigrationContext.configure(conn)
+        diff = compare_metadata(
+            migration_context,
+            target_metadata
         )
-        from app.models.core.browser.info import (
-            UserBrowserInfo,
-            UserBrowserDefaultSetting,
-        )
-        from app.models.core.notify.models import NotificationConfig
-        
-        # 获取所有模型的 metadata
-        target_metadata = CustomActionModel.metadata
-        
-        # 比较差异
-        script_dir = ScriptDirectory.from_config(alembic_cfg)
-        with engine.connect() as conn:
-            migration_context = MigrationContext.configure(conn)
-            diff = compare_metadata(
-                migration_context,
-                target_metadata
-            )
-        
-        if not diff:
-            logger.info(f"✅ 模型与数据库结构完全一致，无需生成迁移")
-            return False
-        
-        # 有差异，生成迁移脚本
-        logger.warning(f"⚠️  检测到 {len(diff)} 处结构差异:")
-        for change in diff:
-            logger.warning(f"   - {change}")
-        
-        logger.info(f"🚀 正在自动生成迁移脚本...")
-        
-        # 使用 alembic revision --autogenerate
-        command.revision(
-            alembic_cfg,
-            message="Auto-generated migration (development mode)",
-            autogenerate=True
-        )
-        
-        logger.info(f"✅ 迁移脚本已生成，请检查 alembic/versions/ 目录")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ 自动生成迁移失败: {e}")
-        logger.exception("详细错误信息:")
+    
+    if not diff:
+        logger.info(f"✅ 模型与数据库结构完全一致，无需生成迁移")
         return False
+    
+    # 有差异，生成迁移脚本
+    logger.warning(f"⚠️  检测到 {len(diff)} 处结构差异:")
+    for change in diff:
+        logger.warning(f"   - {change}")
+    
+    logger.info(f"🚀 正在自动生成迁移脚本...")
+    
+    # 使用 alembic revision --autogenerate
+    command.revision(
+        alembic_cfg,
+        message="Auto-generated migration (development mode)",
+        autogenerate=True
+    )
+    
+    logger.info(f"✅ 迁移脚本已生成，请检查 alembic/versions/ 目录")
+    return True
+

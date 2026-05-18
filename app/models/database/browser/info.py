@@ -10,6 +10,7 @@ from sqlalchemy import BIGINT
 from sqlmodel import Field, SQLModel
 
 from app.models.core.browser.fingerprint import (
+    BaseBrowserId,
     BaseFingerprintBrowserInitParams,
     PlatformEnum,
     BrowserEnum,
@@ -34,19 +35,15 @@ class UserBrowserUserId(BaseSQLModel):
         return str(self.mid)
 
 
-class UserBrowserInfoBase(UserBrowserUserId):
+class UserBrowserInfoBase(UserBrowserUserId,BaseBrowserId):
     """用户浏览器信息基础模型"""
 
-    id: int = Field(
+    browser_id: int = Field(
         sa_type=BIGINT,
         default_factory=lambda: next(snowflake_generator),
         primary_key=True,
     )
 
-    @computed_field
-    @property
-    def id_str(self) -> str:
-        return str(self.id)
 
 class UserBrowserServerSideDefaultSetting(UserBrowserInfoBase):
     default_proxy_server:str | None = settings.default_proxy_server

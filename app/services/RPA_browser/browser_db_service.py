@@ -1,7 +1,7 @@
 from sqlalchemy.sql.functions import count
 from sqlmodel import select, and_
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models.core.browser.info import (
+from app.models.database.browser.info import (
     UserBrowserInfo,
     UserBrowserDefaultSetting,
     UserBrowserDefaultSettingRequest,
@@ -40,12 +40,12 @@ class BrowserDBService:
         """
         创建或更新浏览器指纹信息 (upsert)
 
-        如果提供了 id 则更新现有记录，否则创建新记录
+        如果提供了 browser_id 则更新现有记录，否则创建新记录
         """
-        if params.id is not None:
+        if params.browser_id is not None:
             # 更新现有记录
             stmt = select(UserBrowserInfo).where(
-                and_(UserBrowserInfo.id == int(params.id), UserBrowserInfo.mid == mid)
+                and_(UserBrowserInfo.browser_id == int(params.browser_id), UserBrowserInfo.mid == mid)
             )
             result = await session.exec(stmt)
             browser_info = result.one_or_none()
@@ -55,12 +55,6 @@ class BrowserDBService:
 
             # 只更新提供的字段
             update_data = params.model_dump(exclude_unset=True, exclude={"id"})
-            for key, value in update_data.items():
-                setattr(browser_info, key, value)
-
-            session.add(browser_info)
-            await session.commit()
-            await session.refresh(browser_info)
         else:
             # 创建新记录
             # 将 UpsertParams 转换为 CreateParams
@@ -85,15 +79,17 @@ class BrowserDBService:
             update_data = params.model_dump(
                 exclude_unset=True, exclude={"id", "fingerprint_int"}
             )
-            for key, value in update_data.items():
-                setattr(browser_info, key, value)
 
-            # 先将browser_info提交到数据库，确保外键引用存在
-            session.add(browser_info)
-            await session.commit()
-            await session.refresh(browser_info)
+        # 统一处理属性更新
+        for key, value in update_data.items():
+            setattr(browser_info, key, value)
 
-        return BrowserFingerprintCreateResp(mid=mid, id=browser_info.id)
+        # 先将browser_info提交到数据库，确保外键引用存在
+        session.add(browser_info)
+        await session.commit()
+        await session.refresh(browser_info)
+
+        return BrowserFingerprintCreateResp(mid=mid, browser_id=browser_info.browser_id)
 
     @staticmethod
     async def create_fingerprint(
@@ -137,7 +133,7 @@ class BrowserDBService:
         stmt = select(UserBrowserInfo).where(
             and_(
                 UserBrowserInfo.mid == mid,
-                UserBrowserInfo.id == params.id,
+                UserBrowserInfo.browser_id == params.browser_id,
             )
         )
         result = await session.exec(stmt)
@@ -149,7 +145,7 @@ class BrowserDBService:
         # 将mid和id从整数转换为字符串，以匹配BrowserFingerprintQueryResp的期望类型
         browser_info_dict = browser_info.model_dump(by_alias=False)
         browser_info_dict["mid"] = str(browser_info_dict["mid"])
-        browser_info_dict["id"] = str(browser_info_dict["id"])
+        browser_info_dict["browser_id"] = str(browser_info_dict["id"])
         browser_info_dict["plugins"] = {}
         return BrowserFingerprintQueryResp(**browser_info_dict)
 
@@ -158,7 +154,7 @@ class BrowserDBService:
         params: BrowserFingerprintUpdateParams, mid: int, session: AsyncSession
     ) -> tuple[ResponseCode, bool, str]:
         stmt = select(UserBrowserInfo).where(
-            and_(UserBrowserInfo.id == params.id, UserBrowserInfo.mid == mid)
+            and_(UserBrowserInfo.browser_id == params.browser_id, UserBrowserInfo.mid == mid)
         )
         result = await session.exec(stmt)
         browser_info_row = result.one_or_none()
@@ -186,7 +182,7 @@ class BrowserDBService:
     ) -> tuple[ResponseCode, bool, str]:
         stmt = select(UserBrowserInfo).where(
             and_(
-                UserBrowserInfo.id == params.id,
+                UserBrowserInfo.browser_id == params.browser_id,
                 UserBrowserInfo.mid == mid,
             )
         )
@@ -201,7 +197,7 @@ class BrowserDBService:
             Path(__file__).parent.parent.parent.parent
             / "user_data_dir"
             / str(mid)
-            / str(params.id)
+            / str(params.browser_id)
         )
         if user_data_dir_path.exists():
             await asyncio.to_thread(
@@ -229,7 +225,7 @@ class BrowserDBService:
         """
         stmt = select(UserBrowserInfo).where(
             and_(
-                UserBrowserInfo.id == params.id,
+                UserBrowserInfo.browser_id == params.browser_id,
                 UserBrowserInfo.mid == mid,
             )
         )
@@ -246,7 +242,7 @@ class BrowserDBService:
 
         return BrowserFingerprintRenameResp(
             mid=mid,
-            id=browser_info.id,
+            browser_id=browser_info.browser_id,
             custom_name=browser_info.custom_name,
             is_success=True,
         )
@@ -259,8 +255,7 @@ class BrowserDBService:
             )
         )
         result = await session.exec(stmt)
-        res = result.one_or_none()
-        return res
+        return result.one_or_none()
 
     @staticmethod
     async def list_fingerprint(
@@ -288,17 +283,6 @@ class BrowserDBService:
         )
 
     @staticmethod
-    async def get_user_default_settings(
-        mid: int, session: AsyncSession
-    ) -> UserBrowserDefaultSetting:
-        stmt = select(UserBrowserDefaultSetting).where(
-            UserBrowserDefaultSetting.mid == mid,
-        )
-        result = await session.exec(stmt)
-        res = result.one_or_none()
-        return res
-
-    @staticmethod
     async def verify_browser_info_ownership(
         mid: int, browser_info_id: int, session: AsyncSession
     ) -> bool:
@@ -313,9 +297,9 @@ class BrowserDBService:
         Returns:
             bool: 如果浏览器实例属于该用户返回True，否则返回False
         """
-        stmt = select(UserBrowserInfo.id).where(
+        stmt = select(UserBrowserInfo.browser_id).where(
             and_(
-                UserBrowserInfo.id == browser_info_id,
+                UserBrowserInfo.browser_id == browser_info_id,
                 UserBrowserInfo.mid == mid,
             )
         )
@@ -367,27 +351,26 @@ class BrowserDBService:
         if existing_settings:
             # 更新现有设置
             update_data = request.model_dump(exclude_unset=True)
-            for key, value in update_data.items():
-                setattr(existing_settings, key, value)
-
-            session.add(existing_settings)
-            await session.commit()
-            await session.refresh(existing_settings)
-
-            # 转换为响应模型
-            response_data = existing_settings.model_dump()
-            return UserBrowserDefaultSettingResponse(**response_data)
+            settings_to_save = existing_settings
         else:
             # 创建新设置
             new_settings = UserBrowserDefaultSetting(mid=mid, **request.model_dump())
-            response_data = new_settings.model_dump()
+            settings_to_save = new_settings
+            update_data = {}
 
-            session.add(new_settings)
-            await session.commit()
-            await session.refresh(new_settings)
+        # 统一处理属性更新（仅当更新现有设置时）
+        if existing_settings:
+            for key, value in update_data.items():
+                setattr(existing_settings, key, value)
 
-            # 转换为响应模型
-            return UserBrowserDefaultSettingResponse(**response_data)
+        # 保存设置到数据库
+        session.add(settings_to_save)
+        await session.commit()
+        await session.refresh(settings_to_save)
+
+        # 转换为响应模型
+        response_data = settings_to_save.model_dump()
+        return UserBrowserDefaultSettingResponse(**response_data)
 
     @staticmethod
     async def delete_user_default_settings(mid: int, session: AsyncSession) -> bool:
@@ -439,7 +422,7 @@ class BrowserDBService:
         # 获取浏览器实例
         stmt = select(UserBrowserInfo).where(
             and_(
-                UserBrowserInfo.id == browser_id,
+                UserBrowserInfo.browser_id == browser_id,
                 UserBrowserInfo.mid == mid,
             )
         )
@@ -454,13 +437,10 @@ class BrowserDBService:
         # 例如，只更新代理设置或视口设置等
 
         # 示例：更新代理设置
-        if default_settings.default_proxy_server:
-            # 这里需要根据实际的浏览器模型结构来更新
-            # 假设浏览器模型有 proxy_server 字段
-            if hasattr(browser_info, "proxy_server"):
-                setattr(
-                    browser_info, "proxy_server", default_settings.default_proxy_server
-                )
+        if default_settings.default_proxy_server and hasattr(browser_info, "proxy_server"):
+            setattr(
+                browser_info, "proxy_server", default_settings.default_proxy_server
+            )
 
         # 示例：更新视口设置
         if (

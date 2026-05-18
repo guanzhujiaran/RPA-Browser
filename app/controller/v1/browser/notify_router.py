@@ -3,7 +3,7 @@ from app.models.common.depends import VerifyBrowserDependsReq
 from app.utils.depends.security_depends import verify_browser_ownership
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models.core.notify.models import (
+from app.models.database.notify.models import (
     NotificationConfig,
 )
 from app.models.notify.models import (
@@ -13,7 +13,6 @@ from app.models.notify.models import (
 from app.models.notify.response_models import (
     NotificationConfigUpsertResp,
     NotificationConfigDeleteResp,
-    NotificationConfigEffectiveResp,
 )
 from app.models.notify.request_models import (
     NotifyConfigReadRequest,

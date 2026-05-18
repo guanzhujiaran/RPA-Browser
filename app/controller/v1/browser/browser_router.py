@@ -4,7 +4,7 @@ from app.models.common.depends import BrowserReqAuthInfo
 from app.utils.depends.mid_depends import AuthInfo
 
 from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
-from app.models.core.browser.info import UserBrowserInfo
+from app.models.database.browser.info import UserBrowserInfo
 from app.models.runtime.api import (
     BrowserFingerprintUpsertParams,
     BrowserFingerprintQueryParams,
@@ -104,7 +104,6 @@ async def upsert_fingerprint_router(
 )
 async def read_fingerprint_router(
     params: BrowserFingerprintQueryParams,
-    auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ):
     """
@@ -124,7 +123,7 @@ async def read_fingerprint_router(
     Note:
         只能查询属于当前用户的浏览器指纹信息
     """
-    result = await BrowserDBService.read_fingerprint(params, auth_info.mid, session)
+    result = await BrowserDBService.read_fingerprint(params, browser_info.auth_info.mid, session)
     return success_response(data=result)
 
 
@@ -159,7 +158,7 @@ async def delete_fingerprint_router(
     )
     return success_response(
         data=BrowserFingerprintDeleteResp(
-            id=browser_info.browser_id, mid=browser_info.auth_info.mid, is_success=True
+            browser_id=browser_info.browser_id, mid=browser_info.auth_info.mid, is_success=True
         ),
         msg="success",
     )

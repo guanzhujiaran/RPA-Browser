@@ -1,14 +1,3 @@
-import sys
-
-# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:
-    from enum import Enum
-    class StrEnum(str, Enum):
-        """Python 3.10 兼容的 StrEnum"""
-        pass
-
 """
 执行引擎核心
 
@@ -31,16 +20,13 @@ import copy
 from loguru import logger
 
 from app.services.execution.action_registry import (
-    ActionRegistry,
-    ActionContext,
-    ActionResult,
-    BaseAction,
     action_registry,
 )
 from app.services.RPA_browser.live_service import LiveService
 from app.config import settings
-from app.models.core.workflow.models import ActionPluginLink, UserPluginModel, CustomActionModel
 from app.services.execution.crud_service import action_crud, plugin_crud
+from enum import StrEnum
+from app.models.database.workflow.models import ActionResult, ActionContext
 
 
 class ExecutionStatus(StrEnum):

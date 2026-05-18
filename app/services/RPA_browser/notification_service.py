@@ -3,7 +3,7 @@ from app.models.exceptions.base_exception import BrowserNotifyConfNotFoundExcept
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.core.notify.models import (
+from app.models.database.notify.models import (
     NotificationConfig,
 )
 from app.models.notify.models import (
@@ -40,7 +40,7 @@ class NotificationService:
 
         # 获取全局配置（browser_id为None）
         stmt = select(NotificationConfig).where(
-            NotificationConfig.mid == mid, NotificationConfig.browser_id == None
+            NotificationConfig.mid == mid, NotificationConfig.browser_id.is_(None)
         )
         result = await session.exec(stmt)
         return result.one_or_none()
@@ -72,7 +72,7 @@ class NotificationService:
 
         # 获取全局配置（browser_id为None）
         stmt = select(NotificationConfig).where(
-            NotificationConfig.mid == mid, NotificationConfig.browser_id == None
+            NotificationConfig.mid == mid, NotificationConfig.browser_id.is_(None)
         )
         result = await session.exec(stmt)
         global_config = result.one_or_none()
@@ -143,7 +143,7 @@ class NotificationService:
             )
         else:
             stmt = select(NotificationConfig).where(
-                NotificationConfig.mid == mid, NotificationConfig.browser_id == None
+                NotificationConfig.mid == mid, NotificationConfig.browser_id.is_(None)
             )
 
         result = await session.exec(stmt)

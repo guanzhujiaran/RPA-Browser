@@ -17,7 +17,7 @@ from app.config import settings
 def import_models():
     """导入所有需要迁移管理的模型"""
     # workflow 相关模型
-    from app.models.core.workflow.models import (
+    from app.models.database.workflow.models import (
         CustomActionModel,
         UserPluginModel,
         UserWorkflowModel,
@@ -27,13 +27,13 @@ def import_models():
     )
     
     # browser 相关模型
-    from app.models.core.browser.info import (
+    from app.models.database.browser.info import (
         UserBrowserInfo,
         UserBrowserDefaultSetting,
     )
     
     # notification 相关模型
-    from app.models.core.notify.models import (
+    from app.models.database.notify.models import (
         NotificationConfig,
     )
     

@@ -40,13 +40,10 @@ async def lifespan(app: FastAPI):
     if settings.alembic_auto_migrate:
         logger.info("🔄 开始数据库迁移检查...")
         try:
-            # 在开发模式下启用自动生成迁移
-            auto_generate = (settings.RUNNING_MODE == ConfigRunningModeEnum.DEV)
-            
             run_alembic_migrations(
                 upgrade_to=settings.alembic_upgrade_target,
                 auto_upgrade=True,
-                auto_generate=auto_generate,  # 开发环境自动检测并生成迁移
+                auto_generate=True,  # 自动检测并生成迁移
             )
             logger.info("✅ 数据库迁移检查完成")
         except Exception as e:

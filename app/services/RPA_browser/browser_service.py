@@ -1,4 +1,4 @@
-from app.models.core.notify.models import (
+from app.models.database.notify.models import (
     NotificationConfig,
 )
 from app.models.notify.models import (

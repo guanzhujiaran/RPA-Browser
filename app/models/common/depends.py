@@ -6,6 +6,7 @@ Depends 模块 - 依赖注入相关模型
 
 from sqlmodel import SQLModel
 from pydantic import field_validator
+from app.models.core.browser.fingerprint import BaseBrowserId, BaseUserMid
 
 
 class AuthInfo(SQLModel):
@@ -14,44 +15,17 @@ class AuthInfo(SQLModel):
     level: int
 
 
-class VerifyBrowserDependsReq(SQLModel):
+class VerifyBrowserDependsReq(BaseBrowserId):
     """验证浏览器所有权的请求模型"""
-
-    browser_id: int | str
-
-    @field_validator("browser_id", mode="before")
-    @classmethod
-    def validate_browser_id(cls, v):
-        """将字符串类型的browser_id转换为整数"""
-        if isinstance(v, str):
-            return int(v)
-        return v
+    ...
 
 
-class VerifyFingerprintDependsReq(SQLModel):
-    """验证指纹所有权的请求模型"""
-
-    browser_id: int | str
-
-    @field_validator("browser_id", mode="before")
-    @classmethod
-    def validate_browser_id(cls, v):
-        """将字符串类型的browser_id转换为整数"""
-        if isinstance(v, str):
-            return int(v)
-        return v
-
-
-class BrowserReqInfo(SQLModel):
+class BrowserReqInfo(BaseUserMid,BaseBrowserId):
     """浏览器请求信息模型"""
+    ...
 
-    mid: int
-    browser_id: int
-
-
-class BrowserReqAuthInfo(SQLModel):
+class BrowserReqAuthInfo(BaseBrowserId):
     auth_info: AuthInfo
-    browser_id: int
 
 
 class VerifyPluginDependsReq(VerifyBrowserDependsReq):

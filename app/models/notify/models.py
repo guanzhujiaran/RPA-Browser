@@ -7,7 +7,7 @@ Notify 模块 - 通知请求/响应模型
 from sqlmodel import Field, Column, SQLModel
 from sqlalchemy import Text as SQLText
 
-from app.models.core.notify.models import NotificationConfigBase
+from app.models.database.notify.models import NotificationConfigBase
 
 
 class NotificationConfigCreate(NotificationConfigBase):
