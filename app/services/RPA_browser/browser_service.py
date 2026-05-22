@@ -40,7 +40,7 @@ class BrowserService:
             BaseFingerprintBrowserInitParams: 生成的浏览器指纹参数
         """
         res = await gen_from_browserforge_fingerprint(params=params)
-        res.proxy_server = None  # 清除代理服务器配置
+        res.proxy_server = None  # 随机生成的不需要代理服务器配置
         return res
 
     # Notification related methods

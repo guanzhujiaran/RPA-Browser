@@ -1,12 +1,11 @@
 """Alembic 数据库迁移管理路由"""
-import logging
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from app.utils.alembic_migration import run_alembic_migrations, check_alembic_status
 from app.models.common.response import success_response, error_response
+from loguru import logger
 
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/alembic", tags=["数据库迁移"])
 

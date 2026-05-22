@@ -39,7 +39,7 @@ class BackgroundTaskService:
             logger.info(f"开始后台导航任务: {task_key}, URL: {url}")
 
             # 获取浏览器会话
-            plugined_session = await LiveService.get_or_create_browser_session(
+            plugined_session = await LiveService.get_or_create_browser_session_entry(
                 mid, browser_id, headless=False
             )
             page = await plugined_session.get_current_page()
@@ -83,7 +83,7 @@ class BackgroundTaskService:
             logger.info(f"开始后台点击任务: {task_key}, params: {click_params}")
 
             # 获取浏览器会话
-            plugined_session = await LiveService.get_or_create_browser_session(
+            plugined_session = await LiveService.get_or_create_browser_session_entry(
                 mid, browser_id, headless=False
             )
             page = await plugined_session.get_current_page()

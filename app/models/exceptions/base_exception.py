@@ -12,11 +12,6 @@ class BrowserNotifyConfNotFoundException(BaseException):
     msg = ResponseMsg.exception_browser_notify_conf_not_found
 
 
-class BrowserIdIsNoneExeception(BaseException):
-    code = ResponseCode.BAD_REQUEST
-    msg = ResponseMsg.exception_browser_id_is_none
-
-
 class BrowserIdNotBeloneToUserException(BaseException):
     code = ResponseCode.FORBIDDEN
     msg = ResponseMsg.exception_browser_id_not_belone_to_user

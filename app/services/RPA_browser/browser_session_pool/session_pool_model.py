@@ -489,7 +489,7 @@ class PluginedSessionInfo(SessionInfo):
                 # 获取浏览器指纹信息
                 async with DatabaseSessionManager.async_session() as session:
                     fingerprint_info = await BrowserDBService.read_fingerprint(
-                        params=BrowserFingerprintQueryParams(id=browser_id),
+                        browser_id=browser_id,
                         mid=mid,
                         session=session,
                     )

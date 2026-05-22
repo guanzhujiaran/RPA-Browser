@@ -17,7 +17,7 @@ engine = create_async_engine(
     # 连接池配置 - 增强稳定性
     pool_size=20,  # 连接池中的连接数
     max_overflow=30,  # 超过pool_size后最多可以创建的连接数
-    pool_pre_ping=True,  # 连接前检查连接是否有效
+    pool_pre_ping=False,  # 连接前检查连接是否有效
     pool_recycle=1800,  # 缩短连接回收时间至30分钟，防止MySQL断开空闲连接
     pool_timeout=30,  # 获取连接超时时间
     # 查询配置

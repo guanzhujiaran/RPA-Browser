@@ -64,14 +64,6 @@ browser_session_router = RouterInfo(
     description="浏览器会话管理 - 提供会话创建、心跳、状态查询等生命周期管理",
 )
 
-# 实时控制总入口 (/browser/control)
-browser_control_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.browser_control,
-    router_prefix=RouterPrefix.BROWSER_CONTROL,
-    description="浏览器实时控制总入口",
-)
-
 # === browser_control 子模块路由 ===
 
 # 自动化控制子路由
@@ -119,6 +111,20 @@ browser_control_session_router = RouterInfo(
     description="浏览器会话管理",
 )
 
+browser_control_community_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.community_management,
+    router_prefix=RouterPrefix.BROWSER_CONTROL,
+    description="社区互动 - 公开资源浏览、点赞、举报、Fork 等功能",
+)
+
+browser_control_execution_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.execution_engine,
+    router_prefix=RouterPrefix.BROWSER_CONTROL,
+    description="执行引擎 - 提供浏览器操作的执行",
+)
+
 # ====== 系统管理模块 ======
 
 admin_router = RouterInfo(
@@ -141,7 +147,6 @@ BROWSER_CONFIG_ROUTERS: List[RouterInfo] = [
 # 浏览器运行时相关路由
 BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_session_router,      # /browser/session
-    browser_control_router,      # /browser/control
     # browser_control 子模块
     browser_control_operation_router,
     browser_control_action_router,      # 自定义操作管理
@@ -149,6 +154,7 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_plugin_router,      # 插件挂载管理
     browser_control_webrtc_router,  # WebRTC 视频流
     browser_control_session_router,
+    browser_control_community_router,   # 社区互动
 ]
 
 # 系统管理相关路由

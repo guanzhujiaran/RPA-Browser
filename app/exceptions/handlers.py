@@ -116,7 +116,7 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
             f"服务器内部错误 (错误ID: {error_id})\n{error_details['error_message']}"
         )
         logger.error(
-            f"Unexpected error (ID: {error_id}): {error_details['error_type']}: {error_details['error_message']}"
+            f"Unexpected error (ID: {error_id}): {error_details['error_type']}: {error_details['error_message']}",
         )
 
     # 根据settings中的运行模式配置输出错误信息

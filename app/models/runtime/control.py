@@ -387,6 +387,21 @@ class BrowserInfoData(SQLModel):
     session: dict = Field(description="会话信息")
 
 
+class PageInfo(SQLModel):
+    """页面信息模型"""
+    index: int = Field(description="页面索引（从0开始，可能变化）")
+    page_id: str = Field(description="页面唯一ID（UUID，不会变化）")
+    url: str = Field(description="页面URL")
+    title: str = Field(description="页面标题")
+    is_closed: bool = Field(description="是否已关闭")
+
+
+class PagesListResponse(SQLModel):
+    """页面列表响应模型"""
+    pages_count: int = Field(0, description="页面总数")
+    pages: list[PageInfo] = Field(default_factory=list, description="页面列表")
+
+
 
 class ManualOperationResult(SQLModel):
     """手动操作结果"""
@@ -541,4 +556,6 @@ __all__ = [
     "JavaScriptExecutionResult",
     "ModelInfo",
     "ChineseClickPredictionDetail",
+    "PageInfo",
+    "PagesListResponse",
 ]

@@ -6,10 +6,8 @@ from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.exceptions.base_exception import (
     BrowserIdNotBeloneToUserException,
-    BrowserIdIsNoneExeception,
     FingerprintLimitExceededException,
 )
-from app.models.runtime.api import BrowserFingerprintQueryParams
 from app.models.common.depends import (
     BrowserReqAuthInfo,
 )
@@ -20,7 +18,7 @@ from app.utils.depends.session_manager import DatabaseSessionManager
 
 
 async def _verify_browser_ownership_core(
-    browser_id: int,
+    browser_id: int | str,
     auth_info: AuthInfo,
     session: AsyncSession,
 ) -> BrowserReqAuthInfo:
@@ -36,15 +34,12 @@ async def _verify_browser_ownership_core(
         BrowserReqAuthInfo: 验证通过的浏览器请求信息
 
     Raises:
-        BrowserIdIsNoneExeception: 当浏览器ID为空时抛出
         BrowserIdNotBeloneToUserException: 当浏览器不属于用户或不存在时抛出
     """
-    if not browser_id:
-        raise BrowserIdIsNoneExeception()
 
     # 验证浏览器指纹是否存在且属于当前用户
     fingerprint_info = await BrowserDBService.read_fingerprint(
-        params=BrowserFingerprintQueryParams(id=browser_id),
+        browser_id=browser_id,
         mid=auth_info.mid,
         session=session,
     )
@@ -56,7 +51,7 @@ async def _verify_browser_ownership_core(
 
 
 async def verify_browser_ownership(
-    browser_id: int | None,
+    browser_id: int | str,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> BrowserReqAuthInfo:
@@ -75,43 +70,6 @@ async def verify_browser_ownership(
         HTTPException: 当浏览器不属于用户或不存在时抛出
     """
     return await _verify_browser_ownership_core(browser_id, auth_info, session)
-
-
-async def verify_fingerprint_ownership(
-    browser_id: int | None,
-    auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
-) -> BrowserReqAuthInfo:
-    """
-    验证浏览器指纹是否属于当前用户MID
-
-    Args:
-        body: 验证指纹请求参数
-        auth_info: 认证信息（从请求头获取）
-        session: 数据库会话
-
-    Returns:
-        BrowserReqAuthInfo: 验证通过的浏览器请求信息
-
-    Raises:
-        BrowserIdIsNoneExeception: 当浏览器ID为空时抛出
-        BrowserIdNotBeloneToUserException: 当指纹不属于用户或不存在时抛出
-    """
-    if not browser_id:
-        raise BrowserIdIsNoneExeception()
-
-    # 验证浏览器指纹是否存在且属于当前用户
-    fingerprint_info = await BrowserDBService.read_fingerprint(
-        params=BrowserFingerprintQueryParams(id=browser_id),
-        mid=auth_info.mid,
-        session=session,
-    )
-
-    if not fingerprint_info:
-        raise BrowserIdNotBeloneToUserException(browser_id=browser_id)
-
-    return BrowserReqAuthInfo(auth_info=auth_info, browser_id=browser_id)
-
 
 async def verify_fingerprint_limit(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),

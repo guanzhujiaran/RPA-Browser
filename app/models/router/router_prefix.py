@@ -1,14 +1,4 @@
-import sys
-
-# Python 3.10 兼容性：StrEnum 在 3.11+ 中引入
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:
-    from enum import Enum
-    class StrEnum(str, Enum):
-        """Python 3.10 兼容的 StrEnum"""
-        pass
-
+from enum import StrEnum
 from app.config import settings
 
 
@@ -74,6 +64,11 @@ class BrowserControlRouterPath(StrEnum):
     workflows_duplicate = "/workflows/duplicate"
     workflows_execute = "/workflows/execute"
     workflows_execute_step = "/workflows/execute-step"
+
+    # === 社区互动 ===
+    community_actions_list = "/community/actions/list"
+    community_workflows_list = "/community/workflows/list"
+    community_plugins_list = "/community/plugins/list"
 
     # === WebRTC 视频流 ===
     webrtc_offer = "/webrtc/offer"

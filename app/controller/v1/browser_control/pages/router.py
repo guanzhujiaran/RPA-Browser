@@ -1,24 +1,23 @@
 """
 页面管理路由 - 提供页面列表、切换、关闭等功能
 """
-
 from fastapi import Depends
 from app.models.common.depends import BrowserReqAuthInfo
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.response_code import ResponseCode
-from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.live_service import LiveService
 from app.services.RPA_browser.rpa_operation_service import RPAOperationService
 from app.utils.depends.security_depends import verify_browser_ownership
 from ..base import new_webrtc_router
 import loguru
+from app.models.runtime.control import PagesListResponse
 
 router = new_webrtc_router()
 
 
 @router.post(
     "/pages/list",
-    response_model=StandardResponse[dict],
+    response_model=StandardResponse[PagesListResponse],
 )
 async def get_pages_list(
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
@@ -38,12 +37,13 @@ async def get_pages_list(
     
     try:
         # 获取浏览器会话
-        session = await LiveService.get_or_create_browser_session(
-            mid, browser_id, headless=False
+        session_entry = LiveService.get_browser_session_entry(
+            mid, browser_id 
         )
-        
+        if not session_entry:
+            return success_response(data=PagesListResponse())
         # 🔑 调用 service 层方法获取页面列表（包含是否激活）
-        pages_data = await RPAOperationService.get_pages_list(session)
+        pages_data = await RPAOperationService.get_pages_list(session_entry.session)
         
         return success_response(data=pages_data)
     except Exception as e:
@@ -85,7 +85,7 @@ async def switch_page(
     
     try:
         # 🔑 获取浏览器会话
-        session = await LiveService.get_or_create_browser_session(
+        session = await LiveService.get_or_create_browser_session_entry(
             mid, browser_id, headless=False
         )
         
@@ -153,7 +153,7 @@ async def close_page(
     
     try:
         # 获取浏览器会话
-        session = await LiveService.get_or_create_browser_session(
+        session = await LiveService.get_or_create_browser_session_entry(
             mid, browser_id, headless=False
         )
         

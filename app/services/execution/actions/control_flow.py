@@ -6,7 +6,7 @@ from typing import Any
 
 from app.services.execution.actions.base import BaseAction
 from app.models.execution.params import LoopParams, IfElseParams
-from app.models.database.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext, CustomActionModel
+from app.models.database.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext, CustomAction
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.config import settings
 

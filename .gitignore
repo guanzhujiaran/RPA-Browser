@@ -22,3 +22,4 @@ user_data_dir/
 uv.lock
 .lh
 .history
+alembic/versions/*

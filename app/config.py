@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     
     # Alembic 数据库迁移配置
     alembic_auto_migrate: bool = True  # 是否在应用启动时自动执行数据库迁移
-    alembic_upgrade_target: str = "head"  # 迁移目标版本，默认为最新版本
+    alembic_upgrade_target: str = "heads"  # 迁移目标版本，默认为最新版本
 
 
 

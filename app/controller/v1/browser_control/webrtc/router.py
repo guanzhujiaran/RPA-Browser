@@ -255,3 +255,57 @@ async def close_webrtc_stream(
             code=ResponseCode.WEBRTC_CLOSE_FAILED,
             msg=str(e)
         )
+
+
+@router.post(BrowserControlRouterPath.webrtc_status, summary="获取 WebRTC 流状态")
+async def get_webrtc_status(
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
+):
+    """获取当前浏览器会话的 WebRTC 流状态信息"""
+    mid = browser_req.auth_info.mid
+    browser_id = browser_req.browser_id
+    
+    try:
+        # 获取会话
+        session_key = LiveService._get_session_key(mid, browser_id)
+        if session_key not in LiveService.browser_sessions:
+            return error_response(
+                code=ResponseCode.SESSION_NOT_FOUND,
+                msg="会话不存在"
+            )
+        
+        entry = LiveService.browser_sessions[session_key]
+        
+        if not entry.has_webrtc():
+            return success_response(data={
+                "enabled": False,
+                "active_streams": [],
+                "total_streams": 0
+            })
+        
+        webrtc_mgr = entry.plugined_session.webrtc_manager
+        
+        # 收集所有活跃流的状态
+        streams_info = []
+        for page_id, stream in webrtc_mgr.streams.items():
+            streams_info.append({
+                "stream_key": stream.stream_key,
+                "page_id": page_id,
+                "state": stream.state.value if hasattr(stream.state, 'value') else str(stream.state),
+                "created_at": stream.created_at.isoformat() if hasattr(stream, 'created_at') else None,
+                "bytes_sent": stream.bytes_sent if hasattr(stream, 'bytes_sent') else 0,
+                "bytes_received": stream.bytes_received if hasattr(stream, 'bytes_received') else 0,
+            })
+        
+        return success_response(data={
+            "enabled": True,
+            "active_streams": streams_info,
+            "total_streams": len(streams_info)
+        })
+        
+    except Exception as e:
+        logger.error(f"获取 WebRTC 状态失败: {e}")
+        return error_response(
+            code=ResponseCode.WEBRTC_STATUS_FAILED,
+            msg=str(e)
+        )

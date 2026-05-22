@@ -52,6 +52,7 @@ class BaseBrowserId(SQLModel):
     浏览器指纹基础参数模型
     """
     browser_id: int | str
+    
     @field_validator("browser_id", mode="before")
     @classmethod
     def validate_id(cls, v):

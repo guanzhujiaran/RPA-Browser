@@ -6,7 +6,7 @@ Core 模块 - 浏览器信息模型
 
 from app.config import settings
 from pydantic import computed_field
-from sqlalchemy import BIGINT
+from sqlalchemy import BIGINT, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.models.core.browser.fingerprint import (
@@ -16,12 +16,8 @@ from app.models.core.browser.fingerprint import (
     BrowserEnum,
 )
 from app.models.base.base_sqlmodel import BaseSQLModel
-from snowflake import SnowflakeGenerator
+from app.utils.snow_flake_gen import browser_id_gen
 
-# 初始化雪花ID生成器
-snowflake_generator = SnowflakeGenerator(
-    instance=settings.snowflake_id, epoch=1735689600000, seq=2
-)
 
 
 class UserBrowserUserId(BaseSQLModel):
@@ -40,7 +36,7 @@ class UserBrowserInfoBase(UserBrowserUserId,BaseBrowserId):
 
     browser_id: int = Field(
         sa_type=BIGINT,
-        default_factory=lambda: next(snowflake_generator),
+        default_factory=lambda: next(browser_id_gen),
         primary_key=True,
     )
 
@@ -107,11 +103,14 @@ class UserBrowserInfo(UserBrowserInfoWithoutPlugin, table=True):
     """用户浏览器信息数据库模型"""
 
     __tablename__ = "userbrowserinfo"
+    __table_args__ = (
+        UniqueConstraint("mid", "custom_name", name="uq_mid_custom_name"),
+    )
 
     custom_name: str | None = Field(
         None,
         nullable=True,
-        description="用户自定义的浏览器名称",
+        description="用户自定义的浏览器名称，同一用户下不能重复",
     )
 
 

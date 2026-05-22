@@ -6,9 +6,32 @@ Workflow 模块 - 工作流请求/响应模型
 
 from typing import Any, Dict, List
 from datetime import datetime
+from enum import Enum
 from sqlmodel import SQLModel, Field
 from app.models.base.base_sqlmodel import BasePaginationReq
 from app.models.database.workflow.models import ActionType
+from enum import StrEnum
+
+
+class FilterType(StrEnum):
+    ALL = "all"
+    PRIVATE = "private"
+    PUBLIC = "public"
+    COMMUNITY = "community"
+    VERIFIED = "verified"
+
+
+class SortBy(StrEnum):
+    UPDATED_AT = "updated_at"
+    LIKES_COUNT = "likes_count"
+    FORKS_COUNT = "forks_count"
+    CREATED_AT = "created_at"
+    NAME = "name"
+
+
+class SortOrder(StrEnum):
+    DESC = "desc"
+    ASC = "asc"
 
 
 class WorkflowStepRequest(SQLModel):
@@ -53,11 +76,9 @@ class WorkflowUpdateRequest(SQLModel):
 
 class WorkflowListRequest(BasePaginationReq):
     """获取工作流列表请求"""
-    # 筛选条件
-    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
-    # 排序条件
-    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, forks_count=最多Fork, created_at=最近创建, name=名称")
-    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
+    filter_type: FilterType = Field(default=FilterType.ALL, description="筛选类型")
+    sort_by: SortBy = Field(default=SortBy.UPDATED_AT, description="排序字段")
+    sort_order: SortOrder = Field(default=SortOrder.DESC, description="排序方向")
 
 
 class WorkflowExecuteRequest(SQLModel):
@@ -198,11 +219,9 @@ class CustomActionUpdateRequest(SQLModel):
 
 class CustomActionListRequest(BasePaginationReq):
     """获取自定义操作列表请求"""
-    # 筛选条件
-    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
-    # 排序条件
-    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, forks_count=最多Fork, created_at=最近创建, name=名称")
-    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
+    filter_type: FilterType = Field(default=FilterType.ALL, description="筛选类型")
+    sort_by: SortBy = Field(default=SortBy.UPDATED_AT, description="排序字段")
+    sort_order: SortOrder = Field(default=SortOrder.DESC, description="排序方向")
 
 
 class CustomActionDetailResponse(SQLModel):
@@ -437,11 +456,9 @@ class PluginListItemResponse(SQLModel):
 
 class PluginListRequest(BasePaginationReq):
     """获取插件列表请求"""
-    # 筛选条件
-    filter_type: str = Field(default="all", description="筛选类型: all=全部, private=我的私有, public=我的公开, community=社区公开, verified=已认证")
-    # 排序条件
-    sort_by: str = Field(default="updated_at", description="排序字段: updated_at=最近更新, likes_count=最多点赞, forks_count=最多Fork, created_at=最近创建, name=名称")
-    sort_order: str = Field(default="desc", description="排序方向: desc=降序, asc=升序")
+    filter_type: FilterType = Field(default=FilterType.ALL, description="筛选类型")
+    sort_by: SortBy = Field(default=SortBy.UPDATED_AT, description="排序字段")
+    sort_order: SortOrder = Field(default=SortOrder.DESC, description="排序方向")
 
 
 class PluginForkRequest(SQLModel):
@@ -459,6 +476,10 @@ class PluginForkResponse(SQLModel):
 
 
 __all__ = [
+    # 枚举
+    "FilterType",
+    "SortBy",
+    "SortOrder",
     # 请求/响应
     "WorkflowStepRequest",
     "WorkflowCreateRequest",

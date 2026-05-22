@@ -25,7 +25,7 @@ from app.services.broswer_fingerprint.fingerprint_gen import (
     gen_from_browserforge_fingerprint,
 )
 from app.models.response_code import ResponseCode
-from app.models.exceptions.base_exception import BrowserFingerprintNotFoundException
+from app.models.exceptions.base_exception import BrowserFingerprintNotFoundException, NameAlreadyExistsException
 from typing import Union
 from pathlib import Path
 import asyncio
@@ -45,7 +45,8 @@ class BrowserDBService:
         if params.browser_id is not None:
             # 更新现有记录
             stmt = select(UserBrowserInfo).where(
-                and_(UserBrowserInfo.browser_id == int(params.browser_id), UserBrowserInfo.mid == mid)
+                and_(UserBrowserInfo.browser_id == int(
+                    params.browser_id), UserBrowserInfo.mid == mid)
             )
             result = await session.exec(stmt)
             browser_info = result.one_or_none()
@@ -54,7 +55,8 @@ class BrowserDBService:
                 raise BrowserFingerprintNotFoundException()
 
             # 只更新提供的字段
-            update_data = params.model_dump(exclude_unset=True, exclude={"id"})
+            update_data = params.model_dump(exclude_unset=True, exclude={
+                                            "browser_id", "browser_id_str"})
         else:
             # 创建新记录
             # 将 UpsertParams 转换为 CreateParams
@@ -73,12 +75,33 @@ class BrowserDBService:
             )
 
             # 创建浏览器信息对象
-            browser_info = UserBrowserInfo(mid=mid, **fingerprint_data.model_dump())
+            browser_info = UserBrowserInfo(
+                mid=mid, **fingerprint_data.model_dump())
 
             # 如果有额外的更新参数，应用它们
             update_data = params.model_dump(
-                exclude_unset=True, exclude={"id", "fingerprint_int"}
+                exclude_unset=True, exclude={"browser_id", 'browser_id_str', "fingerprint_int"}
             )
+
+        # 检查 custom_name 是否重复
+        custom_name = update_data.get("custom_name")
+        if custom_name is not None:
+            duplicate_stmt = select(UserBrowserInfo).where(
+                and_(
+                    UserBrowserInfo.mid == mid,
+                    UserBrowserInfo.custom_name == custom_name,
+                )
+            )
+            # 如果是更新操作，排除当前浏览器
+            if params.browser_id is not None:
+                duplicate_stmt = duplicate_stmt.where(
+                    UserBrowserInfo.browser_id != int(params.browser_id)
+                )
+            duplicate_result = await session.exec(duplicate_stmt)
+            duplicate_browser = duplicate_result.one_or_none()
+
+            if duplicate_browser is not None:
+                raise NameAlreadyExistsException(name=custom_name, name_type="浏览器")
 
         # 统一处理属性更新
         for key, value in update_data.items():
@@ -110,7 +133,8 @@ class BrowserDBService:
         )
 
         # 创建浏览器信息对象
-        browser_info = UserBrowserInfo(mid=mid, **fingerprint_data.model_dump())
+        browser_info = UserBrowserInfo(
+            mid=mid, **fingerprint_data.model_dump())
 
         # 先将browser_info提交到数据库，确保外键引用存在
         session.add(browser_info)
@@ -125,7 +149,7 @@ class BrowserDBService:
 
     @staticmethod
     async def read_fingerprint(
-        params: BrowserFingerprintQueryParams, mid: int, session: AsyncSession
+        browser_id: int, mid: int, session: AsyncSession
     ) -> Union[BrowserFingerprintQueryResp, None]:
         """
         读取浏览器指纹信息
@@ -133,7 +157,7 @@ class BrowserDBService:
         stmt = select(UserBrowserInfo).where(
             and_(
                 UserBrowserInfo.mid == mid,
-                UserBrowserInfo.browser_id == params.browser_id,
+                UserBrowserInfo.browser_id == browser_id,
             )
         )
         result = await session.exec(stmt)
@@ -142,11 +166,7 @@ class BrowserDBService:
         if browser_info is None:
             return None
 
-        # 将mid和id从整数转换为字符串，以匹配BrowserFingerprintQueryResp的期望类型
         browser_info_dict = browser_info.model_dump(by_alias=False)
-        browser_info_dict["mid"] = str(browser_info_dict["mid"])
-        browser_info_dict["browser_id"] = str(browser_info_dict["id"])
-        browser_info_dict["plugins"] = {}
         return BrowserFingerprintQueryResp(**browser_info_dict)
 
     @staticmethod
@@ -154,7 +174,8 @@ class BrowserDBService:
         params: BrowserFingerprintUpdateParams, mid: int, session: AsyncSession
     ) -> tuple[ResponseCode, bool, str]:
         stmt = select(UserBrowserInfo).where(
-            and_(UserBrowserInfo.browser_id == params.browser_id, UserBrowserInfo.mid == mid)
+            and_(UserBrowserInfo.browser_id ==
+                 params.browser_id, UserBrowserInfo.mid == mid)
         )
         result = await session.exec(stmt)
         browser_info_row = result.one_or_none()
@@ -210,24 +231,21 @@ class BrowserDBService:
 
     @staticmethod
     async def rename_fingerprint(
-        params: BrowserFingerprintRenameParams, mid: int, session: AsyncSession
+        params: BrowserFingerprintRenameParams, browser_id: int, session: AsyncSession
     ) -> BrowserFingerprintRenameResp:
         """
         重命名浏览器指纹
 
         Args:
             params: 包含指纹ID和新名称的参数
-            mid: 用户ID
+            browser_id: 浏览器ID
             session: 数据库会话
 
         Returns:
             BrowserFingerprintRenameResp: 更新结果
         """
         stmt = select(UserBrowserInfo).where(
-            and_(
-                UserBrowserInfo.browser_id == params.browser_id,
-                UserBrowserInfo.mid == mid,
-            )
+            UserBrowserInfo.browser_id == browser_id,
         )
         result = await session.exec(stmt)
         browser_info = result.one_or_none()
@@ -235,13 +253,28 @@ class BrowserDBService:
         if browser_info is None:
             raise BrowserFingerprintNotFoundException()
 
+        # 如果 custom_name 不为空，检查是否已存在同名
+        if params.custom_name is not None:
+            duplicate_stmt = select(UserBrowserInfo).where(
+                and_(
+                    UserBrowserInfo.mid == browser_info.mid,
+                    UserBrowserInfo.custom_name == params.custom_name,
+                    UserBrowserInfo.browser_id != browser_id,  # 排除当前浏览器
+                )
+            )
+            duplicate_result = await session.exec(duplicate_stmt)
+            duplicate_browser = duplicate_result.one_or_none()
+
+            if duplicate_browser is not None:
+                raise NameAlreadyExistsException(name=params.custom_name, name_type="浏览器")
+
         browser_info.custom_name = params.custom_name
         session.add(browser_info)
         await session.commit()
         await session.refresh(browser_info)
 
         return BrowserFingerprintRenameResp(
-            mid=mid,
+            mid=browser_info.mid,
             browser_id=browser_info.browser_id,
             custom_name=browser_info.custom_name,
             is_success=True,
@@ -354,7 +387,8 @@ class BrowserDBService:
             settings_to_save = existing_settings
         else:
             # 创建新设置
-            new_settings = UserBrowserDefaultSetting(mid=mid, **request.model_dump())
+            new_settings = UserBrowserDefaultSetting(
+                mid=mid, **request.model_dump())
             settings_to_save = new_settings
             update_data = {}
 

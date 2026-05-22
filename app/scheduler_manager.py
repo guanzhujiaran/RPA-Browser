@@ -7,7 +7,6 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 from typing import Callable, Optional
 from functools import wraps
-import logging
 
 
 class SchedulerManager:
@@ -25,10 +24,6 @@ class SchedulerManager:
     def __init__(self):
         """初始化调度器"""
         if SchedulerManager._scheduler is None:
-            # 设置 APScheduler 日志级别为 WARNING，减少日志输出
-            logging.getLogger("apscheduler").setLevel(logging.WARNING)
-            logging.getLogger("apscheduler.executors").setLevel(logging.WARNING)
-
             SchedulerManager._scheduler = AsyncIOScheduler()
             logger.info("✅ SchedulerManager initialized")
 

@@ -113,7 +113,7 @@ class BrowserFingerprintListParams(BasePaginationReq):
     ...
 
 
-class BrowserFingerprintRenameParams(BaseBrowserId):
+class BrowserFingerprintRenameParams(SQLModel):
     """重命名浏览器指纹参数"""
     custom_name: str | None = None
 

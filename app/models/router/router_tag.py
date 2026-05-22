@@ -25,6 +25,9 @@ class RouterTag(StrEnum):
     plugin_management = "插件挂载管理"  # Plugin 生命周期钩子配置
     webrtc_video_stream = "WebRTC 视频流"  # WebRTC 超低延迟实时画面传输
     session_control = "浏览器会话控制"
+    execution_engine = "执行引擎"  # 提供浏览器操作的执行
+    # === 系统管理 ===
+    community_management = "社区互动管理"  # 公开资源浏览、点赞、举报、Fork
     # === 系统管理 ===
     admin_management = "管理员管理"  # 超级管理员功能
 

@@ -13,7 +13,7 @@ from sqlmodel import select
 
 # 从模型层导入
 from app.models.database.workflow.models import (
-    CustomActionModel,
+    CustomAction,
     ActionMetadata,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -108,10 +108,10 @@ class ActionRegistry:
 
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(CustomActionModel).where(
-                    CustomActionModel.action_id == action_id,
-                    CustomActionModel.mid == mid,
-                    CustomActionModel.is_enabled == True,
+                select(CustomAction).where(
+                    CustomAction.action_id == action_id,
+                    CustomAction.mid == mid,
+                    CustomAction.is_enabled == True,
                 )
             )
 

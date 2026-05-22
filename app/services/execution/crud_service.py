@@ -9,13 +9,16 @@ import uuid
 from sqlmodel import select, update
 
 from app.models.database.workflow.models import (
-    CustomActionModel,
-    UserPluginModel,
-    UserWorkflowModel,
-    WorkflowExecutionLogModel,
-    WorkflowPluginLink,
-    ActionPluginLink,
+    CustomAction,
+    UserPlugin,
+    UserWorkflow,
+    WorkflowExecutionLog,
+    WorkflowPluginRelation,
+    ActionPluginRelation,
     ActionType,
+    ResourceLike,
+    ResourceReport,
+    ResourceType,
 )
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -39,7 +42,7 @@ class ActionCrudService:
         is_public: bool = False,
         enabled_plugins: List[Dict[str, Any]] = None, # [{"plugin_id": "...", "config_params": {...}}]
         timeout: int = 30000,
-    ) -> CustomActionModel:
+    ) -> CustomAction:
         """创建自定义操作（仅支持预定义动作组合）
         
         Raises:
@@ -48,14 +51,14 @@ class ActionCrudService:
         async with DatabaseSessionManager.async_session() as session:
             # 检查同一用户下是否已存在同名操作
             existing = await session.exec(
-                select(CustomActionModel).where(
-                    (CustomActionModel.mid == mid) & (CustomActionModel.name == name)
+                select(CustomAction).where(
+                    (CustomAction.mid == mid) & (CustomAction.name == name)
                 )
             )
             if existing.first():
                 raise NameAlreadyExistsException(name=name, name_type="操作")
             
-            model = CustomActionModel(
+            model = CustomAction(
                 action_id=action_id,
                 name=name,
                 action_type=action_type,
@@ -74,7 +77,7 @@ class ActionCrudService:
             # 处理插件关联
             if enabled_plugins:
                 for link_data in enabled_plugins:
-                    link = ActionPluginLink(
+                    link = ActionPluginRelation(
                         action_id=action_id,
                         plugin_id=link_data.get("plugin_id"),
                         config_params=link_data.get("config_params", {})
@@ -86,10 +89,10 @@ class ActionCrudService:
             return model
 
     @staticmethod
-    async def get_by_id(id: int) -> Optional[CustomActionModel]:
+    async def get_by_id(id: int) -> Optional[CustomAction]:
         """根据ID获取"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CustomActionModel).where(CustomActionModel.id == id))
+            result = await session.exec(select(CustomAction).where(CustomAction.id == id))
             return result.first()
 
     @staticmethod
@@ -97,7 +100,7 @@ class ActionCrudService:
         """获取操作关联的插件列表"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(ActionPluginLink).where(ActionPluginLink.action_id == action_id)
+                select(ActionPluginRelation).where(ActionPluginRelation.action_id == action_id)
             )
             links = result.all()
             return [
@@ -123,26 +126,26 @@ class ActionCrudService:
         
         async with DatabaseSessionManager.async_session() as session:
             # 构建查询条件
-            query = select(func.count(CustomActionModel.id))
+            query = select(func.count(CustomAction.id))
             
             # 应用筛选条件
             if filter_type == "private":
                 query = query.where(
-                    (CustomActionModel.mid == mid) & (CustomActionModel.is_public == False)
+                    (CustomAction.mid == mid) & (CustomAction.is_public == False)
                 )
             elif filter_type == "public":
                 query = query.where(
-                    (CustomActionModel.mid == mid) & (CustomActionModel.is_public == True)
+                    (CustomAction.mid == mid) & (CustomAction.is_public == True)
                 )
             elif filter_type == "community":
                 query = query.where(
-                    (CustomActionModel.mid != mid) & (CustomActionModel.is_public == True)
+                    (CustomAction.mid != mid) & (CustomAction.is_public == True)
                 )
             elif filter_type == "verified":
-                query = query.where(CustomActionModel.is_verified == True)
+                query = query.where(CustomAction.is_verified == True)
             else:
                 query = query.where(
-                    (CustomActionModel.mid == mid) | (CustomActionModel.is_public == True)
+                    (CustomAction.mid == mid) | (CustomAction.is_public == True)
                 )
             
             result = await session.exec(query)
@@ -156,7 +159,7 @@ class ActionCrudService:
         filter_type: str = "all",
         sort_by: str = "updated_at",
         sort_order: str = "desc"
-    ) -> List[CustomActionModel]:
+    ) -> List[CustomAction]:
         """获取用户的所有操作（包含公开的）
         
         Args:
@@ -171,35 +174,35 @@ class ActionCrudService:
         
         async with DatabaseSessionManager.async_session() as session:
             # 构建查询条件
-            query = select(CustomActionModel)
+            query = select(CustomAction)
             
             # 应用筛选条件
             if filter_type == "private":
                 # 我的私有：当前用户的且未公开
                 query = query.where(
-                    (CustomActionModel.mid == mid) & (CustomActionModel.is_public == False)
+                    (CustomAction.mid == mid) & (CustomAction.is_public == False)
                 )
             elif filter_type == "public":
                 # 我的公开：当前用户的且已公开
                 query = query.where(
-                    (CustomActionModel.mid == mid) & (CustomActionModel.is_public == True)
+                    (CustomAction.mid == mid) & (CustomAction.is_public == True)
                 )
             elif filter_type == "community":
                 # 社区公开：非当前用户的且已公开
                 query = query.where(
-                    (CustomActionModel.mid != mid) & (CustomActionModel.is_public == True)
+                    (CustomAction.mid != mid) & (CustomAction.is_public == True)
                 )
             elif filter_type == "verified":
                 # 已认证：所有已认证的
-                query = query.where(CustomActionModel.is_verified == True)
+                query = query.where(CustomAction.is_verified == True)
             else:
                 # all: 查询属于该用户的 OR 公开给所有人的
                 query = query.where(
-                    (CustomActionModel.mid == mid) | (CustomActionModel.is_public == True)
+                    (CustomAction.mid == mid) | (CustomAction.is_public == True)
                 )
             
             # 应用排序
-            sort_field = getattr(CustomActionModel, sort_by, CustomActionModel.updated_at)
+            sort_field = getattr(CustomAction, sort_by, CustomAction.updated_at)
             if sort_order == "asc":
                 query = query.order_by(col(sort_field).asc())
             else:
@@ -224,14 +227,14 @@ class ActionCrudService:
         timeout: Optional[int] = None,
         is_public: Optional[bool] = None,
         enabled_plugins: Optional[List[Dict[str, Any]]] = None,
-    ) -> Optional[CustomActionModel]:
+    ) -> Optional[CustomAction]:
         """更新操作（仅支持预定义动作组合）
         
         Raises:
             ValueError: 如果同一用户下已存在同名操作
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CustomActionModel).where(CustomActionModel.id == id))
+            result = await session.exec(select(CustomAction).where(CustomAction.id == id))
             model = result.first()
             if not model:
                 return None
@@ -239,10 +242,10 @@ class ActionCrudService:
             # 如果要更新名称，检查是否与同一用户的其他操作重名
             if name is not None and name != model.name:
                 existing = await session.exec(
-                    select(CustomActionModel).where(
-                        (CustomActionModel.mid == model.mid) & 
-                        (CustomActionModel.name == name) &
-                        (CustomActionModel.id != id)
+                    select(CustomAction).where(
+                        (CustomAction.mid == model.mid) & 
+                        (CustomAction.name == name) &
+                        (CustomAction.id != id)
                     )
                 )
                 if existing.first():
@@ -269,13 +272,13 @@ class ActionCrudService:
             # 更新插件关联：先删后增
             if enabled_plugins is not None:
                 old_links = await session.exec(
-                    select(ActionPluginLink).where(ActionPluginLink.action_id == model.action_id)
+                    select(ActionPluginRelation).where(ActionPluginRelation.action_id == model.action_id)
                 )
                 for link in old_links.all():
                     await session.delete(link)
                 
                 for link_data in enabled_plugins:
-                    link = ActionPluginLink(
+                    link = ActionPluginRelation(
                         action_id=model.action_id,
                         plugin_id=link_data.get("plugin_id"),
                         config_params=link_data.get("config_params", {})
@@ -294,7 +297,7 @@ class ActionCrudService:
         如果删除的是 Fork 版本，会减少原资源的 forks_count
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CustomActionModel).where(CustomActionModel.id == id))
+            result = await session.exec(select(CustomAction).where(CustomAction.id == id))
             model = result.first()
             if not model:
                 return False
@@ -302,14 +305,14 @@ class ActionCrudService:
             # 如果是 Fork 版本，减少原资源的 Fork 计数
             if model.forked_from_id:
                 await session.exec(
-                    update(CustomActionModel)
-                    .where(CustomActionModel.id == model.forked_from_id)
-                    .values(forks_count=CustomActionModel.forks_count - 1)
+                    update(CustomAction)
+                    .where(CustomAction.id == model.forked_from_id)
+                    .values(forks_count=CustomAction.forks_count - 1)
                 )
             
             # 先删除关联的插件记录
             links = await session.exec(
-                select(ActionPluginLink).where(ActionPluginLink.action_id == model.action_id)
+                select(ActionPluginRelation).where(ActionPluginRelation.action_id == model.action_id)
             )
             for link in links.all():
                 await session.delete(link)
@@ -323,7 +326,7 @@ class ActionCrudService:
     async def enable(id: int) -> bool:
         """启用操作"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CustomActionModel).where(CustomActionModel.id == id))
+            result = await session.exec(select(CustomAction).where(CustomAction.id == id))
             model = result.first()
             if not model:
                 return False
@@ -336,7 +339,7 @@ class ActionCrudService:
     async def disable(id: int) -> bool:
         """禁用操作"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CustomActionModel).where(CustomActionModel.id == id))
+            result = await session.exec(select(CustomAction).where(CustomAction.id == id))
             model = result.first()
             if not model:
                 return False
@@ -350,9 +353,9 @@ class ActionCrudService:
         """增加点赞数"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(CustomActionModel)
-                .where(CustomActionModel.id == id)
-                .values(likes_count=CustomActionModel.likes_count + 1)
+                update(CustomAction)
+                .where(CustomAction.id == id)
+                .values(likes_count=CustomAction.likes_count + 1)
             )
             await session.exec(stmt)
             await session.commit()
@@ -363,29 +366,29 @@ class ActionCrudService:
         """增加举报数"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(CustomActionModel)
-                .where(CustomActionModel.id == id)
-                .values(reports_count=CustomActionModel.reports_count + 1)
+                update(CustomAction)
+                .where(CustomAction.id == id)
+                .values(reports_count=CustomAction.reports_count + 1)
             )
             await session.exec(stmt)
             await session.commit()
             return True
 
     @staticmethod
-    async def list_forks(action_id: int, skip: int = 0, limit: int = 50) -> List[CustomActionModel]:
+    async def list_forks(action_id: int, skip: int = 0, limit: int = 50) -> List[CustomAction]:
         """获取某操作的所有 Fork 版本"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(CustomActionModel)
-                .where(CustomActionModel.forked_from_id == action_id)
-                .order_by(CustomActionModel.created_at.desc())
+                select(CustomAction)
+                .where(CustomAction.forked_from_id == action_id)
+                .order_by(CustomAction.created_at.desc())
                 .offset(skip)
                 .limit(limit)
             )
             return result.all()
 
     @staticmethod
-    async def fork(id: int, target_mid: str, new_name: str | None = None) -> Optional[CustomActionModel]:
+    async def fork(id: int, target_mid: str, new_name: str | None = None) -> Optional[CustomAction]:
         """Fork 自定义操作（仅允许 Fork 公开的操作）
         
         Args:
@@ -400,7 +403,7 @@ class ActionCrudService:
             ValueError: 如果原操作不是公开的
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CustomActionModel).where(CustomActionModel.id == id))
+            result = await session.exec(select(CustomAction).where(CustomAction.id == id))
             original = result.first()
             if not original:
                 return None
@@ -418,14 +421,14 @@ class ActionCrudService:
             
             # 检查目标用户下是否已存在同名操作
             existing = await session.exec(
-                select(CustomActionModel).where(
-                    (CustomActionModel.mid == target_mid) & (CustomActionModel.name == new_name)
+                select(CustomAction).where(
+                    (CustomAction.mid == target_mid) & (CustomAction.name == new_name)
                 )
             )
             if existing.first():
                 raise NameAlreadyExistsException(name=new_name, name_type="操作")
 
-            new_model = CustomActionModel(
+            new_model = CustomAction(
                 action_id=new_action_id,
                 name=new_name,
                 action_type=original.action_type,
@@ -445,9 +448,9 @@ class ActionCrudService:
             
             # 增加原资源的 Fork 计数
             await session.exec(
-                update(CustomActionModel)
-                .where(CustomActionModel.id == original.id)
-                .values(forks_count=CustomActionModel.forks_count + 1)
+                update(CustomAction)
+                .where(CustomAction.id == original.id)
+                .values(forks_count=CustomAction.forks_count + 1)
             )
             
             await session.commit()
@@ -470,7 +473,7 @@ class WorkflowCrudService:
         user_data: Optional[Dict[str, Any]] = None,
         is_public: bool = False,
         enabled_plugins: List[Dict[str, Any]] = None, # [{"plugin_id": "...", "config_params": {...}}]
-    ) -> UserWorkflowModel:
+    ) -> UserWorkflow:
         """创建工作流
         
         Raises:
@@ -479,14 +482,14 @@ class WorkflowCrudService:
         async with DatabaseSessionManager.async_session() as session:
             # 检查同一用户下是否已存在同名工作流
             existing = await session.exec(
-                select(UserWorkflowModel).where(
-                    (UserWorkflowModel.mid == mid) & (UserWorkflowModel.name == name)
+                select(UserWorkflow).where(
+                    (UserWorkflow.mid == mid) & (UserWorkflow.name == name)
                 )
             )
             if existing.first():
                 raise NameAlreadyExistsException(name=name, name_type="工作流")
             
-            model = UserWorkflowModel(
+            model = UserWorkflow(
                 workflow_id=workflow_id,
                 name=name,
                 description=description,
@@ -502,7 +505,7 @@ class WorkflowCrudService:
             # 处理插件关联
             if enabled_plugins:
                 for link_data in enabled_plugins:
-                    link = WorkflowPluginLink(
+                    link = WorkflowPluginRelation(
                         workflow_id=workflow_id,
                         plugin_id=link_data.get("plugin_id"),
                         config_params=link_data.get("config_params", {})
@@ -514,10 +517,10 @@ class WorkflowCrudService:
             return model
 
     @staticmethod
-    async def get_by_id(id: int) -> Optional[UserWorkflowModel]:
+    async def get_by_id(id: int) -> Optional[UserWorkflow]:
         """根据ID获取"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflowModel).where(UserWorkflowModel.id == id))
+            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
             return result.first()
 
     @staticmethod
@@ -529,7 +532,7 @@ class WorkflowCrudService:
         """
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowPluginLink).where(WorkflowPluginLink.workflow_id == workflow_id)
+                select(WorkflowPluginRelation).where(WorkflowPluginRelation.workflow_id == workflow_id)
             )
             links = result.all()
             return [
@@ -555,26 +558,26 @@ class WorkflowCrudService:
         
         async with DatabaseSessionManager.async_session() as session:
             # 构建查询条件
-            query = select(func.count(UserWorkflowModel.id))
+            query = select(func.count(UserWorkflow.id))
             
             # 应用筛选条件
             if filter_type == "private":
                 query = query.where(
-                    (UserWorkflowModel.mid == mid) & (UserWorkflowModel.is_public == False)
+                    (UserWorkflow.mid == mid) & (UserWorkflow.is_public == False)
                 )
             elif filter_type == "public":
                 query = query.where(
-                    (UserWorkflowModel.mid == mid) & (UserWorkflowModel.is_public == True)
+                    (UserWorkflow.mid == mid) & (UserWorkflow.is_public == True)
                 )
             elif filter_type == "community":
                 query = query.where(
-                    (UserWorkflowModel.mid != mid) & (UserWorkflowModel.is_public == True)
+                    (UserWorkflow.mid != mid) & (UserWorkflow.is_public == True)
                 )
             elif filter_type == "verified":
-                query = query.where(UserWorkflowModel.is_verified == True)
+                query = query.where(UserWorkflow.is_verified == True)
             else:
                 query = query.where(
-                    (UserWorkflowModel.mid == mid) | (UserWorkflowModel.is_public == True)
+                    (UserWorkflow.mid == mid) | (UserWorkflow.is_public == True)
                 )
             
             result = await session.exec(query)
@@ -589,7 +592,7 @@ class WorkflowCrudService:
         filter_type: str = "all",
         sort_by: str = "updated_at",
         sort_order: str = "desc"
-    ) -> List[UserWorkflowModel]:
+    ) -> List[UserWorkflow]:
         """获取用户的所有工作流（可选择包含公开资源）
         
         Args:
@@ -604,36 +607,36 @@ class WorkflowCrudService:
         from sqlmodel import col
         
         async with DatabaseSessionManager.async_session() as session:
-            query = select(UserWorkflowModel)
+            query = select(UserWorkflow)
             
             # 应用筛选条件
             if filter_type == "private":
                 # 我的私有：当前用户的且未公开
                 query = query.where(
-                    (UserWorkflowModel.mid == mid) & (UserWorkflowModel.is_public == False)
+                    (UserWorkflow.mid == mid) & (UserWorkflow.is_public == False)
                 )
             elif filter_type == "public":
                 # 我的公开：当前用户的且已公开
                 query = query.where(
-                    (UserWorkflowModel.mid == mid) & (UserWorkflowModel.is_public == True)
+                    (UserWorkflow.mid == mid) & (UserWorkflow.is_public == True)
                 )
             elif filter_type == "community":
                 # 社区公开：非当前用户的且已公开
                 query = query.where(
-                    (UserWorkflowModel.mid != mid) & (UserWorkflowModel.is_public == True)
+                    (UserWorkflow.mid != mid) & (UserWorkflow.is_public == True)
                 )
             elif filter_type == "verified":
                 # 已认证：所有已认证的
-                query = query.where(UserWorkflowModel.is_verified == True)
+                query = query.where(UserWorkflow.is_verified == True)
             else:
                 # all: 根据include_public参数决定
                 if include_public:
-                    query = query.where((UserWorkflowModel.mid == mid) | (UserWorkflowModel.is_public == True))
+                    query = query.where((UserWorkflow.mid == mid) | (UserWorkflow.is_public == True))
                 else:
-                    query = query.where(UserWorkflowModel.mid == mid)
+                    query = query.where(UserWorkflow.mid == mid)
             
             # 应用排序
-            sort_field = getattr(UserWorkflowModel, sort_by, UserWorkflowModel.updated_at)
+            sort_field = getattr(UserWorkflow, sort_by, UserWorkflow.updated_at)
             if sort_order == "asc":
                 query = query.order_by(col(sort_field).asc())
             else:
@@ -654,14 +657,14 @@ class WorkflowCrudService:
         user_data: Optional[Dict[str, Any]] = None,
         is_public: Optional[bool] = None,
         enabled_plugins: Optional[List[Dict[str, Any]]] = None,
-    ) -> Optional[UserWorkflowModel]:
+    ) -> Optional[UserWorkflow]:
         """更新工作流
         
         Raises:
             ValueError: 如果同一用户下已存在同名工作流
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflowModel).where(UserWorkflowModel.id == id))
+            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
             model = result.first()
             if not model:
                 return None
@@ -669,10 +672,10 @@ class WorkflowCrudService:
             # 如果要更新名称，检查是否与同一用户的其他工作流重名
             if name is not None and name != model.name:
                 existing = await session.exec(
-                    select(UserWorkflowModel).where(
-                        (UserWorkflowModel.mid == model.mid) & 
-                        (UserWorkflowModel.name == name) &
-                        (UserWorkflowModel.id != id)
+                    select(UserWorkflow).where(
+                        (UserWorkflow.mid == model.mid) & 
+                        (UserWorkflow.name == name) &
+                        (UserWorkflow.id != id)
                     )
                 )
                 if existing.first():
@@ -696,14 +699,14 @@ class WorkflowCrudService:
             if enabled_plugins is not None:
                 # 删除旧的关联
                 old_links = await session.exec(
-                    select(WorkflowPluginLink).where(WorkflowPluginLink.workflow_id == model.workflow_id)
+                    select(WorkflowPluginRelation).where(WorkflowPluginRelation.workflow_id == model.workflow_id)
                 )
                 for link in old_links.all():
                     await session.delete(link)
                 
                 # 增加新的关联
                 for link_data in enabled_plugins:
-                    link = WorkflowPluginLink(
+                    link = WorkflowPluginRelation(
                         workflow_id=model.workflow_id,
                         plugin_id=link_data.get("plugin_id"),
                         config_params=link_data.get("config_params", {})
@@ -722,7 +725,7 @@ class WorkflowCrudService:
         如果删除的是 Fork 版本，会减少原资源的 forks_count
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflowModel).where(UserWorkflowModel.id == id))
+            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
             model = result.first()
             if not model:
                 return False
@@ -730,14 +733,14 @@ class WorkflowCrudService:
             # 如果是 Fork 版本，减少原资源的 Fork 计数
             if model.forked_from_id:
                 await session.exec(
-                    update(UserWorkflowModel)
-                    .where(UserWorkflowModel.id == model.forked_from_id)
-                    .values(forks_count=UserWorkflowModel.forks_count - 1)
+                    update(UserWorkflow)
+                    .where(UserWorkflow.id == model.forked_from_id)
+                    .values(forks_count=UserWorkflow.forks_count - 1)
                 )
             
             # 先删除关联的插件记录
             links = await session.exec(
-                select(WorkflowPluginLink).where(WorkflowPluginLink.workflow_id == model.workflow_id)
+                select(WorkflowPluginRelation).where(WorkflowPluginRelation.workflow_id == model.workflow_id)
             )
             for link in links.all():
                 await session.delete(link)
@@ -751,7 +754,7 @@ class WorkflowCrudService:
     async def enable(id: int) -> bool:
         """启用工作流"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflowModel).where(UserWorkflowModel.id == id))
+            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
             model = result.first()
             if not model:
                 return False
@@ -764,7 +767,7 @@ class WorkflowCrudService:
     async def disable(id: int) -> bool:
         """禁用工作流"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflowModel).where(UserWorkflowModel.id == id))
+            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
             model = result.first()
             if not model:
                 return False
@@ -774,16 +777,16 @@ class WorkflowCrudService:
             return True
 
     @staticmethod
-    async def duplicate(id: int) -> Optional[UserWorkflowModel]:
+    async def duplicate(id: int) -> Optional[UserWorkflow]:
         """复制工作流（同一用户）"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflowModel).where(UserWorkflowModel.id == id))
+            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
             original = result.first()
             if not original:
                 return None
 
             new_workflow_id = str(uuid.uuid4())
-            new_model = UserWorkflowModel(
+            new_model = UserWorkflow(
                 workflow_id=new_workflow_id,
                 name=f"{original.name} (副本)",
                 description=original.description,
@@ -801,7 +804,7 @@ class WorkflowCrudService:
             return new_model
 
     @staticmethod
-    async def fork(id: int, target_mid: str, new_name: str | None = None) -> Optional[UserWorkflowModel]:
+    async def fork(id: int, target_mid: str, new_name: str | None = None) -> Optional[UserWorkflow]:
         """Fork 工作流（仅允许 Fork 公开的工作流）
         
         Args:
@@ -816,7 +819,7 @@ class WorkflowCrudService:
             ValueError: 如果原工作流不是公开的
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflowModel).where(UserWorkflowModel.id == id))
+            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
             original = result.first()
             if not original:
                 return None
@@ -834,14 +837,14 @@ class WorkflowCrudService:
             
             # 检查目标用户下是否已存在同名工作流
             existing = await session.exec(
-                select(UserWorkflowModel).where(
-                    (UserWorkflowModel.mid == target_mid) & (UserWorkflowModel.name == new_name)
+                select(UserWorkflow).where(
+                    (UserWorkflow.mid == target_mid) & (UserWorkflow.name == new_name)
                 )
             )
             if existing.first():
                 raise NameAlreadyExistsException(name=new_name, name_type="工作流")
 
-            new_model = UserWorkflowModel(
+            new_model = UserWorkflow(
                 workflow_id=new_workflow_id,
                 name=new_name,
                 description=f"Forked from: {original.name}",
@@ -858,9 +861,9 @@ class WorkflowCrudService:
             
             # 增加原资源的 Fork 计数
             await session.exec(
-                update(UserWorkflowModel)
-                .where(UserWorkflowModel.id == original.id)
-                .values(forks_count=UserWorkflowModel.forks_count + 1)
+                update(UserWorkflow)
+                .where(UserWorkflow.id == original.id)
+                .values(forks_count=UserWorkflow.forks_count + 1)
             )
             
             await session.commit()
@@ -872,9 +875,9 @@ class WorkflowCrudService:
         """增加点赞数"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(UserWorkflowModel)
-                .where(UserWorkflowModel.id == id)
-                .values(likes_count=UserWorkflowModel.likes_count + 1)
+                update(UserWorkflow)
+                .where(UserWorkflow.id == id)
+                .values(likes_count=UserWorkflow.likes_count + 1)
             )
             await session.exec(stmt)
             await session.commit()
@@ -885,22 +888,22 @@ class WorkflowCrudService:
         """增加举报数"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(UserWorkflowModel)
-                .where(UserWorkflowModel.id == id)
-                .values(reports_count=UserWorkflowModel.reports_count + 1)
+                update(UserWorkflow)
+                .where(UserWorkflow.id == id)
+                .values(reports_count=UserWorkflow.reports_count + 1)
             )
             await session.exec(stmt)
             await session.commit()
             return True
 
     @staticmethod
-    async def list_forks(workflow_id: int, skip: int = 0, limit: int = 50) -> List[UserWorkflowModel]:
+    async def list_forks(workflow_id: int, skip: int = 0, limit: int = 50) -> List[UserWorkflow]:
         """获取某工作流的所有 Fork 版本"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(UserWorkflowModel)
-                .where(UserWorkflowModel.forked_from_id == workflow_id)
-                .order_by(UserWorkflowModel.created_at.desc())
+                select(UserWorkflow)
+                .where(UserWorkflow.forked_from_id == workflow_id)
+                .order_by(UserWorkflow.created_at.desc())
                 .offset(skip)
                 .limit(limit)
             )
@@ -919,13 +922,13 @@ class ExecutionLogCrudService:
         execution_id: str,
         status: str,
         results: List[Dict[str, Any]],
-    ) -> WorkflowExecutionLogModel:
+    ) -> WorkflowExecutionLog:
         """创建执行日志"""
         async with DatabaseSessionManager.async_session() as session:
             success_count = sum(1 for r in results if r.get("success"))
             failed_count = len(results) - success_count
 
-            model = WorkflowExecutionLogModel(
+            model = WorkflowExecutionLog(
                 workflow_id=workflow_id,
                 session_id=session_id,
                 browser_id=browser_id,
@@ -952,8 +955,8 @@ class ExecutionLogCrudService:
         """更新执行状态"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowExecutionLogModel)
-                .where(WorkflowExecutionLogModel.execution_id == execution_id)
+                select(WorkflowExecutionLog)
+                .where(WorkflowExecutionLog.execution_id == execution_id)
             )
             model = result.first()
             if not model:
@@ -973,12 +976,12 @@ class ExecutionLogCrudService:
             return True
 
     @staticmethod
-    async def get_by_execution_id(execution_id: str) -> Optional[WorkflowExecutionLogModel]:
+    async def get_by_execution_id(execution_id: str) -> Optional[WorkflowExecutionLog]:
         """根据执行ID获取"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowExecutionLogModel)
-                .where(WorkflowExecutionLogModel.execution_id == execution_id)
+                select(WorkflowExecutionLog)
+                .where(WorkflowExecutionLog.execution_id == execution_id)
             )
             return result.first()
 
@@ -987,13 +990,13 @@ class ExecutionLogCrudService:
         workflow_id: str,
         skip: int = 0,
         limit: int = 50,
-    ) -> List[WorkflowExecutionLogModel]:
+    ) -> List[WorkflowExecutionLog]:
         """获取工作流的所有执行记录"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowExecutionLogModel)
-                .where(WorkflowExecutionLogModel.workflow_id == workflow_id)
-                .order_by(WorkflowExecutionLogModel.started_at.desc())
+                select(WorkflowExecutionLog)
+                .where(WorkflowExecutionLog.workflow_id == workflow_id)
+                .order_by(WorkflowExecutionLog.started_at.desc())
                 .offset(skip)
                 .limit(limit)
             )
@@ -1004,13 +1007,13 @@ class ExecutionLogCrudService:
         mid: str,
         skip: int = 0,
         limit: int = 100,
-    ) -> List[WorkflowExecutionLogModel]:
+    ) -> List[WorkflowExecutionLog]:
         """获取用户的所有执行记录"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowExecutionLogModel)
-                .where(WorkflowExecutionLogModel.mid == mid)
-                .order_by(WorkflowExecutionLogModel.started_at.desc())
+                select(WorkflowExecutionLog)
+                .where(WorkflowExecutionLog.mid == mid)
+                .order_by(WorkflowExecutionLog.started_at.desc())
                 .offset(skip)
                 .limit(limit)
             )
@@ -1022,8 +1025,8 @@ class ExecutionLogCrudService:
         async with DatabaseSessionManager.async_session() as session:
             cutoff = datetime.now() - timedelta(days=days)
             result = await session.exec(
-                select(WorkflowExecutionLogModel)
-                .where(WorkflowExecutionLogModel.started_at < cutoff)
+                select(WorkflowExecutionLog)
+                .where(WorkflowExecutionLog.started_at < cutoff)
             )
             models = result.all()
             count = len(models)
@@ -1046,7 +1049,7 @@ class PluginCrudService:
         description: str = "",
         priority: int = 100,
         is_public: bool = False,
-    ) -> UserPluginModel:
+    ) -> UserPlugin:
         """创建插件挂载配置
         
         Raises:
@@ -1066,9 +1069,9 @@ class PluginCrudService:
             
             # 2. 验证自定义动作是否存在且可用
             action_result = await session.exec(
-                select(CustomActionModel).where(
-                    (CustomActionModel.action_id == custom_action_id) &
-                    (CustomActionModel.is_enabled == True)
+                select(CustomAction).where(
+                    (CustomAction.action_id == custom_action_id) &
+                    (CustomAction.is_enabled == True)
                 )
             )
             action_model = action_result.first()
@@ -1087,15 +1090,15 @@ class PluginCrudService:
             
             # 4. 检查同一用户下是否已存在同名插件
             existing = await session.exec(
-                select(UserPluginModel).where(
-                    (UserPluginModel.mid == mid) & (UserPluginModel.name == name)
+                select(UserPlugin).where(
+                    (UserPlugin.mid == mid) & (UserPlugin.name == name)
                 )
             )
             if existing.first():
                 raise NameAlreadyExistsException(name=name, name_type="插件")
             
             # 5. 创建插件配置
-            model = UserPluginModel(
+            model = UserPlugin(
                 mid=mid,
                 plugin_id=plugin_id,
                 name=name,
@@ -1111,31 +1114,31 @@ class PluginCrudService:
             return model
 
     @staticmethod
-    async def get_by_id(id: int) -> Optional[UserPluginModel]:
+    async def get_by_id(id: int) -> Optional[UserPlugin]:
         """根据ID获取"""
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
+            result = await session.exec(select(UserPlugin).where(UserPlugin.id == id))
             return result.first()
 
     @staticmethod
-    async def get_by_plugin_id(plugin_id: str) -> Optional[UserPluginModel]:
+    async def get_by_plugin_id(plugin_id: str) -> Optional[UserPlugin]:
         """根据 plugin_id 获取"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(UserPluginModel).where(UserPluginModel.plugin_id == plugin_id)
+                select(UserPlugin).where(UserPlugin.plugin_id == plugin_id)
             )
             return result.first()
 
     @staticmethod
-    async def get_by_ids(ids: List[str]) -> List[UserPluginModel]:
+    async def get_by_ids(ids: List[str]) -> List[UserPlugin]:
         """根据ID列表批量获取插件详情"""
         if not ids:
             return []
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(UserPluginModel)
-                .where(UserPluginModel.plugin_id.in_(ids))
-                .where(UserPluginModel.is_enabled == True)
+                select(UserPlugin)
+                .where(UserPlugin.plugin_id.in_(ids))
+                .where(UserPlugin.is_enabled == True)
             )
             return result.all()
 
@@ -1154,26 +1157,26 @@ class PluginCrudService:
         
         async with DatabaseSessionManager.async_session() as session:
             # 构建查询条件
-            query = select(func.count(UserPluginModel.id))
+            query = select(func.count(UserPlugin.id))
             
             # 应用筛选条件
             if filter_type == "private":
                 query = query.where(
-                    (UserPluginModel.mid == mid) & (UserPluginModel.is_public == False)
+                    (UserPlugin.mid == mid) & (UserPlugin.is_public == False)
                 )
             elif filter_type == "public":
                 query = query.where(
-                    (UserPluginModel.mid == mid) & (UserPluginModel.is_public == True)
+                    (UserPlugin.mid == mid) & (UserPlugin.is_public == True)
                 )
             elif filter_type == "community":
                 query = query.where(
-                    (UserPluginModel.mid != mid) & (UserPluginModel.is_public == True)
+                    (UserPlugin.mid != mid) & (UserPlugin.is_public == True)
                 )
             elif filter_type == "verified":
-                query = query.where(UserPluginModel.is_verified == True)
+                query = query.where(UserPlugin.is_verified == True)
             else:
                 query = query.where(
-                    (UserPluginModel.mid == mid) | (UserPluginModel.is_public == True)
+                    (UserPlugin.mid == mid) | (UserPlugin.is_public == True)
                 )
             
             result = await session.exec(query)
@@ -1187,7 +1190,7 @@ class PluginCrudService:
         filter_type: str = "all",
         sort_by: str = "updated_at",
         sort_order: str = "desc"
-    ) -> List[UserPluginModel]:
+    ) -> List[UserPlugin]:
         """获取用户的插件配置（包含公开的）
         
         Args:
@@ -1201,35 +1204,35 @@ class PluginCrudService:
         from sqlmodel import col
         
         async with DatabaseSessionManager.async_session() as session:
-            query = select(UserPluginModel)
+            query = select(UserPlugin)
             
             # 应用筛选条件
             if filter_type == "private":
                 # 我的私有：当前用户的且未公开
                 query = query.where(
-                    (UserPluginModel.mid == mid) & (UserPluginModel.is_public == False)
+                    (UserPlugin.mid == mid) & (UserPlugin.is_public == False)
                 )
             elif filter_type == "public":
                 # 我的公开：当前用户的且已公开
                 query = query.where(
-                    (UserPluginModel.mid == mid) & (UserPluginModel.is_public == True)
+                    (UserPlugin.mid == mid) & (UserPlugin.is_public == True)
                 )
             elif filter_type == "community":
                 # 社区公开：非当前用户的且已公开
                 query = query.where(
-                    (UserPluginModel.mid != mid) & (UserPluginModel.is_public == True)
+                    (UserPlugin.mid != mid) & (UserPlugin.is_public == True)
                 )
             elif filter_type == "verified":
                 # 已认证：所有已认证的
-                query = query.where(UserPluginModel.is_verified == True)
+                query = query.where(UserPlugin.is_verified == True)
             else:
                 # all: 查询属于该用户的 OR 公开给所有人的
                 query = query.where(
-                    (UserPluginModel.mid == mid) | (UserPluginModel.is_public == True)
+                    (UserPlugin.mid == mid) | (UserPlugin.is_public == True)
                 )
             
             # 应用排序
-            sort_field = getattr(UserPluginModel, sort_by, UserPluginModel.updated_at)
+            sort_field = getattr(UserPlugin, sort_by, UserPlugin.updated_at)
             if sort_order == "asc":
                 query = query.order_by(col(sort_field).asc())
             else:
@@ -1248,7 +1251,7 @@ class PluginCrudService:
         custom_action_id: Optional[str] = None,
         priority: Optional[int] = None,
         is_public: Optional[bool] = None,
-    ) -> Optional[UserPluginModel]:
+    ) -> Optional[UserPlugin]:
         """更新插件配置
         
         Raises:
@@ -1257,7 +1260,7 @@ class PluginCrudService:
             ValueError: 如果自定义动作不存在或不可用
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
+            result = await session.exec(select(UserPlugin).where(UserPlugin.id == id))
             model = result.first()
             if not model:
                 return None
@@ -1276,9 +1279,9 @@ class PluginCrudService:
             # 2. 如果要更新自定义动作，验证其存在性和权限
             if custom_action_id is not None and custom_action_id != model.custom_action_id:
                 action_result = await session.exec(
-                    select(CustomActionModel).where(
-                        (CustomActionModel.action_id == custom_action_id) &
-                        (CustomActionModel.is_enabled == True)
+                    select(CustomAction).where(
+                        (CustomAction.action_id == custom_action_id) &
+                        (CustomAction.is_enabled == True)
                     )
                 )
                 action_model = action_result.first()
@@ -1300,10 +1303,10 @@ class PluginCrudService:
             # 3. 如果要更新名称，检查是否与同一用户的其他插件重名
             if name is not None and name != model.name:
                 existing = await session.exec(
-                    select(UserPluginModel).where(
-                        (UserPluginModel.mid == model.mid) & 
-                        (UserPluginModel.name == name) &
-                        (UserPluginModel.id != id)
+                    select(UserPlugin).where(
+                        (UserPlugin.mid == model.mid) & 
+                        (UserPlugin.name == name) &
+                        (UserPlugin.id != id)
                     )
                 )
                 if existing.first():
@@ -1329,7 +1332,7 @@ class PluginCrudService:
         如果删除的是 Fork 版本，会减少原资源的 forks_count
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
+            result = await session.exec(select(UserPlugin).where(UserPlugin.id == id))
             model = result.first()
             if not model:
                 return False
@@ -1337,9 +1340,9 @@ class PluginCrudService:
             # 如果是 Fork 版本，减少原资源的 Fork 计数
             if model.forked_from_id:
                 await session.exec(
-                    update(UserPluginModel)
-                    .where(UserPluginModel.id == model.forked_from_id)
-                    .values(forks_count=UserPluginModel.forks_count - 1)
+                    update(UserPlugin)
+                    .where(UserPlugin.id == model.forked_from_id)
+                    .values(forks_count=UserPlugin.forks_count - 1)
                 )
             
             # 由于设置了 foreign_key，数据库会自动处理 workflow_plugin_link 和 action_plugin_link 的清理
@@ -1352,8 +1355,8 @@ class PluginCrudService:
         """启用插件"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(UserPluginModel)
-                .where(UserPluginModel.id == id)
+                update(UserPlugin)
+                .where(UserPlugin.id == id)
                 .values(is_enabled=True, updated_at=datetime.now())
             )
             await session.exec(stmt)
@@ -1365,8 +1368,8 @@ class PluginCrudService:
         """禁用插件"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(UserPluginModel)
-                .where(UserPluginModel.id == id)
+                update(UserPlugin)
+                .where(UserPlugin.id == id)
                 .values(is_enabled=False, updated_at=datetime.now())
             )
             await session.exec(stmt)
@@ -1378,9 +1381,9 @@ class PluginCrudService:
         """增加点赞数"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(UserPluginModel)
-                .where(UserPluginModel.id == id)
-                .values(likes_count=UserPluginModel.likes_count + 1)
+                update(UserPlugin)
+                .where(UserPlugin.id == id)
+                .values(likes_count=UserPlugin.likes_count + 1)
             )
             await session.exec(stmt)
             await session.commit()
@@ -1391,29 +1394,29 @@ class PluginCrudService:
         """增加举报数"""
         async with DatabaseSessionManager.async_session() as session:
             stmt = (
-                update(UserPluginModel)
-                .where(UserPluginModel.id == id)
-                .values(reports_count=UserPluginModel.reports_count + 1)
+                update(UserPlugin)
+                .where(UserPlugin.id == id)
+                .values(reports_count=UserPlugin.reports_count + 1)
             )
             await session.exec(stmt)
             await session.commit()
             return True
 
     @staticmethod
-    async def list_forks(plugin_id: int, skip: int = 0, limit: int = 50) -> List[UserPluginModel]:
+    async def list_forks(plugin_id: int, skip: int = 0, limit: int = 50) -> List[UserPlugin]:
         """获取某插件的所有 Fork 版本"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(UserPluginModel)
-                .where(UserPluginModel.forked_from_id == plugin_id)
-                .order_by(UserPluginModel.created_at.desc())
+                select(UserPlugin)
+                .where(UserPlugin.forked_from_id == plugin_id)
+                .order_by(UserPlugin.created_at.desc())
                 .offset(skip)
                 .limit(limit)
             )
             return result.all()
 
     @staticmethod
-    async def fork(id: int, target_mid: str, new_name: str | None = None) -> Optional[UserPluginModel]:
+    async def fork(id: int, target_mid: str, new_name: str | None = None) -> Optional[UserPlugin]:
         """Fork 插件（仅允许 Fork 公开的插件）
         
         Args:
@@ -1428,7 +1431,7 @@ class PluginCrudService:
             ValueError: 如果原插件不是公开的
         """
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserPluginModel).where(UserPluginModel.id == id))
+            result = await session.exec(select(UserPlugin).where(UserPlugin.id == id))
             original = result.first()
             if not original:
                 return None
@@ -1446,14 +1449,14 @@ class PluginCrudService:
             
             # 检查目标用户下是否已存在同名插件
             existing = await session.exec(
-                select(UserPluginModel).where(
-                    (UserPluginModel.mid == target_mid) & (UserPluginModel.name == new_name)
+                select(UserPlugin).where(
+                    (UserPlugin.mid == target_mid) & (UserPlugin.name == new_name)
                 )
             )
             if existing.first():
                 raise NameAlreadyExistsException(name=new_name, name_type="插件")
 
-            new_model = UserPluginModel(
+            new_model = UserPlugin(
                 mid=target_mid,  # 设置为目标用户
                 plugin_id=new_plugin_id,
                 name=new_name,
@@ -1469,9 +1472,9 @@ class PluginCrudService:
             
             # 增加原资源的 Fork 计数
             await session.exec(
-                update(UserPluginModel)
-                .where(UserPluginModel.id == original.id)
-                .values(forks_count=UserPluginModel.forks_count + 1)
+                update(UserPlugin)
+                .where(UserPlugin.id == original.id)
+                .values(forks_count=UserPlugin.forks_count + 1)
             )
             
             await session.commit()
@@ -1479,8 +1482,382 @@ class PluginCrudService:
             return new_model
 
 
+class CommunityCrudService:
+    """社区互动 CRUD 服务 - 点赞、举报等功能"""
+
+    @staticmethod
+    async def toggle_like(
+        mid: int,
+        resource_type: int,
+        resource_id: int,
+    ) -> bool | None:
+        """
+        点赞/取消点赞资源
+        
+        Args:
+            mid: 用户ID
+            resource_type: 资源类型 (1=CustomAction, 2=UserWorkflow, 3=UserPlugin)
+            resource_id: 资源ID
+        
+        Returns:
+            True: 点赞成功
+            False: 取消点赞成功
+            None: 资源不存在
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            # 先检查资源是否存在
+            if resource_type == ResourceType.CUSTOM_ACTION.value:
+                result = await session.exec(
+                    select(CustomAction).where(CustomAction.id == resource_id)
+                )
+                resource = result.first()
+            elif resource_type == ResourceType.USER_WORKFLOW.value:
+                result = await session.exec(
+                    select(UserWorkflow).where(UserWorkflow.id == resource_id)
+                )
+                resource = result.first()
+            elif resource_type == ResourceType.USER_PLUGIN.value:
+                result = await session.exec(
+                    select(UserPlugin).where(UserPlugin.id == resource_id)
+                )
+                resource = result.first()
+            else:
+                return None
+            
+            if not resource:
+                return None
+            
+            # 检查是否已点赞
+            like_result = await session.exec(
+                select(ResourceLike).where(
+                    (ResourceLike.mid == mid) &
+                    (ResourceLike.resource_type == resource_type) &
+                    (ResourceLike.resource_id == resource_id)
+                )
+            )
+            existing_like = like_result.first()
+            
+            if existing_like:
+                # 已点赞，取消点赞
+                await session.delete(existing_like)
+                
+                # 减少资源的点赞数
+                if resource_type == ResourceType.CUSTOM_ACTION.value:
+                    await session.exec(
+                        update(CustomAction)
+                        .where(CustomAction.id == resource_id)
+                        .values(likes_count=CustomAction.likes_count - 1)
+                    )
+                elif resource_type == ResourceType.USER_WORKFLOW.value:
+                    await session.exec(
+                        update(UserWorkflow)
+                        .where(UserWorkflow.id == resource_id)
+                        .values(likes_count=UserWorkflow.likes_count - 1)
+                    )
+                elif resource_type == ResourceType.USER_PLUGIN.value:
+                    await session.exec(
+                        update(UserPlugin)
+                        .where(UserPlugin.id == resource_id)
+                        .values(likes_count=UserPlugin.likes_count - 1)
+                    )
+                
+                await session.commit()
+                return False
+            else:
+                # 未点赞，添加点赞
+                like = ResourceLike(
+                    mid=mid,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                )
+                session.add(like)
+                
+                # 增加资源的点赞数
+                if resource_type == ResourceType.CUSTOM_ACTION.value:
+                    await session.exec(
+                        update(CustomAction)
+                        .where(CustomAction.id == resource_id)
+                        .values(likes_count=CustomAction.likes_count + 1)
+                    )
+                elif resource_type == ResourceType.USER_WORKFLOW.value:
+                    await session.exec(
+                        update(UserWorkflow)
+                        .where(UserWorkflow.id == resource_id)
+                        .values(likes_count=UserWorkflow.likes_count + 1)
+                    )
+                elif resource_type == ResourceType.USER_PLUGIN.value:
+                    await session.exec(
+                        update(UserPlugin)
+                        .where(UserPlugin.id == resource_id)
+                        .values(likes_count=UserPlugin.likes_count + 1)
+                    )
+                
+                await session.commit()
+                return True
+
+    @staticmethod
+    async def report(
+        mid: int,
+        resource_type: int,
+        resource_id: int,
+        reason: int = 5,  # 默认其他
+        description: str = "",
+    ) -> bool | None:
+        """
+        举报资源
+        
+        Args:
+            mid: 用户ID
+            resource_type: 资源类型 (1=CustomAction, 2=UserWorkflow, 3=UserPlugin)
+            resource_id: 资源ID
+            reason: 举报理由 (1=垃圾信息, 2=不当内容, 3=违反规定, 4=抄袭, 5=其他)
+            description: 详细描述
+        
+        Returns:
+            True: 举报成功
+            False: 已举报过
+            None: 资源不存在
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            # 先检查资源是否存在
+            if resource_type == ResourceType.CUSTOM_ACTION.value:
+                result = await session.exec(
+                    select(CustomAction).where(CustomAction.id == resource_id)
+                )
+                resource = result.first()
+            elif resource_type == ResourceType.USER_WORKFLOW.value:
+                result = await session.exec(
+                    select(UserWorkflow).where(UserWorkflow.id == resource_id)
+                )
+                resource = result.first()
+            elif resource_type == ResourceType.USER_PLUGIN.value:
+                result = await session.exec(
+                    select(UserPlugin).where(UserPlugin.id == resource_id)
+                )
+                resource = result.first()
+            else:
+                return None
+            
+            if not resource:
+                return None
+            
+            # 检查是否已举报（防刷）
+            report_result = await session.exec(
+                select(ResourceReport).where(
+                    (ResourceReport.mid == mid) &
+                    (ResourceReport.resource_type == resource_type) &
+                    (ResourceReport.resource_id == resource_id)
+                )
+            )
+            existing_report = report_result.first()
+            
+            if existing_report:
+                # 已举报过
+                return False
+            
+            # 创建举报记录
+            report = ResourceReport(
+                mid=mid,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                reason=reason,
+                description=description,
+                is_valid=True,  # 默认有效
+            )
+            session.add(report)
+            
+            # 增加资源的举报数
+            if resource_type == ResourceType.CUSTOM_ACTION.value:
+                await session.exec(
+                    update(CustomAction)
+                    .where(CustomAction.id == resource_id)
+                    .values(reports_count=CustomAction.reports_count + 1)
+                )
+            elif resource_type == ResourceType.USER_WORKFLOW.value:
+                await session.exec(
+                    update(UserWorkflow)
+                    .where(UserWorkflow.id == resource_id)
+                    .values(reports_count=UserWorkflow.reports_count + 1)
+                )
+            elif resource_type == ResourceType.USER_PLUGIN.value:
+                await session.exec(
+                    update(UserPlugin)
+                    .where(UserPlugin.id == resource_id)
+                    .values(reports_count=UserPlugin.reports_count + 1)
+                )
+            
+            await session.commit()
+            return True
+
+    @staticmethod
+    async def mark_report_invalid(
+        report_id: int,
+        reviewer_mid: int,
+    ) -> bool:
+        """
+        管理员标记举报为无效
+        
+        Args:
+            report_id: 举报记录ID
+            reviewer_mid: 审核管理员ID
+        
+        Returns:
+            True: 操作成功
+            False: 举报不存在或已被标记
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            # 获取举报记录
+            result = await session.exec(
+                select(ResourceReport).where(ResourceReport.id == report_id)
+            )
+            report = result.first()
+            
+            if not report or not report.is_valid:
+                return False
+            
+            # 标记为无效
+            report.is_valid = False
+            report.reviewed_by_mid = reviewer_mid
+            report.reviewed_at = datetime.now()
+            
+            # 减少资源的举报数
+            resource_type = report.resource_type
+            resource_id = report.resource_id
+            
+            if resource_type == ResourceType.CUSTOM_ACTION.value:
+                await session.exec(
+                    update(CustomAction)
+                    .where(CustomAction.id == resource_id)
+                    .values(reports_count=CustomAction.reports_count - 1)
+                )
+            elif resource_type == ResourceType.USER_WORKFLOW.value:
+                await session.exec(
+                    update(UserWorkflow)
+                    .where(UserWorkflow.id == resource_id)
+                    .values(reports_count=UserWorkflow.reports_count - 1)
+                )
+            elif resource_type == ResourceType.USER_PLUGIN.value:
+                await session.exec(
+                    update(UserPlugin)
+                    .where(UserPlugin.id == resource_id)
+                    .values(reports_count=UserPlugin.reports_count - 1)
+                )
+            
+            await session.commit()
+            return True
+
+    @staticmethod
+    async def update_report(
+        report_id: int,
+        mid: int,
+        reason: int | None = None,
+        description: str | None = None,
+    ) -> bool | None:
+        """
+        修改举报内容（用户只能修改自己的举报）
+        
+        Args:
+            report_id: 举报记录ID
+            mid: 用户ID（用于验证是否为自己的举报）
+            reason: 新的举报理由（可选）
+            description: 新的描述（可选）
+        
+        Returns:
+            True: 修改成功
+            False: 权限不足或举报已被处理
+            None: 举报记录不存在
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ResourceReport).where(ResourceReport.id == report_id)
+            )
+            report = result.first()
+            
+            if not report:
+                return None
+            
+            # 检查权限：只能修改自己的举报
+            if report.mid != mid:
+                return False
+            
+            # 检查状态：已被标记为无效的举报不能修改
+            if not report.is_valid:
+                return False
+            
+            # 更新字段
+            if reason is not None:
+                report.reason = reason
+            if description is not None:
+                report.description = description
+            
+            await session.commit()
+            return True
+
+    @staticmethod
+    async def list_reports(
+        skip: int = 0,
+        limit: int = 50,
+        is_valid: bool | None = None,
+        resource_type: int | None = None,
+    ) -> List[ResourceReport]:
+        """
+        获取举报列表（管理员用）
+        
+        Args:
+            skip: 跳过记录数
+            limit: 返回记录数
+            is_valid: 是否有效（None=全部, True=有效, False=无效）
+            resource_type: 资源类型筛选
+        
+        Returns:
+            举报记录列表
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            query = select(ResourceReport)
+            
+            if is_valid is not None:
+                query = query.where(ResourceReport.is_valid == is_valid)
+            
+            if resource_type is not None:
+                query = query.where(ResourceReport.resource_type == resource_type)
+            
+            query = query.order_by(ResourceReport.created_at.desc())
+            query = query.offset(skip).limit(limit)
+            
+            result = await session.exec(query)
+            return result.all()
+
+    @staticmethod
+    async def count_reports(
+        is_valid: bool | None = None,
+        resource_type: int | None = None,
+    ) -> int:
+        """
+        获取举报总数（管理员用）
+        
+        Args:
+            is_valid: 是否有效（None=全部, True=有效, False=无效）
+            resource_type: 资源类型筛选
+        
+        Returns:
+            举报记录总数
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            query = select(ResourceReport)
+            
+            if is_valid is not None:
+                query = query.where(ResourceReport.is_valid == is_valid)
+            
+            if resource_type is not None:
+                query = query.where(ResourceReport.resource_type == resource_type)
+            
+            result = await session.exec(query)
+            return len(result.all())
+
+
 # 全局服务实例
 action_crud = ActionCrudService()
 workflow_crud = WorkflowCrudService()
 plugin_crud = PluginCrudService()
 execution_log_crud = ExecutionLogCrudService()
+community_crud = CommunityCrudService()

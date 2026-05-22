@@ -1,7 +1,7 @@
 """
 插件挂载管理路由
 
-负责管理 UserPluginModel，即定义在哪些生命周期钩子处自动执行哪些 CustomAction。
+负责管理 UserPlugin，即定义在哪些生命周期钩子处自动执行哪些 CustomAction。
 """
 from fastapi import Depends, APIRouter
 from sqlmodel import select
@@ -18,7 +18,6 @@ from app.models.workflow.models import (
     PluginForkRequest,
     PluginForkResponse,
 )
-from app.models.database.workflow.models import UserPluginModel
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.services.execution.crud_service import plugin_crud, action_crud, workflow_crud
@@ -226,7 +225,7 @@ async def get_plugin_forks(
     skip: int = 0,
     limit: int = 50,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[List[PluginListItemResponse]]:
+) -> StandardResponse[BasePaginationResp[PluginListItemResponse]]:
     """获取某插件的所有 Fork 版本列表"""
     original = await plugin_crud.get_by_id(id)
     if not original:
@@ -255,4 +254,11 @@ async def get_plugin_forks(
         for f in forks
     ]
     
-    return success_response(items)
+    pagination = BasePaginationResp[PluginListItemResponse](
+        page=1,
+        per_page=limit,
+        total=len(items),
+        items=items
+    )
+    
+    return success_response(pagination)

@@ -4,12 +4,11 @@ Workflow 管理路由
 提供工作流（Workflow）的 CRUD 和执行 API
 """
 from loguru import logger
-from typing import Any, List
 import uuid
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from app.services.execution.crud_service import workflow_crud
 from app.services.RPA_browser.rpa_operation_service import RPAOperationService
 from app.models.workflow.models import (
@@ -353,7 +352,7 @@ async def get_workflow_forks(
     skip: int = 0,
     limit: int = 50,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[List[WorkflowListItemResponse]]:
+) -> StandardResponse[BasePaginationResp[WorkflowListItemResponse]]:
     """获取某工作流的所有 Fork 版本列表"""
     original = await workflow_crud.get_by_id(id)
     if not original:
@@ -381,7 +380,14 @@ async def get_workflow_forks(
         for f in forks
     ]
     
-    return success_response(items)
+    pagination = BasePaginationResp[WorkflowListItemResponse](
+        page=1,
+        per_page=limit,
+        total=len(items),
+        items=items
+    )
+    
+    return success_response(pagination)
 
 
 @router.post(BrowserControlRouterPath.workflows_execute, summary="执行工作流")
@@ -432,7 +438,7 @@ async def execute_workflow_step(
             try:
                 # 获取浏览器会话
                 from app.services.RPA_browser.live_service import LiveService
-                session = await LiveService.get_or_create_browser_session(
+                session = await LiveService.get_or_create_browser_session_entry(
                     auth.mid, request.browser_id, headless=False
                 )
                 

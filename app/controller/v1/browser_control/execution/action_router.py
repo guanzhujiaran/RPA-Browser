@@ -332,7 +332,7 @@ async def get_action_forks(
     skip: int = 0,
     limit: int = 50,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[List[CustomActionListItemResponse]]:
+) -> StandardResponse[BasePaginationResp[CustomActionListItemResponse]]:
     """获取某自定义操作的所有 Fork 版本列表"""
     original = await action_crud.get_by_id(id)
     if not original:
@@ -361,4 +361,11 @@ async def get_action_forks(
         for f in forks
     ]
     
-    return success_response(items)
+    pagination = BasePaginationResp[CustomActionListItemResponse](
+        page=1,
+        per_page=limit,
+        total=len(items),
+        items=items
+    )
+    
+    return success_response(pagination)
