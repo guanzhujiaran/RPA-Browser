@@ -7,18 +7,11 @@ Runtime 模块 - 简化版模型
 from sqlmodel import SQLModel, Field
 
 from app.models.runtime.control import (
-    CreateSessionRequest,
     ManualOperationRequest,
     AutomationResumeRequest,
     LiveControlCommand,
     BrowserCleanupPolicy,
-    EmptyRequest,
 )
-
-
-class SimplifiedCreateSessionRequest(CreateSessionRequest):
-    """简化版创建会话请求（不包含browser_id）"""
-    pass
 
 
 class SimplifiedManualOperationRequest(ManualOperationRequest):
@@ -89,7 +82,6 @@ class SimplifiedPausePluginsRequest(SQLModel):
 
 
 __all__ = [
-    "SimplifiedCreateSessionRequest",
     "SimplifiedManualOperationRequest",
     "SimplifiedAutomationResumeRequest",
     "SimplifiedLiveControlCommand",
@@ -103,5 +95,4 @@ __all__ = [
     "ExecuteJSResponse",
     "SimplifiedForceReleaseRequest",
     "SimplifiedPausePluginsRequest",
-    "SimplifiedEmptyRequest",
 ]

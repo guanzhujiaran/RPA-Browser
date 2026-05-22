@@ -36,12 +36,6 @@ router = gen_api_router(user_browser_default_settings_router)
 # ============ 用户浏览器默认设置 API（全部 POST） ============
 
 
-class EmptyRequest(SQLModel):
-    """空请求模型（占位符）"""
-
-    pass
-
-
 class GetSettingsRequest(SQLModel):
     """获取默认设置请求（占位符）"""
 

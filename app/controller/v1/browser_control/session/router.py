@@ -6,9 +6,6 @@ from app.models.runtime.control import (
     CloseSessionResponse,
     BrowserSessionStatus,
 )
-from app.models.runtime.simplified import (
-    SimplifiedCreateSessionRequest,
-)
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserSessionRouterPath
@@ -25,7 +22,6 @@ router = new_session_router()
     response_model=StandardResponse[CreateSessionResponse],
 )
 async def create_browser_session(
-    request: SimplifiedCreateSessionRequest,
     background_tasks: BackgroundTasks,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
@@ -67,7 +63,6 @@ async def create_browser_session(
         LiveService.create_browser_session_background,
         auth_info.mid,
         browser_info.browser_id,
-        request,
     )
 
     # 立即返回响应，表示任务已启动

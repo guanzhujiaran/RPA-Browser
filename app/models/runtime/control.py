@@ -112,13 +112,6 @@ class BrowserSessionStatus(SQLModel):
     expires_at: int | None = Field(None, description="会话过期时间")
 
 
-class CreateSessionRequest(SQLModel):
-    """创建会话请求"""
-
-    # 注意：auto_cleanup, cleanup_policy 和 expiration_time 已移至系统配置
-    # 前端不再能控制这些选项，它们由管理员在系统配置中统一管理
-
-
 class CreateSessionResponse(SQLModel):
     """创建会话响应"""
 
@@ -207,7 +200,7 @@ class ForceReleaseRequest(SQLModel):
     browser_id: str = Field(description="浏览器实例ID")
 
 
-class CreateSessionWithBrowserIdRequest(CreateSessionRequest):
+class CreateSessionWithBrowserIdRequest(SQLModel):
     """包含browser_id的创建会话请求"""
 
     browser_id: str = Field(description="浏览器实例ID")
@@ -370,11 +363,6 @@ class SystemHealthCheckResponse(SQLModel):
     error: str | None = Field(None, description="错误信息（如果有）")
 
 
-class EmptyRequest(SQLModel):
-    """空请求模型，用于不需要参数的请求"""
-
-    pass
-
 
 # LiveService 返回的具体模型
 
@@ -519,7 +507,6 @@ __all__ = [
     "BrowserCleanupPolicy",
     "SessionLifecycleState",
     "BrowserSessionStatus",
-    "CreateSessionRequest",
     "CreateSessionResponse",
     "CloseSessionResponse",
     "BrowserIdParam",
@@ -545,7 +532,6 @@ __all__ = [
     "SystemCleanupResponse",
     "ForceReleaseResponse",
     "SystemHealthCheckResponse",
-    "EmptyRequest",
     "BrowserInfoData",
     "ManualOperationResult",
     "AutomationResult",

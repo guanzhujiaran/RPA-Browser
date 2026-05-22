@@ -24,7 +24,6 @@ from app.models.runtime.control import (
     AutomationResumeRequest,
     BrowserCleanupPolicy,
     SessionLifecycleState,
-    CreateSessionRequest,
     BrowserInfoData,
     ManualOperationResult,
     AutomationResult,
@@ -248,12 +247,7 @@ class LiveService:
 
         # 🔑 快速检查会话是否存在（不加锁）
         if session_key not in LiveService.browser_sessions:
-            # 创建默认会话请求
-            default_request = CreateSessionRequest(
-                headless=False,
-                auto_cleanup=True,
-            )
-            await LiveService.create_browser_session(mid, browser_id, default_request)
+            await LiveService.create_browser_session(mid, browser_id)
 
         # 🔑 获取会话级别的锁
         lock = await LiveService._get_session_lock(session_key)
@@ -714,7 +708,7 @@ class LiveService:
 
     @staticmethod
     async def create_browser_session(
-        mid: int, browser_id: int, request: CreateSessionRequest
+        mid: int, browser_id: int
     ) -> CreateSessionData:
         """
         创建浏览器会话
@@ -788,7 +782,7 @@ class LiveService:
 
     @staticmethod
     async def create_browser_session_background(
-        mid: int, browser_id: int, request: CreateSessionRequest
+        mid: int, browser_id: int
     ) -> None:
         """
         后台创建浏览器会话
