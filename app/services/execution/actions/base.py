@@ -69,6 +69,11 @@ class BaseAction(ABC):
     1. validate() 只验证当前层参数，不验证子 action
     2. execute() 使用 DP 算法展开执行
     3. 每个子类只需实现 _do_execute() 方法
+    
+    属性设计：
+    - input: 输入变量定义（dict）
+    - output: 输出变量名列表（List[str]）
+    - variables: 运行时变量池（执行时从 ctx 获取）
     """
 
     params_model: Type[SQLModel] | None = None
@@ -78,6 +83,61 @@ class BaseAction(ABC):
         self.metadata = self.get_metadata()
         self._logs: List[str] = []
         self._execution_phase: ExecutionPhase = ExecutionPhase.VALIDATION
+        
+        # 输入输出定义
+        self._input: Dict[str, Any] = {}
+        self._output: List[str] = []
+        self._variables: Dict[str, Any] = {}  # 运行时变量池
+    
+    @property
+    def input(self) -> Dict[str, Any]:
+        """获取输入变量"""
+        return self._input
+    
+    @input.setter
+    def input(self, value: Dict[str, Any]):
+        """设置输入变量"""
+        self._input = value
+    
+    @property
+    def output(self) -> List[str]:
+        """获取输出变量名列表"""
+        return self._output
+    
+    @output.setter
+    def output(self, value: List[str]):
+        """设置输出变量名列表"""
+        self._output = value
+    
+    @property
+    def variables(self) -> Dict[str, Any]:
+        """获取运行时变量池"""
+        return self._variables
+    
+    def get_variable(self, name: str, default: Any = None) -> Any:
+        """获取变量（从运行时变量池）"""
+        return self._variables.get(name, default)
+    
+    def set_variable(self, name: str, value: Any):
+        """设置变量到运行时变量池"""
+        self._variables[name] = value
+    
+    def set_output(self, name: str, value: Any):
+        """设置输出变量"""
+        self._variables[name] = value
+        if name not in self._output:
+            self._output.append(name)
+    
+    def sync_from_context(self, ctx: ActionContext):
+        """从上下文同步 input 和 variables"""
+        self._input = dict(ctx.input)
+        self._variables = ctx.get_all_variables()
+    
+    def sync_to_context(self, ctx: ActionContext):
+        """将 output 同步到上下文"""
+        for name in self._output:
+            if name in self._variables:
+                ctx.set_output(name, self._variables[name])
 
     @staticmethod
     @abstractmethod
@@ -199,11 +259,13 @@ class BaseAction(ABC):
         执行 action（使用 DP 算法）
 
         执行流程：
-        1. 参数验证（单层）
-        2. 前置处理
-        3. 调用 _do_execute()
-        4. 后置处理
-        5. 返回结果
+        1. 从上下文同步 input/variables
+        2. 参数验证（单层）
+        3. 前置处理
+        4. 调用 _do_execute()
+        5. 后置处理
+        6. 同步 output 到上下文
+        7. 返回结果
 
         Args:
             ctx: 执行上下文
@@ -216,6 +278,10 @@ class BaseAction(ABC):
 
         self.clear_logs()
         self._execution_phase = ExecutionPhase.VALIDATION
+        
+        # 0. 从上下文同步 input 和 variables
+        self.sync_from_context(ctx)
+        ctx.merge_input_to_variables()
 
         # 1. 单层参数验证
         valid, error_msg = self.validate_params(ctx.params)
@@ -243,10 +309,16 @@ class BaseAction(ABC):
         result.action_id = self.action_id
         result.action_name = self.metadata.name
         result.logs = self.get_logs()
+        
+        # 将 action 的 output 同步到 result
+        result.output = {name: self._variables.get(name) for name in self._output if name in self._variables}
 
         # 4. 后置处理
         self._execution_phase = ExecutionPhase.POST_EXECUTION
         await self._post_execute(ctx, result)
+        
+        # 5. 同步 output 到上下文
+        self.sync_to_context(ctx)
 
         self._execution_phase = ExecutionPhase.CLEANUP
 

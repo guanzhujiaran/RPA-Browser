@@ -39,9 +39,12 @@ class UnifiedCRUD:
         description: str = "",
         entry_action_id: Optional[str] = None,
         steps: Optional[List[Dict[str, Any]]] = None,
+        step_group: Optional[Dict[str, Any]] = None,
         hook_type: Optional[str] = None,
         target_action_id: Optional[str] = None,
         parameters_schema: Optional[List[Dict[str, Any]]] = None,
+        input_schema: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[List[str]] = None,
         tags: Optional[List[str]] = None,
         is_public: bool = False,
     ) -> ExecutionRecord:
@@ -55,10 +58,13 @@ class UnifiedCRUD:
             mid: 用户 ID
             description: 描述
             entry_action_id: 入口动作 ID（组合动作）
-            steps: 步骤列表
+            steps: 步骤列表（旧格式）
+            step_group: 步骤组（新格式）
             hook_type: 钩子类型（插件）
             target_action_id: 目标动作 ID（插件）
             parameters_schema: 参数定义
+            input_schema: 输入变量定义
+            output_schema: 输出变量名列表
             tags: 标签
             is_public: 是否公开
 
@@ -83,9 +89,12 @@ class UnifiedCRUD:
                 description=description,
                 entry_action_id=entry_action_id,
                 steps=steps or [],
+                step_group=step_group,
                 hook_type=hook_type,
                 target_action_id=target_action_id,
                 parameters_schema=parameters_schema or [],
+                input_schema=input_schema,
+                output_schema=output_schema,
                 tags=tags or [],
                 mid=mid,
                 is_public=is_public,
@@ -306,6 +315,8 @@ class UnifiedCRUD:
         mid: int,
         description: str = "",
         params_template: Optional[Dict[str, Any]] = None,
+        input: Optional[Dict[str, Any]] = None,
+        output: Optional[List[str]] = None,
         trigger_type: TriggerType = TriggerType.MANUAL,
         crontab_expression: Optional[str] = None,
         is_scheduled: bool = False,
@@ -333,6 +344,8 @@ class UnifiedCRUD:
                 description=description,
                 entry_action_id=entry_action_id,
                 params_template=params_template or {},
+                input=input or {},
+                output=output or [],
                 trigger_type=trigger_type,
                 crontab_expression=crontab_expression,
                 is_scheduled=is_scheduled,

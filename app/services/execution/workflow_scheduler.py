@@ -133,13 +133,13 @@ class WorkflowScheduler:
                 page=page,
                 browser=browser,
                 params=workflow.params_template,
-                user_data={
+                input={
                     "mid": str(mid),
                     "workflow_id": workflow_id,
                     "execution_id": execution_id,
-                    "trigger_type": TriggerType.SCHEDULED,
-                    "variables": {},
+                    "trigger_type": TriggerType.SCHEDULED.value,
                 },
+                output=[],
             )
 
             # 从数据库加载 action

@@ -318,7 +318,7 @@ class UnifiedExecutionEngine:
             # 检查循环条件
             if loop_config.type == "while":
                 try:
-                    if not eval(str(loop_config.value), {}, {"state": ctx.user_data.get("state", {})}):
+                    if not eval(str(loop_config.value), {}, {"state": ctx.get_all_variables()}):
                         break
                 except Exception as e:
                     logger.warning(f"循环条件评估失败: {e}")
@@ -348,7 +348,7 @@ class UnifiedExecutionEngine:
             # 检查 until 条件
             if loop_config.type == "until":
                 try:
-                    if eval(str(loop_config.value), {}, {"state": ctx.user_data.get("state", {})}):
+                    if eval(str(loop_config.value), {}, {"state": ctx.get_all_variables()}):
                         break
                 except Exception as e:
                     logger.warning(f"循环退出条件评估失败: {e}")
@@ -384,7 +384,7 @@ class UnifiedExecutionEngine:
         condition_result = False
 
         try:
-            condition_result = eval(conditional_config.condition, {}, {"state": ctx.user_data.get("state", {})})
+            condition_result = eval(conditional_config.condition, {}, {"state": ctx.get_all_variables()})
         except Exception as e:
             logger.warning(f"条件评估失败: {e}")
 
@@ -504,7 +504,7 @@ class UnifiedExecutionEngine:
                     parts = template.split(".")
 
                     # 1. 尝试从 variables 中获取
-                    current = ctx.user_data.get("variables", {})
+                    current = ctx.get_all_variables()
                     for part in parts:
                         if isinstance(current, dict):
                             current = current.get(part)
@@ -846,7 +846,7 @@ class UnifiedExecutionEngine:
                     status=ExecutionStatus.RUNNING,
                     params=node.params,
                     depth=i,
-                    mid=int(ctx.user_data.get("mid", 0)),
+                    mid=int(ctx.input.get("mid", 0)),
                 )
 
                 # 创建 action 实例
@@ -856,7 +856,7 @@ class UnifiedExecutionEngine:
                     # 尝试从数据库加载
                     action = await registry.create_action_for_user(
                         node.action_id,
-                        str(ctx.user_data.get("mid", "")),
+                        str(ctx.input.get("mid", "")),
                     )
 
                 if not action:
@@ -880,7 +880,7 @@ class UnifiedExecutionEngine:
                         result = await self._execute_with_plugins(
                             action=action,
                             ctx=ctx,
-                            mid=str(ctx.user_data.get("mid", "")),
+                            mid=str(ctx.input.get("mid", "")),
                             execution_id=execution_id,
                         )
 
@@ -896,14 +896,18 @@ class UnifiedExecutionEngine:
                     execution_time=result.execution_time,
                 )
 
-                # 更新变量
-                if result.success and result.data:
-                    if isinstance(result.data, dict):
-                        ctx.user_data.setdefault("variables", {}).update(result.data)
-                    ctx.user_data.setdefault("variables", {})[f"result_{i}"] = result.data
+                # 更新变量（从 result.output 同步到 ctx）
+                if result.success:
+                    if result.output:
+                        for name, value in result.output.items():
+                            ctx.set_output(name, value)
+                    if result.data and isinstance(result.data, dict):
+                        for key, value in result.data.items():
+                            ctx.set_variable(key, value)
+                    ctx.set_variable(f"result_{i}", result.data)
 
                 # 失败时停止
-                if not result.success and ctx.user_data.get("on_error") == "stop":
+                if not result.success and ctx.input.get("on_error") == "stop":
                     break
 
             except Exception as e:
@@ -965,7 +969,7 @@ class UnifiedExecutionEngine:
 
         while True:
             iteration += 1
-            ctx.user_data["variables"]["loop_index"] = iteration
+            ctx.set_variable("loop_index", iteration)
 
             # 检查循环条件
             if loop_count and iteration > loop_count:
@@ -973,14 +977,14 @@ class UnifiedExecutionEngine:
 
             if loop_while:
                 try:
-                    if not eval(loop_while, {"__builtins__": {}}, {"state": ctx.user_data}):
+                    if not eval(loop_while, {"__builtins__": {}}, {"state": ctx.get_all_variables()}):
                         break
                 except Exception as e:
                     logger.warning(f"loop_while 评估失败: {e}")
 
             if loop_until:
                 try:
-                    if eval(loop_until, {"__builtins__": {}}, {"state": ctx.user_data}):
+                    if eval(loop_until, {"__builtins__": {}}, {"state": ctx.get_all_variables()}):
                         break
                 except Exception as e:
                     logger.warning(f"loop_until 评估失败: {e}")
@@ -1035,11 +1039,11 @@ class UnifiedExecutionEngine:
         condition_result = False
         if condition:
             try:
-                condition_result = eval(condition, {"__builtins__": {}}, {"state": ctx.user_data})
+                condition_result = eval(condition, {"__builtins__": {}}, {"state": ctx.get_all_variables()})
             except Exception as e:
                 logger.warning(f"条件评估失败: {e}")
 
-        ctx.user_data["variables"]["condition_result"] = condition_result
+        ctx.set_variable("condition_result", condition_result)
 
         # 选择分支
         selected_steps = true_branch if condition_result else false_branch

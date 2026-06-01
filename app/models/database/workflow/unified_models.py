@@ -87,7 +87,12 @@ class ActionMetadata(SQLModel):
 
 
 class ActionResult(SQLModel, Generic[Any]):
-    """操作执行结果"""
+    """
+    操作执行结果
+    
+    核心设计：
+    - output: 输出变量字典，运行结束后赋值到上下文
+    """
     success: bool = Field(description="是否成功")
     data: Optional[Any] = Field(default=None, description="返回数据")
     error: Optional[str] = Field(default=None, description="错误信息")
@@ -95,18 +100,61 @@ class ActionResult(SQLModel, Generic[Any]):
     action_id: str = Field(default="", description="操作ID")
     action_name: str = Field(default="", description="操作名称")
     logs: List[str] = Field(default_factory=list)
+    
+    # 输出变量
+    output: Dict[str, Any] = Field(default_factory=dict, description="输出变量，运行结束后赋值到上下文")
 
 
 class ActionContext(SQLModel):
-    """操作执行上下文"""
+    """
+    操作执行上下文
+    
+    核心设计：
+    - input: 输入变量（dict），运行时全局变量
+    - output: 输出变量名列表（List[str]），运行结束后赋值
+    - variables: 运行时变量池，合并所有 input 和 output
+    """
     session_id: str
     browser_id: str
     page: Any = Field(default=None, description="Playwright Page 对象")
     browser: Any = Field(default=None, description="Playwright BrowserContext 对象")
-    params: Dict[str, Any] = Field(default_factory=dict)
-    user_data: Dict[str, Any] = Field(default_factory=dict)
+    params: Dict[str, Any] = Field(default_factory=dict, description="动作参数")
+    
+    # 输入输出设计
+    input: Dict[str, Any] = Field(default_factory=dict, description="输入变量（全局变量）")
+    output: List[str] = Field(default_factory=list, description="输出变量名列表")
+    
+    # 运行时变量池（合并 input 和动态产生的 output）
+    variables: Dict[str, Any] = Field(default_factory=dict, description="运行时变量池")
     execution_stack: List[str] = Field(default_factory=list, description="执行栈（用于循环检测）")
-    variables: Dict[str, Any] = Field(default_factory=dict, description="运行时变量")
+    
+    def get_variable(self, name: str, default: Any = None) -> Any:
+        """获取变量（优先从 variables，其次从 input）"""
+        if name in self.variables:
+            return self.variables[name]
+        return self.input.get(name, default)
+    
+    def set_variable(self, name: str, value: Any):
+        """设置变量到 variables"""
+        self.variables[name] = value
+    
+    def set_output(self, name: str, value: Any):
+        """设置输出变量（自动添加到 output 列表）"""
+        self.variables[name] = value
+        if name not in self.output:
+            self.output.append(name)
+    
+    def get_all_variables(self) -> Dict[str, Any]:
+        """获取所有变量（input + variables）"""
+        result = dict(self.input)
+        result.update(self.variables)
+        return result
+    
+    def merge_input_to_variables(self):
+        """将 input 合并到 variables（初始化时调用）"""
+        for key, value in self.input.items():
+            if key not in self.variables:
+                self.variables[key] = value
 
 
 class StepType(StrEnum):
@@ -278,7 +326,18 @@ class ExecutionRecord(SQLModel, table=True):
 
     # 元数据
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    user_data: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    
+    # 输入输出定义
+    input_schema: Optional[Dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="输入变量定义（JSON Schema 格式）"
+    )
+    output_schema: Optional[List[str]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="输出变量名列表"
+    )
 
     # 所有权
     mid: int = Field(index=True, description="用户ID")
@@ -431,7 +490,18 @@ class WorkflowRecord(SQLModel, table=True):
 
     # 元数据
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    user_data: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    
+    # 输入输出定义
+    input: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="输入变量（全局变量）"
+    )
+    output: List[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON),
+        description="输出变量名列表"
+    )
 
     # 所有权
     mid: int = Field(index=True)
