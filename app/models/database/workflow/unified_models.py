@@ -13,7 +13,7 @@ Core 模块 - 统一数据模型 (Unified Action Design)
 - 执行时记录每个操作和插件的执行记录
 """
 
-from typing import Any, Dict, List, Optional, Generic
+from typing import Any, Dict, List, Optional, Generic, ForwardRef, Union
 from datetime import datetime
 import uuid
 from sqlalchemy import Column, JSON, Index
@@ -109,6 +109,104 @@ class ActionContext(SQLModel):
     variables: Dict[str, Any] = Field(default_factory=dict, description="运行时变量")
 
 
+class StepType(StrEnum):
+    """步骤类型"""
+    ATOMIC = "atomic"                # 原子动作
+    COMPOSITE_REF = "composite_ref"  # 组合动作引用（前向引用）
+    PLUGIN_REF = "plugin_ref"        # 插件引用（前向引用）
+    LOOP = "loop"                    # 循环步骤
+    CONDITIONAL = "conditional"      # 条件步骤
+
+
+class LoopConfig(SQLModel):
+    """循环配置"""
+    type: str = Field(default="count", description="循环类型: count/while/until")
+    value: Union[int, str] = Field(description="循环值: 次数或条件表达式")
+    max_iterations: int = Field(default=100, description="最大迭代次数，防止死循环")
+
+
+class ConditionalConfig(SQLModel):
+    """条件分支配置"""
+    condition: str = Field(description="条件表达式")
+    true_branch: Optional[str] = Field(default=None, description="条件为真时的步骤列表ID")
+    false_branch: Optional[str] = Field(default=None, description="条件为假时的步骤列表ID")
+
+
+class StepMetadata(SQLModel):
+    """步骤元数据"""
+    name: str = Field(default="", description="步骤名称（用于显示）")
+    description: str = Field(default="", description="步骤描述")
+    retry_count: int = Field(default=0, description="重试次数")
+    continue_on_error: bool = Field(default=False, description="错误时继续")
+
+
+class Step(SQLModel):
+    """
+    步骤模型（前向引用支持）
+
+    支持的类型：
+    - ATOMIC: 原子动作，直接执行
+    - COMPOSITE_REF: 组合动作引用，通过 action_id 引用
+    - PLUGIN_REF: 插件引用，通过 action_id 引用
+    - LOOP: 循环步骤，包含循环配置
+    - CONDITIONAL: 条件步骤，包含分支配置
+    """
+    id: str = Field(description="步骤唯一ID（用于前向引用）")
+    type: StepType = Field(description="步骤类型")
+
+    # 核心执行字段
+    action_id: Optional[str] = Field(default=None, description="动作ID（用于ATOMIC/COMPOSITE_REF/PLUGIN_REF类型）")
+    params: Dict[str, Any] = Field(default_factory=dict, description="参数字典，支持模板变量")
+
+    # 特殊配置
+    loop_config: Optional[LoopConfig] = Field(default=None, description="循环配置（仅LOOP类型）")
+    conditional_config: Optional[ConditionalConfig] = Field(default=None, description="条件配置（仅CONDITIONAL类型）")
+
+    # 子步骤（嵌套支持，通过前向引用）
+    children: Optional[List[str]] = Field(default=None, description="子步骤ID列表（用于LOOP/CONDITIONAL的分支）")
+
+    # 元数据
+    metadata: StepMetadata = Field(default_factory=StepMetadata, description="步骤元数据")
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+# 前向引用
+StepRef = ForwardRef("Step")
+
+
+class StepGroup(SQLModel):
+    """
+    步骤组 - 支持前向引用的步骤集合
+
+    设计说明：
+    - 通过 steps 字典存储所有步骤，key 为 step_id
+    - 通过 entry_id 指定入口步骤
+    - 通过 children 字段实现前向引用
+    """
+    id: str = Field(description="步骤组ID")
+    name: str = Field(default="", description="步骤组名称")
+    description: str = Field(default="", description="步骤组描述")
+    entry_id: Optional[str] = Field(default=None, description="入口步骤ID")
+    steps: Dict[str, Step] = Field(default_factory=dict, description="步骤字典，key为step_id")
+
+    def get_step(self, step_id: str) -> Optional[Step]:
+        """获取指定步骤"""
+        return self.steps.get(step_id)
+
+    def get_entry_step(self) -> Optional[Step]:
+        """获取入口步骤"""
+        if not self.entry_id:
+            # 如果没有指定入口，返回第一个步骤
+            return next(iter(self.steps.values()), None) if self.steps else None
+        return self.get_step(self.entry_id)
+
+    def get_execution_order(self) -> List[str]:
+        """获取执行顺序（简单实现：按ID排序）"""
+        return list(self.steps.keys())
+
+
 class ExecutionRecord(SQLModel, table=True):
     """
     统一动作表 - 合并 CustomAction 和 UserPlugin
@@ -158,7 +256,12 @@ class ExecutionRecord(SQLModel, table=True):
     steps: List[Dict[str, Any]] = Field(
         default_factory=list,
         sa_column=Column(JSON),
-        description="步骤列表JSON（仅组合动作使用）"
+        description="步骤列表JSON（仅组合动作使用，向后兼容）"
+    )
+    step_group: Optional[Dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="步骤组（新格式，支持前向引用）"
     )
 
     # 插件字段
@@ -211,9 +314,67 @@ class ExecutionRecord(SQLModel, table=True):
         """判断是否为插件"""
         return self.category == ActionCategory.PLUGIN
 
+    def has_step_group(self) -> bool:
+        """判断是否有新格式的步骤组"""
+        return self.step_group is not None
+
+    def get_step_group(self) -> Optional[StepGroup]:
+        """获取步骤组（解析新格式）"""
+        if not self.step_group:
+            return None
+        try:
+            return StepGroup(**self.step_group)
+        except Exception:
+            return None
+
     def get_steps(self) -> List[Dict[str, Any]]:
-        """获取步骤列表"""
+        """获取步骤列表（向后兼容）"""
+        if self.step_group:
+            # 从新格式转换为旧格式
+            step_group = self.get_step_group()
+            if step_group:
+                return [
+                    {
+                        "id": step.id,
+                        "type": step.type.value,
+                        "action_id": step.action_id,
+                        "params": step.params,
+                        "metadata": step.metadata.dict() if step.metadata else None
+                    }
+                    for step in step_group.steps.values()
+                ]
         return self.steps or []
+
+    def set_step_group(self, step_group: StepGroup) -> None:
+        """设置步骤组（新格式）"""
+        self.step_group = step_group.dict()
+        # 同时同步到旧格式，保持向后兼容
+        self.steps = self.get_steps()
+
+    def resolve_forward_references(self) -> Dict[str, Any]:
+        """
+        解析前向引用，构建执行图
+
+        返回值:
+        - 步骤图: {step_id: {children: [step_ids], ...}}
+        """
+        if not self.step_group:
+            return {}
+
+        step_group = self.get_step_group()
+        if not step_group:
+            return {}
+
+        # 构建执行图
+        graph: Dict[str, Dict[str, Any]] = {}
+        for step_id, step in step_group.steps.items():
+            graph[step_id] = {
+                "step": step,
+                "children": step.children or [],
+                "resolved": []
+            }
+
+        return graph
 
 
 class WorkflowRecord(SQLModel, table=True):
@@ -296,6 +457,187 @@ class WorkflowRecord(SQLModel, table=True):
     # 时间戳
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class StepBuilder:
+    """
+    步骤构建器 - 简化 StepGroup 的构建
+
+    示例用法:
+    ```python
+    builder = StepBuilder()
+    builder.add_atomic_step(step_id="s1", action_id="click", params={"selector": "#btn"})
+    builder.add_composite_ref_step(step_id="s2", action_id="ca_my_custom", params={})
+    step_group = builder.build()
+    ```
+    """
+
+    def __init__(self):
+        self.steps: Dict[str, Step] = {}
+        self.entry_id: Optional[str] = None
+
+    def add_step(self, step: Step) -> "StepBuilder":
+        """添加步骤"""
+        self.steps[step.id] = step
+        if self.entry_id is None:
+            self.entry_id = step.id
+        return self
+
+    def add_atomic_step(
+        self,
+        step_id: str,
+        action_id: str,
+        params: Optional[Dict[str, Any]] = None,
+        metadata: Optional[StepMetadata] = None
+    ) -> "StepBuilder":
+        """添加原子动作步骤"""
+        step = Step(
+            id=step_id,
+            type=StepType.ATOMIC,
+            action_id=action_id,
+            params=params or {},
+            metadata=metadata or StepMetadata()
+        )
+        return self.add_step(step)
+
+    def add_composite_ref_step(
+        self,
+        step_id: str,
+        action_id: str,
+        params: Optional[Dict[str, Any]] = None,
+        metadata: Optional[StepMetadata] = None
+    ) -> "StepBuilder":
+        """添加组合动作引用步骤"""
+        step = Step(
+            id=step_id,
+            type=StepType.COMPOSITE_REF,
+            action_id=action_id,
+            params=params or {},
+            metadata=metadata or StepMetadata()
+        )
+        return self.add_step(step)
+
+    def add_plugin_ref_step(
+        self,
+        step_id: str,
+        action_id: str,
+        params: Optional[Dict[str, Any]] = None,
+        metadata: Optional[StepMetadata] = None
+    ) -> "StepBuilder":
+        """添加插件引用步骤"""
+        step = Step(
+            id=step_id,
+            type=StepType.PLUGIN_REF,
+            action_id=action_id,
+            params=params or {},
+            metadata=metadata or StepMetadata()
+        )
+        return self.add_step(step)
+
+    def add_loop_step(
+        self,
+        step_id: str,
+        loop_config: LoopConfig,
+        children: Optional[List[str]] = None,
+        metadata: Optional[StepMetadata] = None
+    ) -> "StepBuilder":
+        """添加循环步骤"""
+        step = Step(
+            id=step_id,
+            type=StepType.LOOP,
+            loop_config=loop_config,
+            children=children,
+            metadata=metadata or StepMetadata()
+        )
+        return self.add_step(step)
+
+    def add_conditional_step(
+        self,
+        step_id: str,
+        conditional_config: ConditionalConfig,
+        metadata: Optional[StepMetadata] = None
+    ) -> "StepBuilder":
+        """添加条件步骤"""
+        step = Step(
+            id=step_id,
+            type=StepType.CONDITIONAL,
+            conditional_config=conditional_config,
+            metadata=metadata or StepMetadata()
+        )
+        return self.add_step(step)
+
+    def set_entry(self, step_id: str) -> "StepBuilder":
+        """设置入口步骤"""
+        if step_id in self.steps:
+            self.entry_id = step_id
+        return self
+
+    def build(self, group_id: Optional[str] = None, name: str = "") -> StepGroup:
+        """构建步骤组"""
+        return StepGroup(
+            id=group_id or f"sg_{uuid.uuid4().hex[:12]}",
+            name=name,
+            entry_id=self.entry_id,
+            steps=self.steps
+        )
+
+
+def create_sample_step_group() -> StepGroup:
+    """
+    创建示例步骤组（演示前向引用示例）
+
+    示例流程：
+    - 步骤1: 点击按钮
+    - 步骤2: 等待页面加载
+    - 步骤3: 循环3次输入数据
+      - 子步骤: 输入文本
+      - 子步骤: 点击提交
+    """
+    builder = StepBuilder()
+
+    # 添加原子步骤
+    builder.add_atomic_step(
+        step_id="s1_click",
+        action_id="click",
+        params={"selector": "#start-btn"},
+        metadata=StepMetadata(name="点击开始按钮")
+    )
+
+    builder.add_atomic_step(
+        step_id="s2_wait",
+        action_id="wait",
+        params={"timeout": 5000},
+        metadata=StepMetadata(name="等待页面加载")
+    )
+
+    # 添加循环步骤（引用子步骤）
+    loop_config = LoopConfig(type="count", value=3)
+    builder.add_loop_step(
+        step_id="s3_loop",
+        loop_config=loop_config,
+        children=["s4_input", "s5_submit"],
+        metadata=StepMetadata(name="循环输入数据3次")
+    )
+
+    # 子步骤
+    builder.add_atomic_step(
+        step_id="s4_input",
+        action_id="input",
+        params={"selector": "#input", "value": "{{loop.index}}"},
+        metadata=StepMetadata(name="输入循环值")
+    )
+
+    builder.add_atomic_step(
+        step_id="s5_submit",
+        action_id="click",
+        params={"selector": "#submit"},
+        metadata=StepMetadata(name="提交")
+    )
+
+    # 设置入口
+    builder.set_entry("s1_click")
+
+    return builder.build(name="示例工作流步骤组")
 
 
 class ActionExecutionLog(SQLModel, table=True):

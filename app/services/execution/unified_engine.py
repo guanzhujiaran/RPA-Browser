@@ -33,6 +33,12 @@ from app.models.database.workflow.unified_models import (
     ExecutionRecord,
     ActionExecutionLog,
     WorkflowExecutionSession,
+    Step,
+    StepType,
+    StepGroup,
+    StepMetadata,
+    LoopConfig,
+    ConditionalConfig,
 )
 from app.services.execution.actions.base import BaseAction, ExecutionNode
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -57,6 +63,362 @@ class UnifiedExecutionEngine:
     def __init__(self):
         self._max_depth = 50
         self._execution_cache: Dict[str, ActionResult] = {}
+
+    async def execute_step_group(
+        self,
+        step_group: StepGroup,
+        ctx: ActionContext,
+        registry,
+        mid: str,
+        execution_id: str,
+    ) -> List[ActionResult]:
+        """
+        执行步骤组（新格式，支持前向引用）
+
+        Args:
+            step_group: 步骤组
+            ctx: 执行上下文
+            registry: 动作注册表
+            mid: 用户ID
+            execution_id: 执行ID
+
+        Returns:
+            执行结果列表
+        """
+        results: List[ActionResult] = []
+        step_results: Dict[str, ActionResult] = {}
+
+        # 构建执行顺序
+        execution_order = step_group.get_execution_order()
+
+        # 从入口开始
+        entry_step = step_group.get_entry_step()
+        if not entry_step:
+            logger.warning("步骤组没有入口步骤")
+            return results
+
+        # 执行
+        for step_id in execution_order:
+            step = step_group.get_step(step_id)
+            if not step:
+                continue
+
+            # 记录执行开始
+            await self._log_execution(
+                execution_id=execution_id,
+                action_id=f"{step_id}:{step.action_id or step.type.value}",
+                action_name=step.metadata.name or step_id,
+                category=ActionCategory.ATOMIC,  # 默认类别
+                status=ExecutionStatus.RUNNING,
+                params=step.params,
+                depth=len(ctx.execution_stack),
+                mid=int(mid),
+                parent_execution_id=execution_id,
+            )
+
+            # 执行
+            result = await self._execute_single_step(
+                step=step,
+                step_group=step_group,
+                ctx=ctx,
+                registry=registry,
+                mid=mid,
+                execution_id=execution_id,
+                step_results=step_results,
+            )
+
+            results.append(result)
+            step_results[step_id] = result
+
+            # 更新执行记录
+            await self._log_execution_complete(
+                execution_id=execution_id,
+                action_id=f"{step_id}:{step.action_id or step.type.value}",
+                status=ExecutionStatus.SUCCESS if result.success else ExecutionStatus.FAILED,
+                result_data=result.data,
+                error_message=result.error,
+                execution_time=result.execution_time,
+            )
+
+            # 错误处理
+            if not result.success and not step.metadata.continue_on_error:
+                break
+
+        return results
+
+    async def _execute_single_step(
+        self,
+        step: Step,
+        step_group: StepGroup,
+        ctx: ActionContext,
+        registry,
+        mid: str,
+        execution_id: str,
+        step_results: Dict[str, ActionResult],
+    ) -> ActionResult:
+        """执行单个步骤"""
+        try:
+            if step.type == StepType.ATOMIC:
+                return await self._execute_atomic_step(step, ctx, registry, mid, execution_id)
+            elif step.type == StepType.COMPOSITE_REF:
+                return await self._execute_composite_ref_step(step, ctx, registry, mid, execution_id)
+            elif step.type == StepType.PLUGIN_REF:
+                return await self._execute_plugin_ref_step(step, ctx, registry, mid, execution_id)
+            elif step.type == StepType.LOOP:
+                return await self._execute_loop_step(step, step_group, ctx, registry, mid, execution_id)
+            elif step.type == StepType.CONDITIONAL:
+                return await self._execute_conditional_step(step, step_group, ctx, registry, mid, execution_id)
+            else:
+                return ActionResult(
+                    success=False,
+                    error=f"不支持的步骤类型: {step.type}",
+                    action_id=step.id,
+                    action_name=step.metadata.name,
+                )
+        except Exception as e:
+            logger.exception(f"执行步骤失败: {step.id}")
+            return ActionResult(
+                success=False,
+                error=str(e),
+                action_id=step.id,
+                action_name=step.metadata.name,
+            )
+
+    async def _execute_atomic_step(
+        self,
+        step: Step,
+        ctx: ActionContext,
+        registry,
+        mid: str,
+        execution_id: str,
+    ) -> ActionResult:
+        """执行原子动作"""
+        if not step.action_id:
+            return ActionResult(
+                success=False,
+                error="原子动作缺少 action_id",
+                action_id=step.id,
+                action_name=step.metadata.name,
+            )
+
+        action = registry.create_action(step.action_id)
+        if not action:
+            action = await registry.create_action_for_user(step.action_id, mid)
+
+        if not action:
+            return ActionResult(
+                success=False,
+                error=f"未找到动作: {step.action_id}",
+                action_id=step.action_id,
+                action_name=step.metadata.name,
+            )
+
+        ctx.params = self._replace_templates(step.params, ctx)
+        return await self._execute_with_plugins(action, ctx, mid, execution_id)
+
+    async def _execute_composite_ref_step(
+        self,
+        step: Step,
+        ctx: ActionContext,
+        registry,
+        mid: str,
+        execution_id: str,
+    ) -> ActionResult:
+        """执行组合动作引用"""
+        if not step.action_id:
+            return ActionResult(
+                success=False,
+                error="组合动作引用缺少 action_id",
+                action_id=step.id,
+                action_name=step.metadata.name,
+            )
+
+        # 从数据库加载组合动作
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ExecutionRecord).where(ExecutionRecord.action_id == step.action_id)
+            )
+            record = result.first()
+
+        if not record or not record.is_composite():
+            return ActionResult(
+                success=False,
+                error=f"不是有效的组合动作: {step.action_id}",
+                action_id=step.id,
+                action_name=step.metadata.name,
+            )
+
+        # 检查是否有新格式的步骤组
+        if record.has_step_group():
+            step_group = record.get_step_group()
+            if step_group:
+                results = await self.execute_step_group(
+                    step_group=step_group,
+                    ctx=ctx,
+                    registry=registry,
+                    mid=mid,
+                    execution_id=execution_id,
+                )
+                # 返回最后一个结果
+                return results[-1] if results else ActionResult(
+                    success=True,
+                    data={},
+                    action_id=step.id,
+                    action_name=step.metadata.name,
+                )
+
+        # 使用旧格式
+        return await self._execute_with_plugins_action(record, ctx, registry, mid, execution_id)
+
+    async def _execute_plugin_ref_step(
+        self,
+        step: Step,
+        ctx: ActionContext,
+        registry,
+        mid: str,
+        execution_id: str,
+    ) -> ActionResult:
+        """执行插件引用"""
+        # 类似执行组合动作引用
+        return await self._execute_composite_ref_step(step, ctx, registry, mid, execution_id)
+
+    async def _execute_loop_step(
+        self,
+        step: Step,
+        step_group: StepGroup,
+        ctx: ActionContext,
+        registry,
+        mid: str,
+        execution_id: str,
+    ) -> ActionResult:
+        """执行循环步骤"""
+        if not step.loop_config:
+            return ActionResult(
+                success=False,
+                error="循环步骤缺少配置",
+                action_id=step.id,
+                action_name=step.metadata.name,
+            )
+
+        loop_config = step.loop_config
+        iteration_count = 0
+        results: List[ActionResult] = []
+
+        # 确定循环次数
+        max_iterations = loop_config.max_iterations
+        if loop_config.type == "count" and isinstance(loop_config.value, int):
+            max_iterations = min(loop_config.value, max_iterations)
+
+        start_time = time.time()
+
+        while iteration_count < max_iterations:
+            ctx.variables["loop.index"] = iteration_count
+            ctx.variables["loop.index0"] = iteration_count - 1 if iteration_count > 0 else 0
+
+            # 检查循环条件
+            if loop_config.type == "while":
+                try:
+                    if not eval(str(loop_config.value), {}, {"state": ctx.user_data.get("state", {})}):
+                        break
+                except Exception as e:
+                    logger.warning(f"循环条件评估失败: {e}")
+                    break
+
+            # 执行子步骤
+            if step.children:
+                for child_id in step.children:
+                    child_step = step_group.get_step(child_id)
+                    if child_step:
+                        result = await self._execute_single_step(
+                            step=child_step,
+                            step_group=step_group,
+                            ctx=ctx,
+                            registry=registry,
+                            mid=mid,
+                            execution_id=execution_id,
+                            step_results={},
+                        )
+                        results.append(result)
+
+                        if not result.success:
+                            break
+
+            iteration_count += 1
+
+            # 检查 until 条件
+            if loop_config.type == "until":
+                try:
+                    if eval(str(loop_config.value), {}, {"state": ctx.user_data.get("state", {})}):
+                        break
+                except Exception as e:
+                    logger.warning(f"循环退出条件评估失败: {e}")
+
+        total_time = time.time() - start_time
+        return ActionResult(
+            success=True,
+            data={"iterations": iteration_count, "results": [r.data for r in results]},
+            execution_time=total_time,
+            action_id=step.id,
+            action_name=step.metadata.name,
+        )
+
+    async def _execute_conditional_step(
+        self,
+        step: Step,
+        step_group: StepGroup,
+        ctx: ActionContext,
+        registry,
+        mid: str,
+        execution_id: str,
+    ) -> ActionResult:
+        """执行条件步骤"""
+        if not step.conditional_config:
+            return ActionResult(
+                success=False,
+                error="条件步骤缺少配置",
+                action_id=step.id,
+                action_name=step.metadata.name,
+            )
+
+        conditional_config = step.conditional_config
+        condition_result = False
+
+        try:
+            condition_result = eval(conditional_config.condition, {}, {"state": ctx.user_data.get("state", {})})
+        except Exception as e:
+            logger.warning(f"条件评估失败: {e}")
+
+        ctx.variables["condition.result"] = condition_result
+
+        # 选择分支
+        branch_id = conditional_config.true_branch if condition_result else conditional_config.false_branch
+        if not branch_id:
+            return ActionResult(
+                success=True,
+                data={"condition": condition_result, "branch": None},
+                action_id=step.id,
+                action_name=step.metadata.name,
+            )
+
+        # 执行分支（这里简化为一个步骤，实际可能需要更多逻辑）
+        branch_step = step_group.get_step(branch_id)
+        if branch_step:
+            return await self._execute_single_step(
+                step=branch_step,
+                step_group=step_group,
+                ctx=ctx,
+                registry=registry,
+                mid=mid,
+                execution_id=execution_id,
+                step_results={},
+            )
+
+        return ActionResult(
+            success=True,
+            data={"condition": condition_result, "branch": branch_id},
+            action_id=step.id,
+            action_name=step.metadata.name,
+        )
 
     async def _build_execution_graph(
         self, steps: List[Dict[str, Any]], ctx: ActionContext
