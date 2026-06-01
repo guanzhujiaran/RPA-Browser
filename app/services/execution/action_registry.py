@@ -31,30 +31,21 @@ class ActionRegistry:
         """注册内置动作"""
         from app.services.execution.actions.interaction import (
             ClickAction, InputAction, ScrollAction, WaitAction,
-            HoverAction, KeyboardAction, MouseAction, SelectAction,
         )
         from app.services.execution.actions.navigation import NavigateAction, NewPageAction
         from app.services.execution.actions.screenshot import ScreenshotAction
-        from app.services.execution.actions.llm import LLMAction
         from app.services.execution.actions.control_flow import LoopAction, IfElseAction
-        from app.services.execution.actions.evaluate import EvaluateAction
         
         builtin_actions = {
             "click": ClickAction,
             "input": InputAction,
             "scroll": ScrollAction,
             "wait": WaitAction,
-            "hover": HoverAction,
-            "keyboard": KeyboardAction,
-            "mouse": MouseAction,
-            "select": SelectAction,
             "navigate": NavigateAction,
             "new_page": NewPageAction,
             "screenshot": ScreenshotAction,
-            "llm": LLMAction,
             "loop": LoopAction,
             "if_else": IfElseAction,
-            "evaluate": EvaluateAction,
         }
         
         for action_id, action_class in builtin_actions.items():
@@ -62,8 +53,13 @@ class ActionRegistry:
     
     def register(self, action_class: Type[BaseAction], action_id: Optional[str] = None):
         """注册动作"""
-        temp_instance = action_class()
-        action_id = action_id or temp_instance.action_id or action_class.get_action_id()
+        # 延迟获取 action_id，不实例化（避免触发抽象方法检查）
+        if action_id is None:
+            # 尝试从类方法获取
+            try:
+                action_id = action_class.get_action_id()
+            except (AttributeError, TypeError):
+                action_id = action_class.__name__
         
         if action_id in self._actions:
             raise ValueError(f"动作 ID {action_id} 已存在")

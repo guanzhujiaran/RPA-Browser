@@ -8,14 +8,25 @@ from unittest.mock import AsyncMock, MagicMock
 # 确保项目根目录在 path 中
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-# Mock 掉不需要的模块
+# Mock 掉不需要的模块（必须在 import 项目代码之前）
 sys.modules["botright"] = MagicMock()
 sys.modules["botright.botright"] = MagicMock()
-sys.modules["fastapi"] = MagicMock()
+
+# Mock fastapi 依赖
+mock_fastapi = MagicMock()
+mock_fastapi.Depends = lambda x: x
+sys.modules["fastapi"] = mock_fastapi
 sys.modules["fastapi.params"] = MagicMock()
-sys.modules["sqlmodel"] = MagicMock()
-sys.modules["sqlmodel.main"] = MagicMock()
-sys.modules["app.utils.depends.session_manager"] = MagicMock()
+
+# Mock session_manager 中的 DatabaseSessionManager
+mock_session_manager = MagicMock()
+mock_session_manager.DatabaseSessionManager = MagicMock()
+sys.modules["app.utils.depends.session_manager"] = mock_session_manager
+
+# Mock app.config.settings（需要设置环境变量）
+os.environ["mysql_browser_info_url"] = "mysql://localhost:3306/test"
+os.environ["RUNNING_MODE"] = "dev"
+os.environ["RUNNING_MODE"] = "dev"
 
 import pytest
 

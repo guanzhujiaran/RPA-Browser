@@ -394,6 +394,118 @@ class ResourceReport(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+# ============ 动作执行日志 ============
+
+class ExecutionStatus(StrEnum):
+    """执行状态"""
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+
+
+class ActionCategory(StrEnum):
+    """动作类别"""
+    ATOMIC = "atomic"
+    COMPOSITE = "composite"
+    PLUGIN = "plugin"
+
+
+class ActionExecutionLog(SQLModel, table=True):
+    """
+    动作执行日志表
+
+    记录每一次动作或插件的执行详情。
+    使用树形结构追踪执行链路。
+    """
+    __tablename__ = "action_execution_log"
+
+    id: int | None = Field(default=None, primary_key=True)
+    execution_id: str = Field(index=True, max_length=100, description="执行批次ID")
+    parent_execution_id: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="父执行ID（用于树形结构）"
+    )
+
+    action_id: str = Field(index=True, max_length=100, description="动作ID")
+    action_name: str = Field(default="", max_length=200)
+    category: str = Field(default="atomic", description="动作类别")
+
+    status: str = Field(default="pending", description="执行状态")
+
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="实际执行参数"
+    )
+    result_data: Optional[Dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="执行结果数据"
+    )
+    error_message: Optional[str] = Field(default=None, max_length=1000)
+
+    execution_time: float = Field(default=0.0, description="执行时长(秒)")
+
+    depth: int = Field(default=0, description="执行深度（用于追踪嵌套）")
+    order: int = Field(default=0, description="同层级执行顺序")
+
+    logs: List[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSON),
+        description="执行日志"
+    )
+
+    mid: int = Field(index=True)
+    workflow_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        max_length=100,
+        description="关联的工作流ID"
+    )
+
+    started_at: datetime = Field(default_factory=datetime.now)
+    finished_at: Optional[datetime] = Field(default=None)
+
+
+class WorkflowExecutionSession(SQLModel, table=True):
+    """
+    工作流执行会话表
+
+    记录工作流级别的执行会话。
+    """
+    __tablename__ = "workflow_execution_session"
+
+    id: int | None = Field(default=None, primary_key=True)
+    execution_id: str = Field(index=True, unique=True, max_length=100)
+    workflow_id: str = Field(index=True, max_length=100)
+
+    mid: int = Field(index=True)
+    browser_id: Optional[str] = Field(default=None, max_length=100)
+    session_id: Optional[str] = Field(default=None, max_length=100)
+
+    status: str = Field(default="pending")
+
+    total_steps: int = Field(default=0)
+    completed_steps: int = Field(default=0)
+    failed_steps: int = Field(default=0)
+
+    total_time: float = Field(default=0.0)
+    started_at: datetime = Field(default_factory=datetime.now)
+    finished_at: Optional[datetime] = Field(default=None)
+
+    trigger_type: str = Field(default="manual")
+    trigger_params: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON)
+    )
+
+    user_data: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+
+
 __all__ = [
     # 枚举
     "ActionType",
@@ -401,6 +513,8 @@ __all__ = [
     "PluginHookEnum",
     "ResourceType",
     "ReportReason",
+    "ExecutionStatus",
+    "ActionCategory",
     # 执行相关模型
     "ActionParameter",
     "ActionMetadata",
@@ -414,7 +528,9 @@ __all__ = [
     "UserPlugin",
     "UserWorkflow",
     "WorkflowExecutionLog",
+    "ActionExecutionLog",
+    "WorkflowExecutionSession",
     "ResourceLike",
     "ResourceReport",
-    "ActionMetadataResponse"
+    "ActionMetadataResponse",
 ]

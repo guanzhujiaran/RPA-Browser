@@ -19,7 +19,7 @@ from app.services.execution.actions.base import (
     ActionContext,
     ActionResult,
 )
-from app.models.database.workflow.unified_models import (
+from app.models.database.workflow.models import (
     ActionCategory,
     ExecutionStatus,
     ActionExecutionLog,

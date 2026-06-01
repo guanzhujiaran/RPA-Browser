@@ -24,12 +24,10 @@ from apscheduler.events import (
 from loguru import logger
 from sqlmodel import select
 
-from app.models.database.workflow.unified_models import (
-    WorkflowRecord,
-    TriggerType,
-    ExecutionStatus,
+from app.models.database.workflow.models import (
+    UserWorkflow,
 )
-from app.services.execution.unified_engine import unified_execution_engine
+from app.services.execution.action_executor import action_executor
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -100,7 +98,7 @@ class WorkflowScheduler:
         # 获取工作流
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowRecord).where(WorkflowRecord.workflow_id == workflow_id)
+                select(UserWorkflow).where(UserWorkflow.workflow_id == workflow_id)
             )
             workflow = result.first()
 
@@ -124,48 +122,27 @@ class WorkflowScheduler:
             page = await entry.plugined_session.get_current_page()
             browser = entry.plugined_session.browser_context
 
-            # 构建执行上下文
-            from app.models.database.workflow.unified_models import ActionContext
+            # 构建变量
+            variables = {
+                "mid": str(mid),
+                "workflow_id": workflow_id,
+                "execution_id": execution_id,
+                "trigger_type": "scheduled",
+            }
+            if workflow.user_data:
+                variables.update(workflow.user_data)
 
-            ctx = ActionContext(
-                session_id=str(params.get("browser_id", 0)),
-                browser_id=str(params.get("browser_id", 0)),
+            # 执行工作流步骤
+            await action_executor.execute_steps(
+                steps=workflow.steps,
                 page=page,
                 browser=browser,
-                params=workflow.params_template,
-                input={
-                    "mid": str(mid),
-                    "workflow_id": workflow_id,
-                    "execution_id": execution_id,
-                    "trigger_type": TriggerType.SCHEDULED.value,
-                },
-                output=[],
-            )
-
-            # 从数据库加载 action
-            from app.services.execution.action_registry import action_registry
-
-            action = await action_registry.create_action_for_user(
-                workflow.entry_action_id,
-                str(mid),
-            )
-
-            if not action:
-                logger.error(f"[Scheduler] 未找到 action: {workflow.entry_action_id}")
-                return
-
-            # 执行
-            result = await unified_execution_engine._execute_with_plugins(
-                action=action,
-                ctx=ctx,
+                variables=variables,
                 mid=str(mid),
                 execution_id=execution_id,
             )
 
-            if result.success:
-                logger.info(f"[Scheduler] 工作流 '{workflow_id}' 执行成功")
-            else:
-                logger.error(f"[Scheduler] 工作流 '{workflow_id}' 执行失败: {result.error}")
+            logger.info(f"[Scheduler] 工作流 '{workflow_id}' 执行完成")
 
         except Exception as e:
             logger.error(f"[Scheduler] 执行工作流 '{workflow_id}' 失败: {e}")
@@ -262,84 +239,47 @@ class WorkflowScheduler:
             return False
 
     def pause_workflow_schedule(self, workflow_id: str) -> bool:
-        """
-        暂停工作流调度
-
-        Args:
-            workflow_id: 工作流 ID
-
-        Returns:
-            bool: 是否成功暂停
-        """
+        """暂停工作流调度"""
         job_id = self._workflow_jobs.get(workflow_id)
         if not job_id:
             return False
-
         try:
             self._scheduler.pause_job(job_id)
-            logger.info(f"[Scheduler] 已暂停工作流 '{workflow_id}' 的调度")
             return True
         except Exception as e:
             logger.error(f"[Scheduler] 暂停调度失败: {e}")
             return False
 
     def resume_workflow_schedule(self, workflow_id: str) -> bool:
-        """
-        恢复工作流调度
-
-        Args:
-            workflow_id: 工作流 ID
-
-        Returns:
-            bool: 是否成功恢复
-        """
+        """恢复工作流调度"""
         job_id = self._workflow_jobs.get(workflow_id)
         if not job_id:
             return False
-
         try:
             self._scheduler.resume_job(job_id)
-            logger.info(f"[Scheduler] 已恢复工作流 '{workflow_id}' 的调度")
             return True
         except Exception as e:
             logger.error(f"[Scheduler] 恢复调度失败: {e}")
             return False
 
     def get_schedule_status(self, workflow_id: str) -> Optional[Dict[str, Any]]:
-        """
-        获取调度状态
-
-        Args:
-            workflow_id: 工作流 ID
-
-        Returns:
-            调度状态信息
-        """
+        """获取调度状态"""
         job_id = self._workflow_jobs.get(workflow_id)
         if not job_id:
             return None
-
         job = self._scheduler.get_job(job_id)
         if not job:
             return None
-
         return {
             "workflow_id": workflow_id,
             "job_id": job_id,
             "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
-            "is_paused": job.next_run_time is None,
         }
 
     def list_all_schedules(self) -> list[Dict[str, Any]]:
-        """
-        列出所有调度任务
-
-        Returns:
-            调度任务列表
-        """
+        """列出所有调度任务"""
         jobs = self._scheduler.get_jobs()
         schedules = []
-
         for job in jobs:
             if job.id.startswith("workflow_"):
                 workflow_id = job.id.replace("workflow_", "")
@@ -347,54 +287,39 @@ class WorkflowScheduler:
                     "workflow_id": workflow_id,
                     "job_id": job.id,
                     "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
-                    "is_paused": job.next_run_time is None,
                 })
-
         return schedules
 
     async def load_scheduled_workflows(self):
-        """
-        从数据库加载所有已启用的调度工作流
-
-        在应用启动时调用，加载所有配置了 Crontab 的工作流。
-        """
+        """从数据库加载所有已启用的调度工作流"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowRecord).where(
-                    WorkflowRecord.is_scheduled == True,
-                    WorkflowRecord.is_enabled == True,
-                    WorkflowRecord.crontab_expression != None,
+                select(UserWorkflow).where(
+                    UserWorkflow.is_enabled == True,
+                    UserWorkflow.trigger_type == "scheduled",
                 )
             )
             workflows = result.all()
 
         for workflow in workflows:
+            crontab = workflow.trigger_config.get("crontab_expression") if workflow.trigger_config else None
+            if not crontab:
+                continue
             try:
                 self.add_workflow_schedule(
-                    workflow_id=workflow.workflow_id,
+                    workflow_id=str(workflow.workflow_id),
                     mid=workflow.mid,
-                    crontab_expression=workflow.crontab_expression,
-                    params={},
+                    crontab_expression=crontab,
                 )
-                logger.info(f"[Scheduler] 已加载工作流调度: {workflow.name} ({workflow.crontab_expression})")
             except Exception as e:
                 logger.error(f"[Scheduler] 加载工作流调度失败: {workflow.workflow_id} - {e}")
 
     def validate_crontab(self, expression: str) -> tuple[bool, Optional[str]]:
-        """
-        验证 Crontab 表达式
-
-        Args:
-            expression: Crontab 表达式
-
-        Returns:
-            (是否有效, 错误信息)
-        """
+        """验证 Crontab 表达式"""
         try:
             cron_parts = expression.split()
             if len(cron_parts) != 5:
                 return False, "Crontab 表达式必须包含 5 个字段: 分 时 日 月 周"
-
             CronTrigger(
                 minute=cron_parts[0],
                 hour=cron_parts[1],

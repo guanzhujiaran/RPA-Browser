@@ -23,7 +23,6 @@ from app.services.execution.actions.interaction import (
 )
 from app.services.execution.actions.navigation import NavigateAction, NewPageAction
 from app.services.execution.actions.screenshot import ScreenshotAction
-from app.services.execution.actions.llm import LLMAction
 from app.services.execution.actions.control_flow import LoopAction, IfElseAction
 from app.models.database.workflow.models import ActionContext, ActionResult
 
@@ -300,40 +299,6 @@ class TestScreenshotAction:
         result = await action.execute(ctx)
         
         assert result.success is True
-
-
-class TestLLMAction:
-    """LLM 操作测试（mock）"""
-    
-    @pytest.mark.asyncio
-    async def test_llm_call(self, mock_page, mock_browser):
-        """测试 LLM 调用"""
-        # Mock LLM 响应
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={
-            "choices": [{"message": {"content": "test response"}}]
-        })
-        
-        with patch("aiohttp.ClientSession.post", return_value=mock_response):
-            ctx = ActionContext(
-                session_id="test",
-                browser_id="test",
-                page=mock_page,
-                browser=mock_browser,
-                params={
-                    "server_url": "http://localhost:8000",
-                    "api_key": "test_key",
-                    "model": "gpt-4",
-                    "prompt": "test prompt"
-                },
-                user_data={}
-            )
-            
-            action = LLMAction()
-            result = await action.execute(ctx)
-            
-            assert result.success is True
 
 
 class TestNewPageAction:
