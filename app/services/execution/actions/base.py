@@ -137,7 +137,10 @@ class BaseAction(ABC):
     @classmethod
     def get_action_name(cls) -> str:
         """返回动作名称"""
-        return cls.__name__.replace("Action", "")
+        name = cls.__name__
+        if name.endswith("Action") and name != "Action":
+            return name[:-6]  # 去掉末尾的 "Action"
+        return name
     
     @classmethod
     def get_params_schema(cls) -> Optional[Dict[str, Any]]:
@@ -287,6 +290,10 @@ class CompositeAction(BaseAction, ABC):
     steps: List[Dict[str, Any]] = field(default_factory=list)
     _registry: Any = field(default=None, repr=False)
     
+    @staticmethod
+    def get_action_id() -> str:
+        return "composite"
+    
     def set_registry(self, registry):
         """设置注册表"""
         self._registry = registry
@@ -332,6 +339,10 @@ class PluginAction(BaseAction, ABC):
     hook_type: str = "after_action"
     steps: List[Dict[str, Any]] = field(default_factory=list)
     _registry: Any = field(default=None, repr=False)
+    
+    @staticmethod
+    def get_action_id() -> str:
+        return "plugin"
     
     def set_registry(self, registry):
         self._registry = registry

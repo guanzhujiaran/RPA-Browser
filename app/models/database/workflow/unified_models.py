@@ -86,7 +86,7 @@ class ActionMetadata(SQLModel):
     requires_browser: bool = Field(default=True)
 
 
-class ActionResult(SQLModel, Generic[Any]):
+class ActionResult(SQLModel):
     """
     操作执行结果
     

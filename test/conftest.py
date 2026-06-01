@@ -5,14 +5,19 @@ import sys
 import os
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 # 确保项目根目录在 path 中
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Mock 掉不需要的模块
 sys.modules["botright"] = MagicMock()
 sys.modules["botright.botright"] = MagicMock()
+sys.modules["fastapi"] = MagicMock()
+sys.modules["fastapi.params"] = MagicMock()
+sys.modules["sqlmodel"] = MagicMock()
+sys.modules["sqlmodel.main"] = MagicMock()
+sys.modules["app.utils.depends.session_manager"] = MagicMock()
+
+import pytest
 
 
 # ============ Playwright Mock ============
@@ -153,45 +158,13 @@ def mock_session():
     session.add = MagicMock()
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
-    session.delete = AsyncMock()
+    session.delete = MagicMock()
     return session
 
 
 @pytest.fixture
-def mock_db_manager(monkeypatch):
-    """Mock DatabaseSessionManager"""
-    from app.utils.depends import session_manager
-
-    async def async_session_gen():
-        session = MagicMock()
-        session.exec = AsyncMock()
-        session.add = MagicMock()
-        session.commit = AsyncMock()
-        session.refresh = AsyncMock()
-        session.delete = AsyncMock()
-        session.close = MagicMock()
-        yield session
-
-    monkeypatch.setattr(session_manager.DatabaseSessionManager, "async_session", async_session_gen)
-
-
-@pytest.fixture
-def old_action_context(mock_page, mock_browser):
-    """构建旧体系 ActionContext（用于测试现有子类）"""
-    from app.models.database.workflow.models import ActionContext
-    return ActionContext(
-        session_id="test_session",
-        browser_id="test_browser",
-        page=mock_page,
-        browser=mock_browser,
-        params={},
-        user_data={},
-    )
-
-
-@pytest.fixture
-def new_action_context(mock_page, mock_browser):
-    """构建新体系 ActionContext（用于测试新 BaseAction）"""
+def action_context(mock_page, mock_browser):
+    """构建 ActionContext（使用 base.py 中的新体系）"""
     from app.services.execution.actions.base import ActionContext
     return ActionContext(
         session_id="test_session",
@@ -200,3 +173,21 @@ def new_action_context(mock_page, mock_browser):
         browser=mock_browser,
         variables={},
     )
+
+
+@pytest.fixture
+def old_action_context(mock_page, mock_browser):
+    """构建旧体系 ActionContext（用于测试现有子类）"""
+    # 使用 dataclass 风格的简单上下文
+    from app.services.execution.actions.base import ActionContext
+    ctx = ActionContext(
+        session_id="test_session",
+        browser_id="test_browser",
+        page=mock_page,
+        browser=mock_browser,
+        variables={},
+    )
+    # 添加旧体系兼容属性
+    ctx.params = {}
+    ctx.user_data = {}
+    return ctx
