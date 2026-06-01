@@ -183,6 +183,10 @@ class NavigateAction(BaseAction):
 
     params_model = NavigateParams
 
+    @staticmethod
+    def get_action_id() -> str:
+        return "navigate"
+
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
             id="navigate", name="导航", type=ActionType.NAVIGATION,
@@ -258,6 +262,10 @@ class NewPageAction(BaseAction):
     """新建页面操作"""
 
     params_model = NewPageParams
+
+    @staticmethod
+    def get_action_id() -> str:
+        return "new_page"
 
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(

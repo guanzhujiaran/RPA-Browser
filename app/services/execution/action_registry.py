@@ -30,14 +30,12 @@ class ActionRegistry:
     def _register_builtin_actions(self):
         """注册内置动作"""
         from app.services.execution.actions.interaction import (
-            ClickAction, InputAction, ScrollAction, WaitAction,
-            HoverAction, KeyboardAction, MouseAction, SelectAction,
+            ClickAction, InputAction, ScrollAction, WaitAction, HoverAction,
         )
         from app.services.execution.actions.navigation import NavigateAction, NewPageAction
         from app.services.execution.actions.screenshot import ScreenshotAction
         from app.services.execution.actions.llm import LLMAction
         from app.services.execution.actions.control_flow import LoopAction, IfElseAction
-        from app.services.execution.actions.evaluate import EvaluateAction
         
         builtin_actions = {
             "click": ClickAction,
@@ -45,16 +43,12 @@ class ActionRegistry:
             "scroll": ScrollAction,
             "wait": WaitAction,
             "hover": HoverAction,
-            "keyboard": KeyboardAction,
-            "mouse": MouseAction,
-            "select": SelectAction,
             "navigate": NavigateAction,
             "new_page": NewPageAction,
             "screenshot": ScreenshotAction,
             "llm": LLMAction,
             "loop": LoopAction,
             "if_else": IfElseAction,
-            "evaluate": EvaluateAction,
         }
         
         for action_id, action_class in builtin_actions.items():

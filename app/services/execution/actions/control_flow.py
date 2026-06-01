@@ -16,6 +16,10 @@ class LoopAction(BaseAction):
 
     params_model = LoopParams
 
+    @staticmethod
+    def get_action_id() -> str:
+        return "loop"
+
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
             id="loop", name="循环", type=ActionType.CUSTOM,
@@ -98,6 +102,10 @@ class IfElseAction(BaseAction):
     """条件分支控制流操作"""
 
     params_model = IfElseParams
+
+    @staticmethod
+    def get_action_id() -> str:
+        return "if_else"
 
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(

@@ -15,6 +15,10 @@ class ScreenshotAction(BaseAction):
 
     params_model = ScreenshotParams
 
+    @staticmethod
+    def get_action_id() -> str:
+        return "screenshot"
+
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
             id="screenshot", name="截图", type=ActionType.SCREENSHOT,

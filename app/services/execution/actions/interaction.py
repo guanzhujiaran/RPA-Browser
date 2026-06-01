@@ -11,6 +11,7 @@ from app.models.execution.params import (
     InputParams,
     ScrollParams,
     WaitParams,
+    HoverParams,
 )
 from app.models.database.workflow.models import (
     ActionType,
@@ -24,6 +25,10 @@ class ClickAction(BaseAction):
     """点击操作"""
 
     params_model = ClickParams
+
+    @staticmethod
+    def get_action_id() -> str:
+        return "click"
 
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
@@ -124,6 +129,10 @@ class InputAction(BaseAction):
 
     params_model = InputParams
 
+    @staticmethod
+    def get_action_id() -> str:
+        return "input"
+
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
             id="input", name="输入", type=ActionType.INPUT,
@@ -181,6 +190,10 @@ class ScrollAction(BaseAction):
 
     params_model = ScrollParams
 
+    @staticmethod
+    def get_action_id() -> str:
+        return "scroll"
+
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
             id="scroll", name="滚动", type=ActionType.SCROLL,
@@ -236,6 +249,10 @@ class WaitAction(BaseAction):
 
     params_model = WaitParams
 
+    @staticmethod
+    def get_action_id() -> str:
+        return "wait"
+
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
             id="wait", name="等待", type=ActionType.WAIT,
@@ -281,6 +298,91 @@ class WaitAction(BaseAction):
 
         except Exception as e:
             logger.error(f"[WaitAction] 等待操作执行异常: {e}")
+            return ActionResult(
+                success=False, error=str(e), execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+
+class HoverAction(BaseAction):
+    """悬停操作"""
+
+    params_model = HoverParams
+
+    @staticmethod
+    def get_action_id() -> str:
+        return "hover"
+
+    def get_metadata(self) -> ActionMetadata:
+        return ActionMetadata(
+            id="hover", name="悬停", type=ActionType.HOVER,
+            description="将鼠标悬停在指定元素上",
+            parameters=self.get_parameters_from_model(),
+            json_schema=self.get_full_schema(),
+        )
+
+    async def execute(self, ctx: ActionContext) -> ActionResult:
+        start_time = time.time()
+
+        valid, error_msg, validated_params = self.validate_params_with_model(ctx.params)
+        if not valid:
+            return ActionResult(
+                success=False, error=error_msg, execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+        selector = validated_params.selector
+        position = validated_params.position
+        modifiers = validated_params.modifiers
+        force = validated_params.force
+        timeout = validated_params.timeout
+
+        try:
+            # 构建 hover 参数字典（符合 Playwright API）
+            hover_kwargs = {}
+            
+            if position is not None:
+                hover_kwargs["position"] = {"x": position.x, "y": position.y}
+            
+            if modifiers:
+                hover_kwargs["modifiers"] = [str(m) for m in modifiers]
+            
+            if force:
+                hover_kwargs["force"] = force
+            
+            if timeout != 30000:
+                hover_kwargs["timeout"] = timeout
+            
+            if selector:
+                locator = ctx.page.locator(selector)
+                logger.info(f"[HoverAction] hover 参数: {hover_kwargs}")
+                await locator.hover(**hover_kwargs)
+            else:
+                if position is None:
+                    return ActionResult(
+                        success=False,
+                        error="没有 selector 时必须提供 position",
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id, action_name=self.metadata.name,
+                    )
+                
+                page_hover_kwargs = hover_kwargs.copy()
+                if "position" in page_hover_kwargs:
+                    pos = page_hover_kwargs.pop("position")
+                    page_hover_kwargs["x"] = pos["x"]
+                    page_hover_kwargs["y"] = pos["y"]
+                
+                logger.info(f"[HoverAction] page.hover 参数: {page_hover_kwargs}")
+                await ctx.page.hover(**page_hover_kwargs)
+
+            return ActionResult(
+                success=True, data={"selector": selector},
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+        except Exception as e:
+            logger.error(f"[HoverAction] 悬停操作执行异常: {e}")
             return ActionResult(
                 success=False, error=str(e), execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,

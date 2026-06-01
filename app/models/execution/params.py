@@ -67,6 +67,15 @@ class WaitParams(SQLModel):
     timeout: float = Field(default=30000, ge=0, le=300000, description="最大等待时间（毫秒），默认为 30000。传入 0 禁用超时")
 
 
+class HoverParams(SQLModel):
+    """悬停操作参数 - 对应 locator.hover()"""
+    selector: str | None = Field(default=None, max_length=500, description="用于定位元素的选择器")
+    position: Position | None = Field(default=None, description="相对于元素 padding box 左上角的坐标位置")
+    modifiers: list[KeyboardModifierEnum] | None = Field(default=None, description="要按下的修饰键 (Alt/Control/Meta/Shift)")
+    force: bool = Field(default=False, description="是否绕过可操作性检查，默认为 false")
+    timeout: float = Field(default=30000, ge=0, le=300000, description="最大等待时间（毫秒），默认为 30000。传入 0 禁用超时")
+
+
 class ScreenshotParams(SQLModel):
     """截图操作参数 - 对应 locator.screenshot() 或 page.screenshot()"""
     selector: str | None = Field(default=None, max_length=500, description="用于定位截图元素的选择器（为空时使用 page.screenshot）")

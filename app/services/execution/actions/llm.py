@@ -14,6 +14,10 @@ class LLMAction(BaseAction):
 
     params_model = LLMParams
 
+    @staticmethod
+    def get_action_id() -> str:
+        return "llm"
+
     def get_metadata(self) -> ActionMetadata:
         return ActionMetadata(
             id="llm", name="LLM对话", type=ActionType.LLM,
