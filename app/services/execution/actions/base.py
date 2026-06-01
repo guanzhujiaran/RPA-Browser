@@ -1,33 +1,20 @@
 """
-Base Action - 操作基类 (OOP 设计)
+Base Action - 操作基类 (简化 OOP 设计)
 
 核心设计理念：
-1. 单层验证：只验证当前 action 的参数，不递归验证子 action
-2. DP 执行：使用动态规划算法展开操作链
-3. 执行追踪：记录每个操作和插件的执行记录
-4. 统一入口：action 和 plugin 在执行时统一判断
-
-OOP 设计要点：
-- 每个 Action 都是一个可执行单元
-- Action 可以组合成 CompositeAction
-- Action 可以作为 Plugin 挂载到其他 Action 的生命周期
+1. dataclass 风格：参数在初始化时设置，方便取值和赋值
+2. page 属性：BaseAction 持有 page 对象
+3. 单层验证：只验证当前 action 参数
+4. input/output：输入输出变量管理
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Type, Optional, List, Dict, Callable
 from dataclasses import dataclass, field
+from typing import Any, Type, Optional, List, Dict, Callable
+from datetime import datetime
 from enum import Enum
 
-from sqlmodel import SQLModel
 from loguru import logger
-
-from app.models.database.workflow.unified_models import (
-    ActionParameter,
-    ActionMetadata,
-    ActionResult,
-    ActionContext,
-    ActionCategory,
-)
 
 
 class ExecutionPhase(Enum):
@@ -40,250 +27,177 @@ class ExecutionPhase(Enum):
 
 
 @dataclass
-class ExecutionNode:
-    """执行节点 - 用于 DP 算法"""
-    action_id: str
-    params: Dict[str, Any]
-    depth: int = 0
-    parent_id: Optional[str] = None
-    children: List['ExecutionNode'] = field(default_factory=list)
-    is_expanded: bool = False
-    metadata: Optional[ActionMetadata] = None
-
-
-@dataclass
-class ExecutionTrace:
-    """执行追踪"""
-    execution_id: str
-    root_action_id: str
-    nodes: Dict[str, ExecutionNode] = field(default_factory=dict)
-    execution_order: List[str] = field(default_factory=list)
-    completed: Dict[str, ActionResult] = field(default_factory=dict)
-
-
-class BaseAction(ABC):
+class ActionContext:
     """
-    操作基类
-
-    设计原则：
-    1. validate() 只验证当前层参数，不验证子 action
-    2. execute() 使用 DP 算法展开执行
-    3. 每个子类只需实现 _do_execute() 方法
+    操作执行上下文
     
-    属性设计：
-    - input: 输入变量定义（dict）
-    - output: 输出变量名列表（List[str]）
-    - variables: 运行时变量池（执行时从 ctx 获取）
+    设计：使用 dataclass，方便参数的取值和赋值
     """
-
-    params_model: Type[SQLModel] | None = None
-
-    def __init__(self, action_id: str | None = None):
-        self.action_id = action_id or self.get_action_id()
-        self.metadata = self.get_metadata()
-        self._logs: List[str] = []
-        self._execution_phase: ExecutionPhase = ExecutionPhase.VALIDATION
-        
-        # 输入输出定义
-        self._input: Dict[str, Any] = {}
-        self._output: List[str] = []
-        self._variables: Dict[str, Any] = {}  # 运行时变量池
+    session_id: str
+    browser_id: str
+    page: Any = None  # Playwright Page 对象
+    browser: Any = None  # Playwright BrowserContext
     
-    @property
-    def input(self) -> Dict[str, Any]:
-        """获取输入变量"""
-        return self._input
+    # 输入输出变量
+    input: Dict[str, Any] = field(default_factory=dict)  # 输入变量（全局）
+    output: List[str] = field(default_factory=list)  # 输出变量名列表
+    variables: Dict[str, Any] = field(default_factory=dict)  # 运行时变量池
     
-    @input.setter
-    def input(self, value: Dict[str, Any]):
-        """设置输入变量"""
-        self._input = value
+    # 执行状态
+    params: Dict[str, Any] = field(default_factory=dict)  # 动作参数
+    execution_stack: List[str] = field(default_factory=list)  # 执行栈（循环检测）
     
-    @property
-    def output(self) -> List[str]:
-        """获取输出变量名列表"""
-        return self._output
+    def get_var(self, name: str, default: Any = None) -> Any:
+        """获取变量（优先 variables，其次 input）"""
+        if name in self.variables:
+            return self.variables[name]
+        return self.input.get(name, default)
     
-    @output.setter
-    def output(self, value: List[str]):
-        """设置输出变量名列表"""
-        self._output = value
-    
-    @property
-    def variables(self) -> Dict[str, Any]:
-        """获取运行时变量池"""
-        return self._variables
-    
-    def get_variable(self, name: str, default: Any = None) -> Any:
-        """获取变量（从运行时变量池）"""
-        return self._variables.get(name, default)
-    
-    def set_variable(self, name: str, value: Any):
-        """设置变量到运行时变量池"""
-        self._variables[name] = value
+    def set_var(self, name: str, value: Any):
+        """设置变量"""
+        self.variables[name] = value
     
     def set_output(self, name: str, value: Any):
         """设置输出变量"""
-        self._variables[name] = value
-        if name not in self._output:
-            self._output.append(name)
+        self.variables[name] = value
+        if name not in self.output:
+            self.output.append(name)
     
-    def sync_from_context(self, ctx: ActionContext):
-        """从上下文同步 input 和 variables"""
-        self._input = dict(ctx.input)
-        self._variables = ctx.get_all_variables()
-    
-    def sync_to_context(self, ctx: ActionContext):
-        """将 output 同步到上下文"""
-        for name in self._output:
-            if name in self._variables:
-                ctx.set_output(name, self._variables[name])
+    def get_all_vars(self) -> Dict[str, Any]:
+        """获取所有变量"""
+        result = dict(self.input)
+        result.update(self.variables)
+        return result
 
+
+@dataclass
+class ActionResult:
+    """操作执行结果"""
+    success: bool = False
+    data: Any = None
+    error: Optional[str] = None
+    execution_time: float = 0.0
+    action_id: str = ""
+    action_name: str = ""
+    logs: List[str] = field(default_factory=list)
+    output: Dict[str, Any] = field(default_factory=dict)  # 输出变量
+
+
+@dataclass
+class BaseAction(ABC):
+    """
+    操作基类（dataclass 风格）
+    
+    设计要点：
+    1. 使用 dataclass，所有属性在初始化时设置
+    2. 持有 page 属性，可直接访问浏览器页面
+    3. input/output 统一管理变量
+    4. 子类只需实现 _do_execute() 方法
+    """
+    
+    # 类属性：动作ID（子类必须定义）
+    action_id: str = ""
+    action_name: str = ""
+    
+    # 实例属性
+    page: Any = None  # Playwright Page 对象
+    params: Dict[str, Any] = field(default_factory=dict)  # 动作参数
+    timeout: int = 30000  # 超时时间(ms)
+    
+    # 输入输出
+    input: Dict[str, Any] = field(default_factory=dict)  # 输入变量
+    output: List[str] = field(default_factory=list)  # 输出变量名列表
+    
+    # 内部状态
+    _logs: List[str] = field(default_factory=list, repr=False)
+    _phase: ExecutionPhase = ExecutionPhase.VALIDATION
+    _variables: Dict[str, Any] = field(default_factory=dict, repr=False)
+    
+    def __post_init__(self):
+        """初始化后设置默认值"""
+        if not self.action_id:
+            self.action_id = self.get_action_id()
+        if not self.action_name:
+            self.action_name = self.get_action_name()
+    
     @staticmethod
     @abstractmethod
     def get_action_id() -> str:
-        """返回操作ID（静态方法，子类必须实现）"""
+        """返回动作ID（子类必须实现）"""
         ...
-
-    @staticmethod
-    def get_action_category() -> ActionCategory:
-        """返回动作类别"""
-        return ActionCategory.ATOMIC
-
+    
     @classmethod
-    def get_name(cls) -> str:
-        """返回操作名称"""
+    def get_action_name(cls) -> str:
+        """返回动作名称"""
         return cls.__name__.replace("Action", "")
-
-    @abstractmethod
-    async def _do_execute(self, ctx: ActionContext) -> ActionResult:
-        """
-        实际执行逻辑（子类必须实现）
-
-        Args:
-            ctx: 执行上下文
-
-        Returns:
-            ActionResult: 执行结果
-        """
-        ...
-
-    def get_metadata(self) -> ActionMetadata:
-        """返回操作元数据"""
-        return ActionMetadata(
-            id=self.action_id,
-            name=self.get_name(),
-            category=self.get_action_category(),
-            description=self.__doc__ or "",
-            parameters=self.get_parameters(),
-            json_schema=self.get_json_schema(),
-            timeout=30000,
-            requires_browser=True,
-        )
-
-    def get_parameters(self) -> List[ActionParameter]:
-        """获取参数定义"""
-        if not self.params_model:
-            return []
-
-        parameters = []
-        schema = self.params_model.model_json_schema()
-        properties = schema.get('properties', {})
-
-        for field_name in self.params_model.model_fields.keys():
-            field_schema = properties.get(field_name, {})
-            parameters.append(ActionParameter(
-                name=field_name,
-                json_schema=field_schema,
-            ))
-
-        return parameters
-
-    def get_json_schema(self) -> dict[str, Any] | None:
-        """获取完整 JSON Schema"""
-        return None if not self.params_model else self.params_model.model_json_schema()
-
-    def validate_params(self, params: dict[str, Any]) -> tuple[bool, str | None]:
-        """
-        验证参数（单层验证）
-
-        只验证当前 action 的参数，不验证子 action。
-        这是 OOP 设计的关键：每个 action 只负责自己的参数。
-
-        Args:
-            params: 待验证的参数
-
-        Returns:
-            (是否有效, 错误信息)
-        """
-        if not self.params_model:
-            return True, None
-
-        try:
-            self.params_model(**params)
-            return True, None
-        except Exception as e:
-            error_msg = f"参数验证失败: {str(e)}"
-            logger.error(f"[{self.__class__.__name__}] {error_msg}")
-            return False, error_msg
-
-    def preview(self, params: dict[str, Any]) -> tuple[bool, str | None]:
-        """
-        预览 action（单层预览）
-
-        只预览当前 action，不预览子 action。
-        用于 UI 展示参数校验结果。
-
-        Args:
-            params: 参数
-
-        Returns:
-            (是否有效, 错误信息)
-        """
-        return self.validate_params(params)
-
+    
+    @classmethod
+    def get_params_schema(cls) -> Optional[Dict[str, Any]]:
+        """获取参数 Schema（子类可覆盖）"""
+        return None
+    
+    def get_var(self, name: str, default: Any = None) -> Any:
+        """获取变量"""
+        return self._variables.get(name, default)
+    
+    def set_var(self, name: str, value: Any):
+        """设置变量"""
+        self._variables[name] = value
+        if name not in self.output:
+            self.output.append(name)
+    
     def add_log(self, message: str):
-        """添加执行日志"""
-        self._logs.append(f"[{self._execution_phase.value}] {message}")
-
+        """添加日志"""
+        self._logs.append(f"[{self._phase.value}] {message}")
+    
     def get_logs(self) -> List[str]:
-        """获取执行日志"""
+        """获取日志"""
         return self._logs.copy()
-
+    
     def clear_logs(self):
         """清空日志"""
         self._logs.clear()
-
+    
+    def validate_params(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+        """验证参数（单层验证，子类可覆盖）"""
+        return True, None
+    
+    def preview(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+        """预览（单层）"""
+        return self.validate_params(params)
+    
     async def execute(self, ctx: ActionContext) -> ActionResult:
         """
-        执行 action（使用 DP 算法）
-
+        执行动作
+        
         执行流程：
-        1. 从上下文同步 input/variables
-        2. 参数验证（单层）
+        1. 同步上下文参数到 action
+        2. 参数验证
         3. 前置处理
-        4. 调用 _do_execute()
+        4. 执行 _do_execute()
         5. 后置处理
         6. 同步 output 到上下文
-        7. 返回结果
-
-        Args:
-            ctx: 执行上下文
-
-        Returns:
-            ActionResult: 执行结果
         """
         import time
         start_time = time.time()
-
-        self.clear_logs()
-        self._execution_phase = ExecutionPhase.VALIDATION
         
-        # 0. 从上下文同步 input 和 variables
-        self.sync_from_context(ctx)
-        ctx.merge_input_to_variables()
-
-        # 1. 单层参数验证
+        self.clear_logs()
+        self._phase = ExecutionPhase.VALIDATION
+        
+        # 同步上下文参数
+        self.page = ctx.page
+        self.params = ctx.params
+        self.input = dict(ctx.input)
+        self._variables = ctx.get_all_vars()
+        
+        # 合并 input 到 variables
+        for k, v in self.input.items():
+            if k not in self._variables:
+                self._variables[k] = v
+        
+        ctx.merge_input_to_variables() if hasattr(ctx, 'merge_input_to_variables') else None
+        
+        # 验证参数
         valid, error_msg = self.validate_params(ctx.params)
         if not valid:
             self.add_log(f"参数验证失败: {error_msg}")
@@ -292,231 +206,132 @@ class BaseAction(ABC):
                 error=error_msg,
                 execution_time=time.time() - start_time,
                 action_id=self.action_id,
-                action_name=self.metadata.name,
+                action_name=self.action_name,
                 logs=self.get_logs(),
             )
-
+        
         self.add_log("参数验证通过")
-
-        # 2. 前置处理
-        self._execution_phase = ExecutionPhase.PRE_EXECUTION
+        
+        # 前置处理
+        self._phase = ExecutionPhase.PRE_EXECUTION
         await self._pre_execute(ctx)
-
-        # 3. 执行
-        self._execution_phase = ExecutionPhase.EXECUTION
+        
+        # 执行
+        self._phase = ExecutionPhase.EXECUTION
         result = await self._do_execute(ctx)
         result.execution_time = time.time() - start_time
         result.action_id = self.action_id
-        result.action_name = self.metadata.name
+        result.action_name = self.action_name
         result.logs = self.get_logs()
         
-        # 将 action 的 output 同步到 result
-        result.output = {name: self._variables.get(name) for name in self._output if name in self._variables}
-
-        # 4. 后置处理
-        self._execution_phase = ExecutionPhase.POST_EXECUTION
+        # 设置 output
+        result.output = {name: self._variables.get(name) for name in self.output if name in self._variables}
+        
+        # 后置处理
+        self._phase = ExecutionPhase.POST_EXECUTION
         await self._post_execute(ctx, result)
         
-        # 5. 同步 output 到上下文
-        self.sync_to_context(ctx)
-
-        self._execution_phase = ExecutionPhase.CLEANUP
-
+        # 同步 output 到上下文
+        for name in self.output:
+            if name in self._variables:
+                ctx.set_output(name, self._variables[name])
+        
+        self._phase = ExecutionPhase.CLEANUP
         return result
-
+    
     async def _pre_execute(self, ctx: ActionContext):
-        """前置处理（可被子类重写）"""
-        self.add_log(f"开始执行 action: {self.action_id}")
-
+        """前置处理（子类可覆盖）"""
+        self.add_log(f"开始执行: {self.action_id}")
+    
     async def _post_execute(self, ctx: ActionContext, result: ActionResult):
-        """后置处理（可被子类重写）"""
+        """后置处理（子类可覆盖）"""
         if result.success:
-            self.add_log(f"action 执行成功，耗时: {result.execution_time:.2f}s")
+            self.add_log(f"执行成功，耗时: {result.execution_time:.2f}s")
         else:
-            self.add_log(f"action 执行失败: {result.error}")
+            self.add_log(f"执行失败: {result.error}")
+    
+    @abstractmethod
+    async def _do_execute(self, ctx: ActionContext) -> ActionResult:
+        """实际执行逻辑（子类必须实现）"""
+        ...
 
 
-class CompositeAction(BaseAction):
+@dataclass
+class CompositeAction(BaseAction, ABC):
     """
     组合动作基类
-
-    组合多个原子动作或子组合动作。
-    执行时使用 DP 算法展开操作链。
+    
+    支持步骤列表执行
     """
-
-    def __init__(self, action_id: str, name: str, description: str = "",
-                 steps: List[Dict[str, Any]] | None = None):
-        super().__init__(action_id)
-        self._name = name
-        self._description = description
-        self._steps = steps or []
-        self._registry: Optional['ActionRegistry'] = None
-
-    @staticmethod
-    def get_action_id() -> str:
-        return "composite"
-
-    @staticmethod
-    def get_action_category() -> ActionCategory:
-        return ActionCategory.COMPOSITE
-
-    @classmethod
-    def get_name(cls) -> str:
-        return cls.__name__
-
-    def set_registry(self, registry: 'ActionRegistry'):
-        """设置注册表引用"""
+    steps: List[Dict[str, Any]] = field(default_factory=list)
+    _registry: Any = None
+    
+    def set_registry(self, registry):
+        """设置注册表"""
         self._registry = registry
-
-    def get_metadata(self) -> ActionMetadata:
-        return ActionMetadata(
-            id=self.action_id,
-            name=self._name,
-            category=ActionCategory.COMPOSITE,
-            description=self._description,
-            parameters=[],
-            json_schema=None,
-            timeout=30000,
-            requires_browser=True,
-        )
-
-    def get_steps(self) -> List[Dict[str, Any]]:
-        """获取步骤列表"""
-        return self._steps
-
-    def validate_params(self, params: dict[str, Any]) -> tuple[bool, str | None]:
-        """
-        组合动作参数验证
-
-        注意：只验证组合动作自身的参数（如循环次数等），
-        不验证子 action 的参数。子 action 的参数验证
-        在执行时由各自的 action 完成。
-        """
-        return True, None
-
+    
     async def _do_execute(self, ctx: ActionContext) -> ActionResult:
-        """
-        组合动作执行（使用 DP 算法）
-
-        DP 算法设计：
-        1. 构建执行图：根据 steps 构建依赖图
-        2. 拓扑排序：确定执行顺序
-        3. 动态展开：按顺序执行每个节点
-        4. 结果传递：将结果传递给下游节点
-
-        Args:
-            ctx: 执行上下文
-
-        Returns:
-            ActionResult: 执行结果
-        """
-        from app.services.execution.unified_engine import unified_execution_engine
-
-        self.add_log(f"开始执行组合动作，包含 {len(self._steps)} 个步骤")
-
-        # 使用统一执行引擎执行
-        results = await unified_execution_engine.execute_composite(
-            steps=self._steps,
+        """组合动作执行"""
+        from app.services.execution.action_executor import action_executor
+        
+        results = await action_executor.execute_steps(
+            steps=self.steps,
             ctx=ctx,
             registry=self._registry,
         )
-
-        # 汇总结果
+        
         total = len(results)
         success_count = sum(1 for r in results if r.success)
-        failed_count = total - success_count
-        total_time = sum(r.execution_time for r in results)
-
-        self.add_log(f"组合动作执行完成: 成功 {success_count}/{total}")
-
-        # 返回最后一个结果或失败信息
+        
         last_result = results[-1] if results else None
         return ActionResult(
             success=last_result.success if last_result else False,
             data={
                 "total_steps": total,
                 "success_count": success_count,
-                "failed_count": failed_count,
-                "results": [
-                    {
-                        "action_id": r.action_id,
-                        "action_name": r.action_name,
-                        "success": r.success,
-                        "error": r.error,
-                        "execution_time": r.execution_time,
-                    }
-                    for r in results
-                ]
+                "results": [{"action_id": r.action_id, "success": r.success} for r in results]
             },
             error=last_result.error if last_result and not last_result.success else None,
-            execution_time=total_time,
+            execution_time=sum(r.execution_time for r in results),
             action_id=self.action_id,
-            action_name=self._name,
+            action_name=self.action_name,
             logs=self.get_logs(),
         )
 
 
-class PluginAction(BaseAction):
+@dataclass  
+class PluginAction(BaseAction, ABC):
     """
     插件动作基类
-
-    作为钩子挂载到其他 action 的生命周期。
+    
+    作为钩子挂载到其他动作的生命周期
     """
-
-    def __init__(self, action_id: str, name: str, hook_type: str,
-                 description: str = "", steps: List[Dict[str, Any]] | None = None):
-        super().__init__(action_id)
-        self._name = name
-        self._hook_type = hook_type
-        self._description = description
-        self._steps = steps or []
-        self._registry: Optional['ActionRegistry'] = None
-
-    @staticmethod
-    def get_action_id() -> str:
-        return "plugin"
-
-    @staticmethod
-    def get_action_category() -> ActionCategory:
-        return ActionCategory.PLUGIN
-
-    def set_registry(self, registry: 'ActionRegistry'):
+    hook_type: str = "after_action"  # before_action, after_action, on_success, on_error
+    steps: List[Dict[str, Any]] = field(default_factory=list)
+    _registry: Any = None
+    
+    def set_registry(self, registry):
         self._registry = registry
-
-    def get_metadata(self) -> ActionMetadata:
-        return ActionMetadata(
-            id=self.action_id,
-            name=self._name,
-            category=ActionCategory.PLUGIN,
-            description=self._description,
-            parameters=[],
-            json_schema=None,
-            timeout=30000,
-            requires_browser=True,
-        )
-
-    def get_hook_type(self) -> str:
-        return self._hook_type
-
+    
     async def _do_execute(self, ctx: ActionContext) -> ActionResult:
         """插件执行"""
-        from app.services.execution.unified_engine import unified_execution_engine
-
-        self.add_log(f"插件 '{self._name}' 执行 (hook: {self._hook_type})")
-
-        results = await unified_execution_engine.execute_composite(
-            steps=self._steps,
+        from app.services.execution.action_executor import action_executor
+        
+        self.add_log(f"执行插件 '{self.action_name}' (hook: {self.hook_type})")
+        
+        results = await action_executor.execute_steps(
+            steps=self.steps,
             ctx=ctx,
             registry=self._registry,
         )
-
+        
         last_result = results[-1] if results else None
         return ActionResult(
             success=last_result.success if last_result else False,
-            data={"hook_type": self._hook_type, "results": results},
+            data={"hook_type": self.hook_type, "results": results},
             error=last_result.error if last_result and not last_result.success else None,
             execution_time=sum(r.execution_time for r in results),
             action_id=self.action_id,
-            action_name=self._name,
+            action_name=self.action_name,
             logs=self.get_logs(),
         )
