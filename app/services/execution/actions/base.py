@@ -93,6 +93,7 @@ class BaseAction(ABC):
             params={"selector": "#btn", "button": "left"},
             input={"url": "https://example.com"},
             output=["clicked_element"],
+            variables={"loop_index": 1, "result_0": {...}},
         )
         result = await action.execute(ctx)
     """
@@ -113,10 +114,12 @@ class BaseAction(ABC):
     input: Dict[str, Any] = field(default_factory=dict)
     output: List[str] = field(default_factory=list)
     
+    # 运行时变量池（初始化时赋值，合并 input + 全局变量）
+    variables: Dict[str, Any] = field(default_factory=dict)
+    
     # 内部状态
     _logs: List[str] = field(default_factory=list, repr=False)
     _phase: ExecutionPhase = field(default=ExecutionPhase.VALIDATION, repr=False)
-    _variables: Dict[str, Any] = field(default_factory=dict, repr=False)
     
     def __post_init__(self):
         """初始化后设置默认值"""
@@ -145,11 +148,11 @@ class BaseAction(ABC):
     
     def get_var(self, name: str, default: Any = None) -> Any:
         """获取变量"""
-        return self._variables.get(name, default)
+        return self.variables.get(name, default)
     
     def set_var(self, name: str, value: Any):
         """设置变量（自动加入 output）"""
-        self._variables[name] = value
+        self.variables[name] = value
         if name not in self.output:
             self.output.append(name)
     
@@ -184,7 +187,7 @@ class BaseAction(ABC):
         ctx 仅用于共享变量池，不传递 page/params。
         
         执行流程：
-        1. 从 ctx 同步变量到 self._variables
+        1. 从 ctx 合并变量到 self.variables
         2. 参数验证
         3. 前置处理
         4. 执行 _do_execute()
@@ -197,12 +200,14 @@ class BaseAction(ABC):
         self.clear_logs()
         self._phase = ExecutionPhase.VALIDATION
         
-        # 从 ctx 同步变量池
+        # 从 ctx 合并变量池（不覆盖已有的）
         if ctx:
-            self._variables = dict(ctx.variables)
+            for k, v in ctx.variables.items():
+                if k not in self.variables:
+                    self.variables[k] = v
             for k, v in self.input.items():
-                if k not in self._variables:
-                    self._variables[k] = v
+                if k not in self.variables:
+                    self.variables[k] = v
         
         # 验证参数
         valid, error_msg = self.validate_params()
@@ -233,9 +238,9 @@ class BaseAction(ABC):
         
         # 收集 output
         result.output = {
-            name: self._variables.get(name)
+            name: self.variables.get(name)
             for name in self.output
-            if name in self._variables
+            if name in self.variables
         }
         
         # 后置处理
@@ -245,8 +250,8 @@ class BaseAction(ABC):
         # 同步 output 回 ctx
         if ctx:
             for name in self.output:
-                if name in self._variables:
-                    ctx.set_output(name, self._variables[name])
+                if name in self.variables:
+                    ctx.set_output(name, self.variables[name])
         
         self._phase = ExecutionPhase.CLEANUP
         return result
@@ -294,7 +299,7 @@ class CompositeAction(BaseAction, ABC):
             steps=self.steps,
             page=self.page,
             browser=self.browser,
-            variables=self._variables,
+            variables=self.variables,
             registry=self._registry,
         )
         
@@ -341,7 +346,7 @@ class PluginAction(BaseAction, ABC):
             steps=self.steps,
             page=self.page,
             browser=self.browser,
-            variables=self._variables,
+            variables=self.variables,
             registry=self._registry,
         )
         

@@ -208,7 +208,7 @@ class ActionExecutor:
             # 数据库加载的 action 已有 steps，赋值运行时属性
             action.page = page
             action.browser = browser
-            action._variables = dict(ctx.variables)
+            action.variables = dict(ctx.variables)
             return await action.execute(ctx)
         
         # 创建 action 实例，初始化时赋值所有属性
@@ -217,6 +217,7 @@ class ActionExecutor:
             browser=browser,
             params=params,
             input=dict(ctx.variables),
+            variables=dict(ctx.variables),
         )
         
         # 执行（ctx 仅用于共享变量池）
