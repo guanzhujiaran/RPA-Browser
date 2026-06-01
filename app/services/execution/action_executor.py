@@ -2,10 +2,9 @@
 Action Executor - 简化的动作执行器
 
 核心设计：
-1. 简化执行逻辑，移除不必要的抽象
-2. 支持步骤列表执行
-3. 支持循环和条件
-4. 支持插件钩子
+1. 创建 action 实例时赋值 page/params/input/output
+2. execute() 不传参，action 自身持有所有运行时数据
+3. ctx 仅用于共享变量池
 """
 
 import re
@@ -16,13 +15,13 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from loguru import logger
 from sqlmodel import select
 
-from app.models.database.workflow.unified_models import (
-    ActionResult,
+from app.services.execution.actions.base import (
     ActionContext,
+    ActionResult,
+)
+from app.models.database.workflow.unified_models import (
     ActionCategory,
     ExecutionStatus,
-    HookType,
-    ExecutionRecord,
     ActionExecutionLog,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -33,12 +32,13 @@ if TYPE_CHECKING:
 
 class ActionExecutor:
     """
-    简化的动作执行器
+    动作执行器
     
-    核心功能：
-    1. 执行步骤列表
-    2. 处理循环和条件
-    3. 管理插件钩子
+    职责：
+    1. 根据步骤创建 action 实例（赋值 page/params）
+    2. 执行 action.execute(ctx)
+    3. 处理循环和条件控制流
+    4. 记录执行日志
     """
     
     def __init__(self):
@@ -47,7 +47,9 @@ class ActionExecutor:
     async def execute_steps(
         self,
         steps: List[Dict[str, Any]],
-        ctx: ActionContext,
+        page: Any = None,
+        browser: Any = None,
+        variables: Optional[Dict[str, Any]] = None,
         registry: Optional['ActionRegistry'] = None,
         mid: str = "0",
         execution_id: Optional[str] = None,
@@ -57,7 +59,9 @@ class ActionExecutor:
         
         Args:
             steps: 步骤列表
-            ctx: 执行上下文
+            page: Playwright Page 对象
+            browser: Playwright BrowserContext
+            variables: 共享变量池
             registry: 动作注册表
             mid: 用户ID
             execution_id: 执行批次ID
@@ -71,6 +75,14 @@ class ActionExecutor:
             registry = action_registry
         
         execution_id = execution_id or str(uuid.uuid4())
+        
+        # 构建共享上下文
+        ctx = ActionContext(
+            page=page,
+            browser=browser,
+            variables=dict(variables) if variables else {},
+        )
+        
         results: List[ActionResult] = []
         
         for i, step in enumerate(steps):
@@ -86,25 +98,27 @@ class ActionExecutor:
             ctx.execution_stack.append(action_id)
             
             try:
+                # 替换模板变量
+                params = self._replace_templates(step.get("params", {}), ctx)
+                
                 # 记录执行
                 await self._log_execution(
                     execution_id=execution_id,
                     action_id=action_id,
                     action_name=action_id,
                     status=ExecutionStatus.RUNNING,
-                    params=step.get("params", {}),
+                    params=params,
                     depth=i,
                     mid=int(mid),
                 )
                 
-                # 替换模板变量
-                params = self._replace_templates(step.get("params", {}), ctx)
-                
                 # 创建并执行动作
-                result = await self._execute_single_action(
+                result = await self._execute_single_step(
                     action_id=action_id,
                     params=params,
                     ctx=ctx,
+                    page=page,
+                    browser=browser,
                     registry=registry,
                     mid=mid,
                     execution_id=execution_id,
@@ -123,7 +137,7 @@ class ActionExecutor:
                     execution_time=result.execution_time,
                 )
                 
-                # 同步 output 到上下文
+                # 同步 output 到共享变量池
                 if result.success:
                     if result.output:
                         for name, value in result.output.items():
@@ -134,7 +148,7 @@ class ActionExecutor:
                     ctx.set_var(f"result_{i}", result.data)
                 
                 # 失败时停止
-                if not result.success and ctx.params.get("on_error") == "stop":
+                if not result.success and params.get("on_error") == "stop":
                     break
                     
             except Exception as e:
@@ -155,52 +169,65 @@ class ActionExecutor:
                 )
             
             finally:
-                # 移除执行栈
                 if ctx.execution_stack and ctx.execution_stack[-1] == action_id:
                     ctx.execution_stack.pop()
         
         return results
     
-    async def _execute_single_action(
+    async def _execute_single_step(
         self,
         action_id: str,
         params: Dict[str, Any],
         ctx: ActionContext,
+        page: Any,
+        browser: Any,
         registry,
         mid: str,
         execution_id: str,
         step: Dict[str, Any],
     ) -> ActionResult:
-        """执行单个动作"""
+        """执行单个步骤"""
         # 特殊处理控制流
         if action_id == "loop":
-            return await self._execute_loop(params, ctx, registry, mid, execution_id)
+            return await self._execute_loop(params, ctx, page, browser, registry, mid, execution_id)
         elif action_id == "if_else":
-            return await self._execute_if_else(params, ctx, registry, mid, execution_id)
+            return await self._execute_if_else(params, ctx, page, browser, registry, mid, execution_id)
         
-        # 获取动作实例
-        action = registry.create_action(action_id)
-        if not action:
+        # 获取动作类
+        action_class = registry.get_action_class(action_id)
+        if not action_class:
+            # 尝试从数据库加载
             action = await registry.create_action_for_user(action_id, mid)
+            if not action:
+                return ActionResult(
+                    success=False,
+                    error=f"未找到动作: {action_id}",
+                    action_id=action_id,
+                    action_name=action_id,
+                )
+            # 数据库加载的 action 已有 steps，赋值运行时属性
+            action.page = page
+            action.browser = browser
+            action._variables = dict(ctx.variables)
+            return await action.execute(ctx)
         
-        if not action:
-            return ActionResult(
-                success=False,
-                error=f"未找到动作: {action_id}",
-                action_id=action_id,
-                action_name=action_id,
-            )
+        # 创建 action 实例，初始化时赋值所有属性
+        action = action_class(
+            page=page,
+            browser=browser,
+            params=params,
+            input=dict(ctx.variables),
+        )
         
-        # 更新上下文参数
-        ctx.params = params
-        
-        # 执行动作
+        # 执行（ctx 仅用于共享变量池）
         return await action.execute(ctx)
     
     async def _execute_loop(
         self,
         params: Dict[str, Any],
         ctx: ActionContext,
+        page: Any,
+        browser: Any,
         registry,
         mid: str,
         execution_id: str,
@@ -226,20 +253,19 @@ class ActionExecutor:
             iteration += 1
             ctx.set_var("loop_index", iteration)
             
-            # 检查循环条件
             if loop_count and iteration > loop_count:
                 break
             
             if loop_while:
                 try:
-                    if not eval(loop_while, {}, {"state": ctx.get_all_vars()}):
+                    if not eval(loop_while, {}, {"state": ctx.variables}):
                         break
                 except Exception as e:
                     logger.warning(f"loop_while 评估失败: {e}")
             
             if loop_until:
                 try:
-                    if eval(loop_until, {}, {"state": ctx.get_all_vars()}):
+                    if eval(loop_until, {}, {"state": ctx.variables}):
                         break
                 except Exception as e:
                     logger.warning(f"loop_until 评估失败: {e}")
@@ -248,8 +274,9 @@ class ActionExecutor:
                 logger.warning(f"循环次数超过限制: {max_iterations}")
                 break
             
-            # 执行循环体
-            loop_results = await self.execute_steps(children, ctx, registry, mid, execution_id)
+            loop_results = await self.execute_steps(
+                children, page, browser, ctx.variables, registry, mid, execution_id,
+            )
             results.extend(loop_results)
             
             if not loop_results[-1].success if loop_results else True:
@@ -266,6 +293,8 @@ class ActionExecutor:
         self,
         params: Dict[str, Any],
         ctx: ActionContext,
+        page: Any,
+        browser: Any,
         registry,
         mid: str,
         execution_id: str,
@@ -278,7 +307,7 @@ class ActionExecutor:
         condition_result = False
         if condition:
             try:
-                condition_result = eval(condition, {}, {"state": ctx.get_all_vars()})
+                condition_result = eval(condition, {}, {"state": ctx.variables})
             except Exception as e:
                 logger.warning(f"条件评估失败: {e}")
         
@@ -294,7 +323,9 @@ class ActionExecutor:
                 action_id="if_else",
             )
         
-        results = await self.execute_steps(selected_steps, ctx, registry, mid, execution_id)
+        results = await self.execute_steps(
+            selected_steps, page, browser, ctx.variables, registry, mid, execution_id,
+        )
         
         last_result = results[-1] if results else None
         return ActionResult(
@@ -315,25 +346,21 @@ class ActionExecutor:
                 def replacer(match):
                     template = match.group(1)
                     parts = template.split(".")
-                    
-                    current = ctx.get_all_vars()
+                    current = ctx.variables
                     for part in parts:
                         if isinstance(current, dict):
                             current = current.get(part)
                         else:
                             return match.group(0)
-                    
                     if current is not None:
                         return str(current)
                     return match.group(0)
-                
                 return re.sub(r"\{\{(.+?)\}\}", replacer, value)
             elif isinstance(value, dict):
                 return {k: replace_value(v) for k, v in value.items()}
             elif isinstance(value, list):
                 return [replace_value(item) for item in value]
             return value
-        
         return replace_value(params)
     
     async def _log_execution(
@@ -348,8 +375,6 @@ class ActionExecutor:
         workflow_id: Optional[str] = None,
     ) -> str:
         """记录执行开始"""
-        log_id = str(uuid.uuid4())
-        
         async with DatabaseSessionManager.async_session() as session:
             log = ActionExecutionLog(
                 execution_id=execution_id,
@@ -364,8 +389,7 @@ class ActionExecutor:
             )
             session.add(log)
             await session.commit()
-        
-        return log_id
+        return execution_id
     
     async def _log_execution_complete(
         self,
@@ -386,7 +410,6 @@ class ActionExecutor:
                 )
             )
             log = result.first()
-            
             if log:
                 from datetime import datetime
                 log.status = status
