@@ -4,26 +4,30 @@
 提供操作执行相关的 API（执行、批量执行、调试等）
 自定义操作和工作流的 CRUD 已迁移到 action_router.py 和 workflow_router.py
 """
-from loguru import logger
-from typing import Any, List
+from app.services.execution.actions.all_actions import get_action_metadata
+from app.services.execution.actions.base import BaseAction
+from app.services.execution.actions.control_flow import CompositeAction
+from app.services.execution.actions.all_actions import get_action_class
+from fastapi import Depends
+from typing import Any
 import uuid
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
-from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
 from app.models.common.depends import BrowserReqAuthInfo
-from app.services.execution.action_registry import action_registry
+
 from app.services.execution.execution_engine import execution_engine, Workflow, WorkflowStep
-from app.services.execution.crud_service import workflow_crud
-from app.models.core.workflow.models import ActionMetadataResponse
+from app.models.execution.params import (
+    ActionExecutionRequest,
+    StepExecutionRequest,
+    WorkflowExecutionRequest,
+)
 # 导入执行模型
 from app.models.workflow.models import (
     ActionExecuteRequest,
-    BatchActionRequest,
     ActionResultResponse,
     WorkflowExecuteRequest,
     WorkflowExecuteResponse,
-    WorkflowDuplicateResponse,
     ActionPreviewRequest,
     ActionPreviewResponse,
     ActionValidateRequest,
@@ -46,14 +50,18 @@ async def execute_action(
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ActionResultResponse | None]:
     """执行单个操作"""
-    result = await execution_engine.execute_action_with_session(
+    req = ActionExecutionRequest(
         mid=browser_info.auth_info.mid,
         browser_id=browser_info.browser_id,
         action_id=request.action_id,
         params=request.params,
-        user_data=request.user_data,
+        variables=request.variables or {},
+        input_data=request.input_data,
+        output=request.output,
         page_index=request.page_index,
     )
+    
+    result = await execution_engine.execute_with_session(req)
     
     return success_response(
         ActionResultResponse(
@@ -65,39 +73,6 @@ async def execute_action(
             action_name=result.action_name,
         )
     )
-
-
-@router.post(BrowserControlRouterPath.actions_batch, summary="批量执行操作")
-async def batch_execute(
-    request: BatchActionRequest,
-    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-) -> StandardResponse[List[ActionResultResponse]]:
-    """批量执行操作"""
-    try:
-        actions = [{"action_id": a.action_id, "params": a.params} for a in request.actions]
-        results = await execution_engine.execute_batch_with_session(
-            mid=browser_info.auth_info.mid,
-            browser_id=browser_info.browser_id,
-            actions=actions,
-            parallel=request.parallel,
-            user_data=request.user_data,
-            page_index=request.page_index,
-        )
-
-        response = [
-            ActionResultResponse(
-                success=r.success,
-                data=r.data,
-                error=r.error,
-                execution_time=r.execution_time,
-                action_id=r.action_id,
-                action_name=r.action_name,
-            )
-            for r in results
-        ]
-        return success_response(response)
-    except ValueError as e:
-        return error_response(str(e))
 
 
 # ============ 工作流执行 API ============
@@ -141,13 +116,17 @@ async def execute_workflow(
         on_error=request.on_error,
     )
 
-    results = await execution_engine.execute_workflow_with_session(
+    req = WorkflowExecutionRequest(
         mid=browser_info.auth_info.mid,
         browser_id=browser_info.browser_id,
-        workflow=workflow,
-        user_data=request.user_data,
+        action_id=workflow.id,
+        variables=request.variables or {},
+        input_data=request.input_data,
+        output=request.output,
         page_index=request.page_index,
     )
+
+    results = await execution_engine.execute_workflow_with_session(req)
 
     execution_id = str(uuid.uuid4())
 
@@ -191,10 +170,15 @@ async def preview_action_params(
     """
     mid = str(browser_info.auth_info.mid)
 
-    action_instance = await action_registry.create_action_for_user(
+    action_class: type[BaseAction] | None = get_action_class(
         request.action_id, mid
     )
-    metadata = action_registry.get_action_metadata(request.action_id)
+    if not action_class:
+        action_class = CompositeAction
+    action_instance = action_class(
+
+    )
+    metadata = get_action_metadata(request.action_type)
 
     if not metadata:
         return error_response(f"未找到操作: {request.action_id}")
@@ -263,8 +247,13 @@ async def validate_action_params(
     验证参数是否符合操作的参数定义要求。
     """
     mid = str(browser_info.auth_info.mid)
-    await action_registry.create_action_for_user(request.action_id, mid)
-    metadata = action_registry.get_action_metadata(request.action_id)
+    action_class = get_action_class(request.action_id)
+    if not action_class:
+        return error_response(f"未找到操作: {request.action_id}")
+    action_instance = action_class(
+        
+    )
+    metadata = get_action_metadata(request.action_id)
 
     if not metadata:
         return error_response(f"未找到操作: {request.action_id}")
@@ -323,7 +312,7 @@ async def execute_action_step(
     - 如果 action_id 是普通操作，执行该操作
     """
     try:
-        step_index, action_id, action_name, result = await execution_engine.execute_action_step_with_session(
+        req = StepExecutionRequest(
             mid=browser_info.auth_info.mid,
             browser_id=browser_info.browser_id,
             action_id=request.action_id,
@@ -331,6 +320,8 @@ async def execute_action_step(
             step_index=request.step_index,
             page_index=request.page_index,
         )
+        
+        step_index, action_id, action_name, result = await execution_engine.execute_action_step_with_session(req)
         
         return success_response(
             ExecuteStepResponse(

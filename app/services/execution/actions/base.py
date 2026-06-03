@@ -5,16 +5,19 @@ Base Action - 操作基类 (简化 OOP 设计)
 1. dataclass 风格：参数在初始化时设置，方便取值和赋值
 2. page 属性：BaseAction 持有 page 对象
 3. execute() 无需传参：所有属性在初始化时已赋值
-4. input/output：输入输出变量管理
-5. ctx 仅用于共享变量池
+4. input_vars/output_vars：输入输出变量管理
 """
 
+from typing import Type
+from app.models.execution.params import AllActionParams
+from app.models.database.workflow.models import BuiltinActionName
+from app.models.database.workflow.models import BuiltinActionType
+from app.models.database.workflow.models import ActionMetadata
+from botright.playwright_mock import Page
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Type, Optional, List, Dict
+from typing import Any, List, Dict
 from enum import Enum
-
-from loguru import logger
 
 
 class ExecutionPhase(Enum):
@@ -27,40 +30,11 @@ class ExecutionPhase(Enum):
 
 
 @dataclass
-class ActionContext:
-    """
-    操作执行上下文
-    
-    职责：共享变量池和执行状态。
-    page/params 等运行时数据在 action 初始化时赋值，不经过 ctx。
-    """
-    session_id: str = ""
-    browser_id: str = ""
-    page: Any = None
-    browser: Any = None
-    
-    variables: Dict[str, Any] = field(default_factory=dict)
-    output: List[str] = field(default_factory=list)
-    execution_stack: List[str] = field(default_factory=list)
-    
-    def get_var(self, name: str, default: Any = None) -> Any:
-        return self.variables.get(name, default)
-    
-    def set_var(self, name: str, value: Any):
-        self.variables[name] = value
-    
-    def set_output(self, name: str, value: Any):
-        self.variables[name] = value
-        if name not in self.output:
-            self.output.append(name)
-
-
-@dataclass
 class ActionResult:
     """操作执行结果"""
     success: bool = False
     data: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     execution_time: float = 0.0
     action_id: str = ""
     action_name: str = ""
@@ -73,216 +47,127 @@ class BaseAction(ABC):
     """
     操作基类（dataclass 风格）
     
-    设计要点：
-    1. 所有属性在初始化时赋值，execute() 无需传参
-    2. 持有 page 对象，子类直接用 self.page
-    3. 持有 params，子类直接用 self.params["selector"] 等
-    4. ctx 仅用于共享变量池
     """
-    
-    action_id: str = ""
-    action_name: str = ""
-    
-    page: Any = None
-    browser: Any = None
-    
+
+    action_id: BuiltinActionType | str
+    _action_name: BuiltinActionName | str
+    mid: int = 0  # 有的action可能会用上
+    page: Page = None
     params: Dict[str, Any] = field(default_factory=dict)
     timeout: int = 30000
-    
-    input: Dict[str, Any] = field(default_factory=dict)
-    output: List[str] = field(default_factory=list)
-    
+    input_vars: Dict[str, Any] = field(default_factory=dict)
+    output_vars: List[str] = field(default_factory=list)
     variables: Dict[str, Any] = field(default_factory=dict)
-    
     _logs: List[str] = field(default_factory=list, repr=False)
-    _phase: ExecutionPhase = field(default=ExecutionPhase.VALIDATION, repr=False)
+    _phase: ExecutionPhase = field(
+        default=ExecutionPhase.VALIDATION, repr=False)
     
-    params_model: Any = None
-    
-    def __post_init__(self):
-        if not self.action_id:
-            self.action_id = self.get_action_id()
-        if not self.action_name:
-            self.action_name = self.get_action_name()
-    
-    @staticmethod
-    @abstractmethod
-    def get_action_id() -> str:
-        """返回动作ID（子类必须实现）"""
-        ...
-    
+
+
     @classmethod
-    def get_action_name(cls) -> str:
-        """返回动作名称"""
-        return cls.__name__.replace("Action", "")
-    
+    def new_action(
+        cls,
+        *,
+        mid: int,
+        page: Page,
+        variables: Dict[str, Any],
+        params: Dict[str, Any] = None,
+        timeout: int = 30000,
+        input_vars: Dict[str, Any] = None,
+        output_vars: List[str] = None,
+    ) -> "BaseAction":
+        safe_params = params or {}
+        safe_input = input_vars or {}
+        safe_output = output_vars or []
+        safe_variables = variables or {}
+        return cls(
+            mid=mid,
+            page=page,
+            params=safe_params,
+            timeout=timeout,
+            input_vars=safe_input,
+            output_vars=safe_output,
+            variables=safe_variables,
+        )
+
     @property
-    def metadata(self):
+    def params_model(self) -> Type[AllActionParams] | None:
+        return self.action_type.params_model
+
+    @property
+    def action_type(self) -> BuiltinActionType:
+        """返回动作类型"""
+        return BuiltinActionType(self.action_id) or BuiltinActionType.COMPOSITE
+
+    @property
+    def action_name(self) -> BuiltinActionName:
+        """返回动作名称"""
+        return BuiltinActionName(self._action_name) or BuiltinActionName.COMPOSITE
+
+    @action_name.setter
+    def action_name(self, value: BuiltinActionName | str):
+        self._action_name = value
+
+    @property
+    def browser(self):
+        return self.page.browser
+
+    def __post_init__(self):
+        if not self.mid:
+            raise ValueError("mid is required")
+        if not self.page:
+            raise ValueError("page is required")
+        if not self.variables:
+            raise ValueError("variables is required")
+
+    @property
+    def metadata(self) -> ActionMetadata:
         """返回动作元数据"""
-        return self.get_metadata()
-    
-    def get_metadata(self) -> Any:
-        """获取动作元数据（子类可覆盖）"""
-        return None
-    
+        return self._get_metadata()
+
+    def _get_metadata(self) -> ActionMetadata:
+        return ActionMetadata(
+            id=self.action_id,
+            name=self.action_type.nameDisplay,
+            type=self.action_type,
+            description=self.action_type.descDisplay,
+            parameters=self.get_parameters_from_model(),
+            json_schema=self.get_full_schema(),
+        )
+
     def add_log(self, message: str):
         """添加日志"""
         self._logs.append(f"[{self._phase.value}] {message}")
-    
+
     def get_logs(self) -> List[str]:
         return self._logs.copy()
-    
+
     def clear_logs(self):
         self._logs.clear()
-    
-    def validate_params_with_model(self, params: Dict[str, Any]) -> tuple[bool, str, Any]:
+
+    def validate_params_with_model(self) -> tuple[bool, str, Any]:
         """使用模型验证参数"""
         if not self.params_model:
-            class MockParams:
-                def __init__(self, **kwargs):
-                    for k, v in kwargs.items():
-                        if k == 'position' and isinstance(v, dict):
-                            class Position:
-                                def __init__(self, x, y):
-                                    self.x = x
-                                    self.y = y
-                            setattr(self, k, Position(v.get('x', 0), v.get('y', 0)))
-                        else:
-                            setattr(self, k, v)
-                
-                def __getattr__(self, name):
-                    if name == 'click_count':
-                        return 1
-                    elif name == 'delay':
-                        return 0
-                    elif name == 'timeout':
-                        return 30000
-                    elif name == 'force':
-                        return False
-                    elif name == 'trial':
-                        return False
-                    elif name == 'button':
-                        return 'left'
-                    elif name == 'state':
-                        return 'visible'
-                    elif name == 'quality':
-                        return 80
-                    elif name == 'full_page':
-                        return False
-                    elif name == 'omit_background':
-                        return False
-                    elif name == 'wait_until':
-                        return 'load'
-                    elif name == 'count':
-                        return 1
-                    elif name == 'condition':
-                        return ''
-                    elif name == 'type':
-                        return 'png'
-                    return None
-            return True, "", MockParams(**params)
-        
+            raise ValueError(f"Action with no params_model: {self}")
         try:
-            validated = self.params_model(**params)
+            validated = self.params_model.model_validate(self.params)
             return True, "", validated
         except Exception as e:
             return False, str(e), None
-    
+
     def get_parameters_from_model(self) -> List[Dict[str, Any]]:
         """从模型获取参数列表"""
         return []
-    
+
     def get_full_schema(self) -> Dict[str, Any]:
         """获取完整的 JSON Schema"""
         return {}
-    
+
     @abstractmethod
-    async def execute(self, ctx: ActionContext = None) -> ActionResult:
+    async def execute(self) -> ActionResult:
         """
         执行动作（子类必须实现）
-        
-        ctx 仅用于共享变量池，不传递 page/params。
+
+        所有参数通过 self 访问，无需传参。
         """
         ...
-
-
-@dataclass
-class CompositeAction(BaseAction, ABC):
-    """组合动作基类"""
-    steps: List[Dict[str, Any]] = field(default_factory=list)
-    _registry: Any = field(default=None, repr=False)
-    
-    def set_registry(self, registry):
-        self._registry = registry
-    
-    @staticmethod
-    def get_action_id() -> str:
-        return "composite"
-    
-    async def execute(self, ctx: ActionContext = None) -> ActionResult:
-        from app.services.execution.action_executor import action_executor
-        
-        results = await action_executor.execute_steps(
-            steps=self.steps,
-            page=self.page,
-            browser=self.browser,
-            variables=self.variables,
-            registry=self._registry,
-        )
-        
-        total = len(results)
-        success_count = sum(1 for r in results if r.success)
-        
-        last_result = results[-1] if results else None
-        return ActionResult(
-            success=last_result.success if last_result else False,
-            data={
-                "total_steps": total,
-                "success_count": success_count,
-                "results": [{"action_id": r.action_id, "success": r.success} for r in results]
-            },
-            error=last_result.error if last_result and not last_result.success else None,
-            execution_time=sum(r.execution_time for r in results),
-            action_id=self.action_id,
-            action_name=self.action_name,
-            logs=self.get_logs(),
-        )
-
-
-@dataclass
-class PluginAction(BaseAction, ABC):
-    """插件动作基类"""
-    hook_type: str = "after_action"
-    steps: List[Dict[str, Any]] = field(default_factory=list)
-    _registry: Any = field(default=None, repr=False)
-    
-    def set_registry(self, registry):
-        self._registry = registry
-    
-    @staticmethod
-    def get_action_id() -> str:
-        return "plugin"
-    
-    async def execute(self, ctx: ActionContext = None) -> ActionResult:
-        from app.services.execution.action_executor import action_executor
-        
-        self.add_log(f"执行插件 '{self.action_name}' (hook: {self.hook_type})")
-        
-        results = await action_executor.execute_steps(
-            steps=self.steps,
-            page=self.page,
-            browser=self.browser,
-            variables=self.variables,
-            registry=self._registry,
-        )
-        
-        last_result = results[-1] if results else None
-        return ActionResult(
-            success=last_result.success if last_result else False,
-            data={"hook_type": self.hook_type, "results": results},
-            error=last_result.error if last_result and not last_result.success else None,
-            execution_time=sum(r.execution_time for r in results),
-            action_id=self.action_id,
-            action_name=self.action_name,
-            logs=self.get_logs(),
-        )

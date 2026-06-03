@@ -1,286 +1,542 @@
 """
-控制流类 Action - Loop, IfElse, Composite
+控制流类 Action - Loop, IfElse, CompositeAction
 """
 import time
-from typing import Any
+import re
+import uuid
+from datetime import datetime
+from typing import Dict, List
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import Any
+from dataclasses import field
+from botright.playwright_mock import Page
+from loguru import logger
 
-from app.services.execution.actions.base import BaseAction
-from app.models.execution.params import LoopParams, IfElseParams
-from app.models.database.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext, CustomAction
-from app.utils.depends.session_manager import DatabaseSessionManager
+from app.services.execution.actions.base import BaseAction, ActionResult
+from app.services.execution.actions.all_actions import get_action_class
 from app.config import settings
+from app.models.database.workflow.models import (
+    BuiltinActionType, ExecutionStatus,
+    ActionExecutionLog, ActionCategory
+)
+from app.utils.depends.session_manager import DatabaseSessionManager
 
 
 class LoopAction(BaseAction):
     """循环控制流操作"""
+    action_id: BuiltinActionType = BuiltinActionType.LOOP
 
-    params_model = LoopParams
-
-    @staticmethod
-    def get_action_id() -> str:
-        return "loop"
-
-    def get_metadata(self) -> ActionMetadata:
-        return ActionMetadata(
-            id="loop", name="循环", type=ActionType.CUSTOM,
-            description="遍历列表或重复执行子步骤",
-            parameters=self.get_parameters_from_model(),
-            json_schema=self.get_full_schema(),
-        )
-
-    async def execute(self, ctx: ActionContext) -> ActionResult:
+    async def execute(self) -> ActionResult:
         start_time = time.time()
-        
-        valid, error_msg, validated_params = self.validate_params_with_model(ctx.params)
+
+        valid, error_msg, validated_params = self.validate_params_with_model(
+            self.params)
         if not valid:
             return ActionResult(
                 success=False, error=error_msg, execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.action_id, action_name=self.action_name,
             )
 
         items = validated_params.items
         count = validated_params.count
-        
-        execute_steps_func = ctx.user_data.get("_execute_steps_func")
+
+        execute_steps_func = self.variables.get("_execute_steps_func")
         if not execute_steps_func:
             return ActionResult(success=False, error="LoopAction 必须在 Workflow 上下文中执行")
 
-        children = ctx.user_data.get("_children_steps", [])
+        children = self.variables.get("_children_steps", [])
         if not children:
             return ActionResult(success=True, data={"message": "无子步骤可执行"})
 
-        # 检查嵌套深度（与执行引擎的递归深度共享）
-        current_depth = ctx.user_data.get("_recursion_depth", 0)
+        current_depth = self.variables.get("_recursion_depth", 0)
         max_depth = settings.workflow_max_nesting_depth
-        
+
         if current_depth >= max_depth:
             return ActionResult(
                 success=False,
                 error=f"嵌套深度超过限制 ({current_depth}/{max_depth})，请简化工作流结构",
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id,
-                action_name=self.metadata.name,
+                action_id=self.action_id,
+                action_name=self.action_name,
             )
 
         results = []
         iteration_list = items if items is not None else range(count)
-        
+
         for index, item in enumerate(iteration_list):
             loop_ctx = {
                 "index": index,
                 "current_item": item,
                 "total": len(iteration_list) if hasattr(iteration_list, '__len__') else count
             }
-            
-            ctx.user_data["state"] = ctx.user_data.get("state", {})
-            ctx.user_data["state"]["loop"] = loop_ctx
-            
-            # 注意：不需要手动增加深度，因为 execute_steps_func 会在 _execute_steps 中自动增加
-            # 这里只是保存当前深度用于恢复
-            ctx.user_data["_loop_parent_depth"] = current_depth
+
+            self.variables["state"] = self.variables.get("state", {})
+            self.variables["state"]["loop"] = loop_ctx
+
+            self.variables["_loop_parent_depth"] = current_depth
 
             try:
-                step_results = await execute_steps_func(children, ctx)
-                results.append({"iteration": index, "success": True, "results": step_results})
+                step_results = await execute_steps_func(children, self)
+                iteration_success = all(
+                    r.success for r in step_results) if step_results else True
+                results.append(
+                    {"iteration": index, "success": iteration_success, "results": step_results})
             except Exception as e:
-                results.append({"iteration": index, "success": False, "error": str(e)})
-                break
+                results.append(
+                    {"iteration": index, "success": False, "error": str(e)})
             finally:
-                # 恢复父级深度（实际上 _execute_steps 会自动管理）
-                if "_loop_parent_depth" in ctx.user_data:
-                    del ctx.user_data["_loop_parent_depth"]
+                if "_loop_parent_depth" in self.variables:
+                    del self.variables["_loop_parent_depth"]
 
         return ActionResult(
             success=True,
             data={"iterations": len(results), "details": results},
             execution_time=time.time() - start_time,
-            action_id=self.metadata.id, action_name=self.metadata.name,
+            action_id=self.action_id, action_name=self.action_name,
         )
 
 
 class IfElseAction(BaseAction):
     """条件分支控制流操作"""
+    action_id: BuiltinActionType = BuiltinActionType.IF_ELSE
 
-    params_model = IfElseParams
 
-    @staticmethod
-    def get_action_id() -> str:
-        return "if_else"
-
-    def get_metadata(self) -> ActionMetadata:
-        return ActionMetadata(
-            id="if_else", name="条件分支", type=ActionType.CUSTOM,
-            description="根据条件执行 true/false 分支",
-            parameters=self.get_parameters_from_model(),
-            json_schema=self.get_full_schema(),
-        )
-
-    async def execute(self, ctx: ActionContext) -> ActionResult:
+    async def execute(self) -> ActionResult:
         start_time = time.time()
-        
-        valid, error_msg, validated_params = self.validate_params_with_model(ctx.params)
+
+        valid, error_msg, validated_params = self.validate_params_with_model(
+            self.params)
         if not valid:
             return ActionResult(
                 success=False, error=error_msg, execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.action_id, action_name=self.action_name,
             )
 
         condition = validated_params.condition
-        
-        execute_steps_func = ctx.user_data.get("_execute_steps_func")
+
+        execute_steps_func = self.variables.get("_execute_steps_func")
         if not execute_steps_func:
             return ActionResult(success=False, error="IfElseAction 必须在 Workflow 上下文中执行")
 
-        # 检查嵌套深度（与执行引擎的递归深度共享）
-        current_depth = ctx.user_data.get("_recursion_depth", 0)
+        current_depth = self.variables.get("_recursion_depth", 0)
         max_depth = settings.workflow_max_nesting_depth
-        
+
         if current_depth >= max_depth:
             return ActionResult(
                 success=False,
                 error=f"嵌套深度超过限制 ({current_depth}/{max_depth})，请简化工作流结构",
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id,
-                action_name=self.metadata.name,
+                action_id=self.action_id,
+                action_name=self.action_name,
             )
 
-        state = ctx.user_data.get("state", {})
+        state = self.variables.get("state", {})
         try:
             is_true = eval(condition, {"__builtins__": {}}, {"state": state})
         except:
             is_true = False
 
         branch_key = "true_branch" if is_true else "false_branch"
-        children = ctx.user_data.get(f"_{branch_key}_steps", [])
+        children = self.variables.get(f"_{branch_key}_steps", [])
 
         if not children:
             return ActionResult(success=True, data={"branch_taken": branch_key, "message": "分支无步骤"})
 
-        # 注意：不需要手动增加深度，因为 execute_steps_func 会在 _execute_steps 中自动增加
-        # 这里只是保存当前深度用于恢复
-        ctx.user_data["_ifelse_parent_depth"] = current_depth
+        self.variables["_ifelse_parent_depth"] = current_depth
 
         try:
-            results = await execute_steps_func(children, ctx)
+            results = await execute_steps_func(children, self)
             return ActionResult(
                 success=True,
                 data={"branch_taken": branch_key, "results": results},
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.action_id, action_name=self.action_name,
             )
         except Exception as e:
             return ActionResult(
                 success=False, error=str(e),
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.action_id, action_name=self.action_name,
             )
         finally:
-            # 恢复父级深度（实际上 _execute_steps 会自动管理）
-            if "_ifelse_parent_depth" in ctx.user_data:
-                del ctx.user_data["_ifelse_parent_depth"]
+            if "_ifelse_parent_depth" in self.variables:
+                del self.variables["_ifelse_parent_depth"]
 
 
 class CompositeAction(BaseAction):
-    """组合操作"""
+    """组合动作基类"""
+    action_id: BuiltinActionType = BuiltinActionType.COMPOSITE
+    _max_depth: int = 50 # 系统设置，无需传参
 
-    def __init__(self, action_id: str, name: str, description: str, steps: list[dict[str, Any]]):
-        self._action_id = action_id
-        self._name = name
-        self._description = description
-        self._steps = steps
-        self._registry = None
-
-    def set_registry(self, registry):
-        """设置操作注册表引用"""
-        self._registry = registry
-
-    def get_metadata(self) -> ActionMetadata:
-        return ActionMetadata(
-            id=self._action_id, name=self._name, type=ActionType.CUSTOM,
-            description=self._description, parameters=[], requires_browser=True,
+    async def execute(self) -> ActionResult:
+        
+        results = await self._execute_steps(
+            steps=self.steps,
+            page=self.page,
+            mid=self.mid,
+            variables=self.variables,
         )
 
-    def _replace_params(self, text: str, params: dict[str, Any]) -> Any:
-        """替换模板参数"""
-        if isinstance(text, str):
-            result = text
-            for key, value in params.items():
-                result = result.replace(f"{{{{{key}}}}}", str(value))
-            return result
-        elif isinstance(text, dict):
-            return {k: self._replace_params(v, params) for k, v in text.items()}
-        elif isinstance(text, list):
-            return [self._replace_params(item, params) for item in text]
-        return text
+        total = len(results)
+        success_count = sum(1 for r in results if r.success)
 
-    async def execute(self, ctx: ActionContext) -> ActionResult:
-        start_time = time.time()
+        last_result = results[-1] if results else None
+        return ActionResult(
+            success=last_result.success if last_result else False,
+            data={
+                "total_steps": total,
+                "success_count": success_count,
+                "results": [{"action_id": r.action_id, "success": r.success} for r in results]
+            },
+            error=last_result.error if last_result and not last_result.success else None,
+            execution_time=sum(r.execution_time for r in results),
+            action_id=self.action_id,
+            action_name=self.action_name,
+            logs=self.get_logs(),
+        )
 
-        if not self._registry:
-            return ActionResult(
-                success=False, error="操作注册表未初始化",
-                execution_time=time.time() - start_time,
-                action_id=self._action_id, action_name=self._name,
-            )
-
-        # 🔒 循环引用检测：检查当前动作是否已经在执行栈中
-        execution_stack = ctx.user_data.setdefault("_execution_stack", [])
-        if self._action_id in execution_stack:
-            cycle_path = " → ".join(execution_stack + [self._action_id])
-            error_msg = f"检测到组合动作循环引用: {cycle_path}"
-            logger.error(f"🚫 {error_msg}")
+    async def _execute_steps(
+        self,
+        *,
+        steps: List[Dict[str, Any]],
+        page: Page,
+        mid: int,
+        variables: Dict[str, Any] | None = None,
+        execution_id: str | None = None,
+    ) -> List[ActionResult]:
+        """
+        执行步骤列表
+        
+        Args:
+            steps: 步骤列表
+            page: Playwright Page 对象
+            mid: 用户ID
+            variables: 共享变量池
+            execution_id: 执行批次ID
+            
+        Returns:
+            执行结果列表
+        """
+        
+        execution_id = execution_id or str(uuid.uuid4())
+        
+        # 构建共享变量池
+        shared_variables = dict(variables) if variables else {}
+        execution_stack: List[str] = []
+        
+        results: List[ActionResult] = []
+        
+        for i, step in enumerate(steps):
+            action_id = step.get("action_id")
+            
+            # 检查执行栈（循环检测）
+            if action_id in execution_stack:
+                logger.warning(f"检测到循环引用: {action_id}")
+                continue
+            
+            execution_stack.append(action_id)
+            
+            try:
+                # 替换模板变量
+                params = self._replace_templates(step.get("params", {}), shared_variables)
+                
+                # 记录执行
+                await self._log_execution(
+                    execution_id=execution_id,
+                    action_id=action_id,
+                    action_name=action_id,
+                    status=ExecutionStatus.RUNNING,
+                    params=params,
+                    depth=i,
+                    mid=mid,
+                )
+                
+                # 创建并执行动作
+                result = await self._execute_single_step(
+                    action_id=action_id,
+                    params=params,
+                    page=page,
+                    variables=shared_variables,
+                    mid=mid,
+                    execution_id=execution_id,
+                    step=step,
+                )
+                
+                results.append(result)
+                
+                # 更新执行记录
+                await self._log_execution_complete(
+                    execution_id=execution_id,
+                    action_id=action_id,
+                    status=ExecutionStatus.SUCCESS if result.success else ExecutionStatus.FAILED,
+                    result_data={"success": result.success, "data": result.data},
+                    error_message=result.error,
+                    execution_time=result.execution_time,
+                )
+                
+                # 同步 output 到共享变量池
+                if result.success:
+                    if result.output:
+                        for name, value in result.output.items():
+                            shared_variables[name] = value
+                    if result.data and isinstance(result.data, dict):
+                        for key, value in result.data.items():
+                            shared_variables[key] = value
+                    shared_variables[f"result_{i}"] = result.data
+                
+                # 失败时停止
+                if not result.success and params.get("on_error") == "stop":
+                    break
+                    
+            except Exception as e:
+                logger.exception(f"执行动作失败: {action_id}")
+                error_result = ActionResult(
+                    success=False,
+                    error=str(e),
+                    action_id=action_id,
+                    action_name=action_id,
+                )
+                results.append(error_result)
+                
+                await self._log_execution_complete(
+                    execution_id=execution_id,
+                    action_id=action_id,
+                    status=ExecutionStatus.FAILED,
+                    error_message=str(e),
+                )
+            
+            finally:
+                if execution_stack and execution_stack[-1] == action_id:
+                    execution_stack.pop()
+        
+        return results
+    
+    async def _execute_single_step(
+        self,
+        action_id: str,
+        params: Dict[str, Any],
+        page: Any,
+        variables: Dict[str, Any],
+        mid: int,
+        execution_id: str,
+        step: Dict[str, Any],
+    ) -> ActionResult:
+        """执行单个步骤"""
+        # 特殊处理控制流
+        if action_id == BuiltinActionType.LOOP:
+            return await self._execute_loop(params, page, variables, mid, execution_id)
+        elif action_id == BuiltinActionType.IF_ELSE:
+            return await self._execute_if_else(params, page, variables, mid, execution_id)
+        
+        # 获取动作类（使用全局注册表）
+        action_class = get_action_class(action_id)
+        
+        # 创建 action 实例，初始化时赋值所有属性
+        action = action_class(
+            page=page,
+            params=params,
+            variables=dict(variables),
+        )
+        
+        # 执行
+        return await action.execute()
+    
+    async def _execute_loop(
+        self,
+        params: Dict[str, Any],
+        page: Any,
+        variables: Dict[str, Any],
+        mid: int,
+        execution_id: str,
+    ) -> ActionResult:
+        """执行循环"""
+        loop_count = params.get("loop_count")
+        loop_while = params.get("loop_while")
+        loop_until = params.get("loop_until")
+        children = params.get("children", [])
+        
+        if not children:
             return ActionResult(
                 success=False,
-                error=error_msg,
-                execution_time=time.time() - start_time,
-                action_id=self._action_id,
-                action_name=self._name,
-                logs=[f"循环引用检测失败，执行栈: {execution_stack}"]
+                error="循环体为空",
+                action_id="loop",
             )
         
-        # 将当前动作加入执行栈
-        execution_stack.append(self._action_id)
-
         results = []
-        try:
-            for i, step in enumerate(self._steps):
-                step_params = self._replace_params(step.get("params", {}), ctx.params)
-
-                sub_ctx = ActionContext(
-                    session_id=ctx.session_id, browser_id=ctx.browser_id,
-                    page=ctx.page, browser=ctx.browser,
-                    params=step_params, user_data=ctx.user_data,
-                )
-
-                sub_action = self._registry.create_action(step["action_id"])
-                if not sub_action:
-                    return ActionResult(
-                        success=False, error=f"未找到子操作: {step['action_id']}",
-                        execution_time=time.time() - start_time,
-                        action_id=self._action_id, action_name=self._name,
-                    )
-
-                result = await sub_action.execute(sub_ctx)
-                results.append(result)
-
-                if not result.success:
-                    return ActionResult(
-                        success=False, error=f"步骤 {i+1} 失败: {result.error}",
-                        data={"results": [r.__dict__ for r in results]},
-                        execution_time=time.time() - start_time,
-                        action_id=self._action_id, action_name=self._name,
-                    )
-
+        iteration = 0
+        max_iterations = loop_count or 100
+        
+        while True:
+            iteration += 1
+            variables["loop_index"] = iteration
+            
+            if loop_count and iteration > loop_count:
+                break
+            
+            if loop_while:
+                try:
+                    if not eval(loop_while, {}, {"state": variables}):
+                        break
+                except Exception as e:
+                    logger.warning(f"loop_while 评估失败: {e}")
+            
+            if loop_until:
+                try:
+                    if eval(loop_until, {}, {"state": variables}):
+                        break
+                except Exception as e:
+                    logger.warning(f"loop_until 评估失败: {e}")
+            
+            if iteration > max_iterations:
+                logger.warning(f"循环次数超过限制: {max_iterations}")
+                break
+            
+            loop_results = await self._execute_steps(
+                steps=children,
+                page=page,
+                mid=mid,
+                variables=variables,
+                execution_id=execution_id,
+            )
+            results.extend(loop_results)
+            
+            if not loop_results[-1].success if loop_results else True:
+                break
+        
+        return ActionResult(
+            success=True,
+            data={"iterations": iteration, "results": [{"action_id": r.action_id, "success": r.success} for r in results]},
+            execution_time=sum(r.execution_time for r in results),
+            action_id="loop",
+        )
+    
+    async def _execute_if_else(
+        self,
+        params: Dict[str, Any],
+        page: Any,
+        variables: Dict[str, Any],
+        mid: int,
+        execution_id: str,
+    ) -> ActionResult:
+        """执行条件分支"""
+        condition = params.get("condition")
+        true_branch = params.get("true_branch", [])
+        false_branch = params.get("false_branch", [])
+        
+        condition_result = False
+        if condition:
+            try:
+                condition_result = eval(condition, {}, {"state": variables})
+            except Exception as e:
+                logger.warning(f"条件评估失败: {e}")
+        
+        variables["condition_result"] = condition_result
+        
+        selected_steps = true_branch if condition_result else false_branch
+        branch_name = "true_branch" if condition_result else "false_branch"
+        
+        if not selected_steps:
             return ActionResult(
                 success=True,
-                data={
-                    "composite": True, "steps_count": len(self._steps),
-                    "results": [r.__dict__ for r in results],
-                },
-                execution_time=time.time() - start_time,
-                action_id=self._action_id, action_name=self._name,
+                data={"branch": branch_name, "executed": False},
+                action_id=BuiltinActionType.IF_ELSE,
             )
-        finally:
-            # 从执行栈中移除当前动作（无论成功与否）
-            if execution_stack and execution_stack[-1] == self._action_id:
-                execution_stack.pop()
+        
+        results = await self._execute_steps(
+            steps=selected_steps,
+            page=page,
+            mid=mid,
+            variables=variables,
+            execution_id=execution_id,
+        )
+        
+        last_result = results[-1] if results else None
+        return ActionResult(
+            success=last_result.success if last_result else True,
+            data={"branch": branch_name, "executed": True, "results": [{"action_id": r.action_id, "success": r.success} for r in results]},
+            execution_time=sum(r.execution_time for r in results),
+            action_id="if_else",
+        )
+    
+    def _replace_templates(
+        self,
+        params: Dict[str, Any],
+        variables: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """替换模板变量"""
+        def replace_value(value: Any) -> Any:
+            if isinstance(value, str):
+                def replacer(match):
+                    template = match.group(1)
+                    parts = template.split(".")
+                    current = variables
+                    for part in parts:
+                        if isinstance(current, dict):
+                            current = current.get(part)
+                        else:
+                            return match.group(0)
+                    if current is not None:
+                        return str(current)
+                    return match.group(0)
+                return re.sub(r"\{\{(.+?)\}\}", replacer, value)
+            elif isinstance(value, dict):
+                return {k: replace_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [replace_value(item) for item in value]
+            return value
+        return replace_value(params)
+    
+    async def _log_execution(
+        self,
+        execution_id: str,
+        action_id: str,
+        action_name: str,
+        status: ExecutionStatus,
+        params: Dict[str, Any],
+        depth: int,
+        mid: int,
+        workflow_id: str | None = None,
+    ) -> str:
+        """记录执行开始"""
+        async with DatabaseSessionManager.async_session() as session:
+            log = ActionExecutionLog(
+                execution_id=execution_id,
+                action_id=action_id,
+                action_name=action_name,
+                category=ActionCategory.ATOMIC,
+                status=status,
+                params=params,
+                depth=depth,
+                mid=mid,
+                workflow_id=workflow_id,
+            )
+            session.add(log)
+            await session.commit()
+        return execution_id
+    
+    async def _log_execution_complete(
+        self,
+        execution_id: str,
+        action_id: str,
+        status: ExecutionStatus,
+        result_data: Dict[str, Any] | None = None,
+        error_message: str | None = None,
+        execution_time: float = 0.0,
+    ):
+        """更新执行记录"""
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ActionExecutionLog).where(
+                    ActionExecutionLog.execution_id == execution_id,
+                    ActionExecutionLog.action_id == action_id,
+                    ActionExecutionLog.finished_at == None,
+                )
+            )
+            log = result.first()
+            if log:
+                log.status = status
+                log.result_data = result_data
+                log.error_message = error_message
+                log.execution_time = execution_time
+                log.finished_at = datetime.now()
+                await session.commit()

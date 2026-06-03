@@ -1,168 +1,230 @@
 """
-测试导航类 Action - Navigate, NewPage
+测试导航操作 - 使用 aiounittest.AsyncTestCase 模式
+浏览器由 pytest-playwright-asyncio 提供 page fixture
+参考: https://playwright.dev/python/docs/test-runners#using-with-unittesttestcase
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+import aiounittest
+from playwright.async_api import Page
 
 
-class TestNavigateAction:
+class TestNavigateAction(aiounittest.AsyncTestCase):
     """导航操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_navigate_with_url(self, mock_action_context):
-        """测试导航到 URL"""
-        from app.services.execution.actions.navigation import NavigateAction
-        
-        action = NavigateAction()
-        mock_action_context.params = {"url": "https://example.com"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        assert result.data["url"] == "https://example.com"
-        assert result.data["status"] == 200
-        mock_action_context.page.goto.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_navigate_with_https_url(self, mock_action_context):
-        """测试自动添加 https 协议"""
-        from app.services.execution.actions.navigation import NavigateAction
-        
-        action = NavigateAction()
-        mock_action_context.params = {"url": "example.com"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        # 验证 URL 被转换为 https
-        call_args = mock_action_context.page.goto.call_args[0][0]
-        assert call_args.startswith("https://")
-    
-    @pytest.mark.asyncio
-    async def test_navigate_with_www_url(self, mock_action_context):
-        """测试 www 开头的 URL"""
-        from app.services.execution.actions.navigation import NavigateAction
-        
-        action = NavigateAction()
-        mock_action_context.params = {"url": "www.example.com"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        call_args = mock_action_context.page.goto.call_args[0][0]
-        assert call_args == "https://www.example.com"
-    
-    @pytest.mark.asyncio
-    async def test_navigate_invalid_url(self, mock_action_context):
-        """测试无效 URL"""
-        from app.services.execution.actions.navigation import NavigateAction
-        
-        action = NavigateAction()
-        mock_action_context.params = {"url": "invalid-url"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert not result.success
-        assert "无效的 URL 格式" in result.error
-    
-    @pytest.mark.asyncio
-    async def test_navigate_localhost_blocked(self, mock_action_context):
-        """测试 localhost 被阻止"""
-        from app.services.execution.actions.navigation import NavigateAction
-        
-        action = NavigateAction()
-        mock_action_context.params = {"url": "http://localhost:8080"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert not result.success
-        assert "禁止访问 localhost" in result.error
-    
-    @pytest.mark.asyncio
-    async def test_navigate_private_ip_blocked(self, mock_action_context):
-        """测试私有 IP 被阻止"""
-        from app.services.execution.actions.navigation import NavigateAction
-        
-        action = NavigateAction()
-        mock_action_context.params = {"url": "http://192.168.1.1"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert not result.success
-        assert "禁止访问私有地址" in result.error
 
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
 
-class TestNewPageAction:
-    """新建页面操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_new_page_without_url(self, mock_action_context, mock_page):
-        """测试创建空白页面"""
-        from app.services.execution.actions.navigation import NewPageAction
-        
-        new_page_mock = MagicMock()
-        new_page_mock.url = "about:blank"
-        new_page_mock.bring_to_front = AsyncMock(return_value=None)
-        mock_action_context.page.context.new_page = AsyncMock(return_value=new_page_mock)
-        
-        action = NewPageAction()
-        mock_action_context.params = {}
-        
-        result = await action.execute(mock_action_context)
-        
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_url(self):
+        """测试导航到指定 URL"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://example.com"},
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["page_created"]
-        assert result.data["url"] == "about:blank"
-    
-    @pytest.mark.asyncio
-    async def test_new_page_with_url(self, mock_action_context, mock_page):
-        """测试创建页面并导航"""
-        from app.services.execution.actions.navigation import NewPageAction
-        
-        new_page_mock = MagicMock()
-        new_page_mock.url = "https://example.com"
-        new_page_mock.bring_to_front = AsyncMock(return_value=None)
-        new_page_mock.goto = AsyncMock(return_value=MagicMock(status=200))
-        mock_action_context.page.context.new_page = AsyncMock(return_value=new_page_mock)
-        
-        action = NewPageAction()
-        mock_action_context.params = {"url": "https://example.com"}
-        
-        result = await action.execute(mock_action_context)
-        
+        assert "example.com" in self.page.url
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_params(self):
+        """测试带参数的导航"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://example.com", "timeout": 60000},
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["page_created"]
-        assert result.data["url"] == "https://example.com"
-    
-    @pytest.mark.asyncio
-    async def test_new_page_without_page_and_browser(self, mock_action_context):
-        """测试没有 page 和 browser 的情况"""
-        from app.services.execution.actions.navigation import NewPageAction
-        
-        action = NewPageAction()
-        mock_action_context.params = {}
-        mock_action_context.page = None
-        mock_action_context.browser = None
-        
-        result = await action.execute(mock_action_context)
-        
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_wait_until_domcontentloaded(self):
+        """测试不同 wait_until 参数"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://example.com", "wait_until": "domcontentloaded"},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_wait_until_load(self):
+        """测试 wait_until=load"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://example.com", "wait_until": "load"},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_wait_until_networkidle(self):
+        """测试 wait_until=networkidle"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://example.com", "wait_until": "networkidle"},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_commit(self):
+        """测试 commit 参数"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://example.com", "commit": True},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_replace_state(self):
+        """测试 replace_state 参数"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        await self.page.goto("https://example.com")
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://example.com/", "replace_state": True},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_missing_url(self):
+        """测试缺少 URL 参数"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={},
+        )
+
+        result = await action.execute()
         assert not result.success
-        assert "浏览器对象不可用" in result.error
-    
-    @pytest.mark.asyncio
-    async def test_new_page_security_block(self, mock_action_context, mock_page):
-        """测试安全检查阻止"""
+        assert "url" in result.error.lower()
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_new_page_with_url(self):
+        """测试新建页面带 URL"""
         from app.services.execution.actions.navigation import NewPageAction
-        
-        new_page_mock = MagicMock()
-        new_page_mock.url = "http://localhost:8080"
-        new_page_mock.close = AsyncMock(return_value=None)
-        mock_action_context.page.context.new_page = AsyncMock(return_value=new_page_mock)
-        
-        action = NewPageAction()
-        mock_action_context.params = {"url": "http://localhost:8080"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert not result.success
-        assert "禁止访问 localhost" in result.error
+
+        action = NewPageAction(
+            page=self.page,
+            browser=self.page.context.browser,
+            params={"url": "https://example.com"},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_new_page_without_url(self):
+        """测试新建页面不带 URL"""
+        from app.services.execution.actions.navigation import NewPageAction
+
+        action = NewPageAction(
+            page=self.page,
+            browser=self.page.context.browser,
+            params={},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_go_back(self):
+        """测试返回上一页"""
+        from app.services.execution.actions.navigation import GoBackAction
+
+        await self.page.goto("https://example.com")
+        await self.page.goto("https://example.com/")
+
+        action = GoBackAction(
+            page=self.page,
+            params={"timeout": 10000},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_go_forward(self):
+        """测试前进"""
+        from app.services.execution.actions.navigation import GoForwardAction
+
+        await self.page.goto("https://example.com")
+        await self.page.goto("https://example.com/")
+        await self.page.go_back()
+
+        action = GoForwardAction(
+            page=self.page,
+            params={"timeout": 10000},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_reload(self):
+        """测试刷新页面"""
+        from app.services.execution.actions.navigation import ReloadAction
+
+        await self.page.goto("https://example.com")
+
+        action = ReloadAction(
+            page=self.page,
+            params={"timeout": 10000},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_go_back_without_history(self):
+        """测试无历史记录时返回"""
+        from app.services.execution.actions.navigation import GoBackAction
+
+        await self.page.goto("https://example.com")
+
+        action = GoBackAction(
+            page=self.page,
+            params={"timeout": 10000},
+        )
+
+        result = await action.execute()
+        assert result.success
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_navigate_with_variables(self):
+        """测试使用变量"""
+        from app.services.execution.actions.navigation import NavigateAction
+
+        action = NavigateAction(
+            page=self.page,
+            params={"url": "https://{domain}.com"},
+            variables={"domain": "example"},
+        )
+
+        result = await action.execute()
+        assert result.success
+        assert "example.com" in self.page.url

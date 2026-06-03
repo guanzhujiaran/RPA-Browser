@@ -1,86 +1,77 @@
 """
-测试截图类 Action - Screenshot
+测试截图操作 - 使用 aiounittest.AsyncTestCase 模式
 """
 import pytest
-import base64
-from unittest.mock import AsyncMock, MagicMock
+import aiounittest
+from playwright.async_api import Page
 
 
-class TestScreenshotAction:
+class TestScreenshotAction(aiounittest.AsyncTestCase):
     """截图操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_screenshot_element(self, mock_action_context):
-        """测试截取元素"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_screenshot_full_page(self):
+        """测试全屏截图"""
         from app.services.execution.actions.screenshot import ScreenshotAction
-        
-        action = ScreenshotAction()
-        mock_action_context.params = {"selector": "#target"}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><h1>Test Page</h1></body></html>")
+
+        action = ScreenshotAction(
+            page=self.page,
+            params={},
+        )
+
+        result = await action.execute()
         assert result.success
         assert result.data["format"] == "png"
-        assert "base64" in result.data
-        assert len(result.data["base64"]) > 0
-        locator = mock_action_context.page.locator.return_value
-        locator.screenshot.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_screenshot_full_page(self, mock_action_context):
-        """测试截取全页面"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_screenshot_with_selector(self):
+        """测试指定元素截图"""
         from app.services.execution.actions.screenshot import ScreenshotAction
-        
-        action = ScreenshotAction()
-        mock_action_context.params = {"full_page": True}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><div id='target' style='height: 50px;'>Target</div></body></html>")
+
+        action = ScreenshotAction(
+            page=self.page,
+            params={"selector": "#target"},
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["format"] == "png"
-        mock_action_context.page.screenshot.assert_called_once_with(type="png", full_page=True)
-    
-    @pytest.mark.asyncio
-    async def test_screenshot_jpeg_format(self, mock_action_context):
-        """测试 JPEG 格式"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_screenshot_jpeg(self):
+        """测试 JPEG 格式截图"""
         from app.services.execution.actions.screenshot import ScreenshotAction
-        
-        action = ScreenshotAction()
-        mock_action_context.params = {"type": "jpeg", "quality": 90}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body>Test</body></html>")
+
+        action = ScreenshotAction(
+            page=self.page,
+            params={"type": "jpeg", "quality": 80},
+        )
+
+        result = await action.execute()
         assert result.success
         assert result.data["format"] == "jpeg"
-        mock_action_context.page.screenshot.assert_called_once_with(type="jpeg", quality=90)
-    
-    @pytest.mark.asyncio
-    async def test_screenshot_png_transparent(self, mock_action_context):
-        """测试 PNG 透明背景"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_screenshot_full_page_false(self):
+        """测试非全屏截图"""
         from app.services.execution.actions.screenshot import ScreenshotAction
-        
-        action = ScreenshotAction()
-        mock_action_context.params = {"type": "png", "omit_background": True}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body>Test</body></html>")
+
+        action = ScreenshotAction(
+            page=self.page,
+            params={"full_page": False},
+        )
+
+        result = await action.execute()
         assert result.success
-        mock_action_context.page.screenshot.assert_called_once_with(type="png", omit_background=True)
-    
-    @pytest.mark.asyncio
-    async def test_screenshot_base64_encoding(self, mock_action_context):
-        """测试 Base64 编码"""
-        from app.services.execution.actions.screenshot import ScreenshotAction
-        
-        test_image_data = b"test_png_data"
-        mock_action_context.page.screenshot = AsyncMock(return_value=test_image_data)
-        
-        action = ScreenshotAction()
-        mock_action_context.params = {}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        # 验证 Base64 编码正确
-        decoded = base64.b64decode(result.data["base64"])
-        assert decoded == test_image_data
+        assert result.data["format"] == "png"

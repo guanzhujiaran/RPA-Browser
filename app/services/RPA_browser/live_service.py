@@ -8,7 +8,7 @@ import time
 import asyncio
 import contextlib
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 from app.config import settings
 from app.models.consts.enums import ConfigRunningModeEnum
 from loguru import logger
@@ -298,7 +298,7 @@ class LiveService:
 
     @staticmethod
     async def resume_automation(
-        mid: int, browser_id: int, request: Optional[AutomationResumeRequest] = None
+        mid: int, browser_id: int, request: AutomationResumeRequest | None = None
     ) -> AutomationResult:
         """恢复自动化任务（带锁保护）"""
         session_key = LiveService._get_session_key(mid, browser_id)
@@ -644,7 +644,7 @@ class LiveService:
             return False
 
     @staticmethod
-    def get_browser_status(mid: int, browser_id: int) -> Optional[BrowserStatus]:
+    def get_browser_status(mid: int, browser_id: int) -> BrowserStatus | None:
         """获取浏览器状态"""
         session_key = LiveService._get_session_key(mid, browser_id)
         entry = LiveService.browser_sessions.get(session_key)

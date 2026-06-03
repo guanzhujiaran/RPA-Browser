@@ -1,6 +1,5 @@
 import random
 from dataclasses import asdict
-from typing import Optional
 
 from app.models.core.browser.fingerprint import (
     BaseFingerprintBrowserInitParams,
@@ -60,7 +59,7 @@ def _detect_browser_brand(ua_string: str) -> BrowserEnum:
 
 
 def _apply_user_settings(
-    user_default_settings: Optional[UserBrowserServerSideDefaultSetting],
+    user_default_settings: UserBrowserServerSideDefaultSetting | None,
     default_browser_setting: UserBrowserServerSideDefaultSetting,
     rand_fingerprint: Fingerprint,
 ) -> dict:

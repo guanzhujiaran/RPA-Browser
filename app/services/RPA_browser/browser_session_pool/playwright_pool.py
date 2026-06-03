@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, Optional
+from typing import Dict
 from app.models.runtime.session import (
     SessionCreateParams,
     BrowserSessionRemoveParams,
@@ -105,7 +105,7 @@ class PlaywrightSessionPool:
 
 
 # 全局单例实例
-_default_session_pool: Optional[PlaywrightSessionPool] = None
+_default_session_pool: PlaywrightSessionPool | None = None
 
 
 def get_default_session_pool() -> PlaywrightSessionPool:

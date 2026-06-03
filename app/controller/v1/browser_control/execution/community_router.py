@@ -9,7 +9,7 @@ from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from fastapi import APIRouter, Depends
 from app.services.execution.crud_service import action_crud, workflow_crud, plugin_crud, community_crud
 from app.models.workflow.models import (
-    CustomActionListItemResponse,
+    CompositeActionListItemResponse,
     WorkflowListItemResponse,
     PluginListItemResponse,
     FilterType,
@@ -42,7 +42,7 @@ class CommunityListRequest(BasePaginationReq):
 async def list_community_actions(
     request: CommunityListRequest = None,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[BasePaginationResp[CustomActionListItemResponse]]:
+) -> StandardResponse[BasePaginationResp[CompositeActionListItemResponse]]:
     """获取社区公开的自定义操作列表（非当前用户的公开操作）"""
     if request is None:
         request = CommunityListRequest()
@@ -67,7 +67,7 @@ async def list_community_actions(
     items = []
     for model in models:
         items.append(
-            CustomActionListItemResponse(
+            CompositeActionListItemResponse(
                 id=model.id,
                 action_id=model.action_id,
                 name=model.name,
@@ -86,7 +86,7 @@ async def list_community_actions(
             )
         )
     
-    pagination = BasePaginationResp[CustomActionListItemResponse](
+    pagination = BasePaginationResp[CompositeActionListItemResponse](
         page=request.page,
         per_page=request.per_page,
         total=total,

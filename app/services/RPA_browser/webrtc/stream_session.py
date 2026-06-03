@@ -4,8 +4,9 @@ WebRTCStreamSession - WebRTC 流会话
 管理单个页面的完整 WebRTC 生命周期，包括 PeerConnection、帧捕获和信令处理。
 """
 
+from __future__ import annotations
 import time
-from typing import Optional, Dict, TYPE_CHECKING
+from typing import Dict, TYPE_CHECKING
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
 from loguru import logger
 
@@ -33,7 +34,7 @@ class PageWebRTCState:
         """
         self.page = page
         self.last_activity = time.time()
-        self.stream_session: Optional['WebRTCStreamSession'] = None
+        self.stream_session: 'WebRTCStreamSession' | None = None
         
     def update_activity(self):
         """更新活跃时间"""
@@ -69,7 +70,7 @@ class WebRTCStreamSession:
         self.config = config
         self.pc = RTCPeerConnection()
         self.producer = VideoFrameProducer(page, config)
-        self.track: Optional[WebRTCMediaTrack] = None
+        self.track: WebRTCMediaTrack | None = None
         self.state = WebRTCStreamState.INITIALIZING
         
         # 初始化或获取 Page 的 WebRTC 状态管理器

@@ -4,7 +4,7 @@ WebRTCEnabledSession - 支持 WebRTC 的浏览器会话
 继承自 PluginedSessionInfo，在浏览器会话层面集成 WebRTC 视频流功能。
 """
 
-from typing import Optional
+from __future__ import annotations
 from loguru import logger
 
 from app.services.RPA_browser.browser_session_pool.session_pool_model import PluginedSessionInfo
@@ -102,7 +102,7 @@ class WebRTCEnabledSession(PluginedSessionInfo):
         """关闭所有 WebRTC 视频流"""
         await self.webrtc_manager.close_all_streams()
         
-    async def close(self, page_index: Optional[int] = None):
+    async def close(self, page_index: int | None = None):
         """
         关闭会话或指定页面
         

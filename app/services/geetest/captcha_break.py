@@ -1,7 +1,7 @@
 import cv2
 import asyncio
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Tuple, Any
 import torch
 import numpy as np
 from io import BytesIO
@@ -22,7 +22,7 @@ class AsyncCaptchaBreaker:
     坐标以左上角为原点，向右为x轴正方向，向下为y轴正方向
     """
 
-    def __init__(self, model_name: str = 'Amorter/CaptchaBreakerModels', device: Optional[str] = None):
+    def __init__(self, model_name: str = 'Amorter/CaptchaBreakerModels', device: str | None = None):
         """
         初始化验证码识别器
         
@@ -62,7 +62,7 @@ class AsyncCaptchaBreaker:
         except Exception as e:
             raise RuntimeError(f"模型加载失败: {str(e)}")
 
-    def _find_model_file(self, model_type: str) -> Optional[str]:
+    def _find_model_file(self, model_type: str) -> str | None:
         """
         在下载的模型目录中查找指定类型的模型文件
         

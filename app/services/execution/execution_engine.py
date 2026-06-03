@@ -1,286 +1,221 @@
 """
-执行引擎核心
+Execution Engine - 操作执行引擎
 
-核心设计:
-1. ExecutionEngine 是执行引擎主类
-2. 支持执行单个操作或操作流程
-3. 自动调用相关插件钩子
-4. 支持操作链和并行执行
-5. 支持重试和超时控制
+提供操作执行、工作流执行等功能。
 """
 
+from app.services.execution.actions.base import BaseAction
+from botright.playwright_mock.page import Page
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Callable
-
-import asyncio
+import ast
 import time
-import uuid
-import copy
+import asyncio
+from typing import Any, Dict, List
+
 from loguru import logger
 
-from app.services.execution.action_registry import (
-    action_registry,
+from app.models.database.workflow.models import (
+    WorkflowStep,
 )
 from app.services.RPA_browser.live_service import LiveService
-from app.config import settings
 from app.services.execution.crud_service import action_crud, plugin_crud
-from enum import StrEnum
-from app.models.database.workflow.models import ActionResult, ActionContext
+from app.models.database.workflow.models import (
+    ActionMetadata,
+    ActionResult,
+)
+from app.models.execution.params import (
+    ExecutionRequest,
+    ActionExecutionRequest,
+    StepExecutionRequest,
+    WorkflowExecutionRequest,
+)
 
 
-class ExecutionStatus(StrEnum):
-    """执行状态"""
+# ============ 安全评估 ============
 
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCESS = "success"
-    FAILED = "failed"
-    TIMEOUT = "timeout"
-    CANCELLED = "cancelled"
-
-
-@dataclass
-class ExecutionTask:
-    """执行任务"""
-
-    id: str
-    session_id: str
-    browser_id: str
-    status: ExecutionStatus
-    actions: List[Dict[str, Any]]  # 操作列表
-    current_index: int = 0
-    results: List[ActionResult] = field(default_factory=list)
-    created_at: float = field(default_factory=time.time)
-    started_at: Optional[float] = None
-    finished_at: Optional[float] = None
-    total_time: float = 0.0
-    error: Optional[str] = None
-
-
-@dataclass
-class WorkflowStep:
-    """工作流步骤"""
-
-    action_id: str
-    params: Dict[str, Any]
-    retry: int = 0
-    condition: Optional[Callable[[ActionResult], bool]] = None  # 执行条件
-    # 循环配置
-    loop_count: Optional[int] = None  # 循环次数，如 loop_count=3 表示执行3次
-    loop_while: Optional[str] = None  # JS表达式，返回true时继续循环
-    loop_until: Optional[str] = None  # JS表达式，返回true时退出循环
-
-
-@dataclass
-class Workflow:
-    """工作流定义"""
-
-    id: str
-    name: str
-    description: str = ""
-    steps: List[WorkflowStep] = field(default_factory=list)
-    on_error: str = "stop"  # stop, continue, rollback
+def _safe_eval(condition: str, state: Dict[str, Any]) -> bool:
+    """
+    安全地评估条件表达式
+    
+    仅允许基础算术运算、比较运算、布尔运算和变量引用
+    禁止函数调用、属性访问和危险操作
+    """
+    try:
+        tree = ast.parse(condition, mode="eval")
+        
+        allowed_nodes = (
+            ast.Expression,
+            ast.BoolOp,
+            ast.And,
+            ast.Or,
+            ast.Compare,
+            ast.Eq,
+            ast.NotEq,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.Name,
+            ast.Load,
+            ast.Constant,
+            ast.Str,
+            ast.Num,
+            ast.UnaryOp,
+            ast.Not,
+            ast.UAdd,
+            ast.USub,
+            ast.BinOp,
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.Mod,
+            ast.List,
+            ast.Tuple,
+            ast.Subscript,
+            ast.Index,
+            ast.Slice,
+            ast.Attribute,
+        )
+        
+        for node in ast.walk(tree):
+            if not isinstance(node, allowed_nodes):
+                logger.warning(
+                    f"条件表达式包含不允许的节点: {type(node).__name__}")
+                return False
+        
+        return bool(eval(compile(tree, "<expr>", "eval"), {}, {"state": state}))
+    except Exception as e:
+        logger.error(f"条件表达式评估失败: {e}")
+        return False
 
 
 class ExecutionEngine:
     """
     执行引擎
-
-    负责执行浏览器自动化操作和流程
+    主要的action执行逻辑放在了composite_action.py中
     """
 
-    def __init__(self):
-        self._tasks: Dict[str, ExecutionTask] = {}
-        self._action_registry = action_registry
-        self._running = True
-
-    def _replace_params_with_context(
-        self, params: Dict[str, Any], context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def __init__(self, **kwargs):
         """
-        替换参数中的模板变量（增强版）
+        初始化执行引擎
 
-        支持的模板格式：
-        - {{state.loop.current_item}} - 引用当前循环项
-        - {{state.llm_reply}} - 引用之前存入 state 的变量
-        - {{step_0_result.content}} - 引用历史步骤结果
+        Args:
+            **kwargs: 引擎配置参数，包括：
+                - max_depth: 最大嵌套深度
+                - timeout: 默认超时时间
         """
-
-        def replace_value(value: Any) -> Any:
-            if isinstance(value, str):
-                # 替换 {{key}} 或 {{key.sub_key}} 格式
-                def replacer(match):
-                    template = match.group(1)
-                    parts = template.split(".")
-
-                    # 尝试从 context (即 user_data) 中查找
-                    current = context
-                    for part in parts:
-                        if isinstance(current, dict):
-                            current = current.get(part)
-                        else:
-                            return match.group(0)
-
-                    if current is not None:
-                        return str(current)
-                    return match.group(0)
-
-                return re.sub(r"\{\{(.+?)\}\}", replacer, value)
-            elif isinstance(value, dict):
-                return {k: replace_value(v) for k, v in value.items()}
-            elif isinstance(value, list):
-                return [replace_value(item) for item in value]
-            return value
-
-        return replace_value(params)
+        if kwargs.get("max_depth"):
+            self.max_depth = kwargs["max_depth"]
+        if kwargs.get("timeout"):
+            self.default_timeout = kwargs["timeout"]
 
     async def _execute_plugins(
         self,
         hook_type: str,
         action_id: str,
-        ctx: ActionContext,
-        mid: Optional[str] = None,
-        result: Optional[ActionResult] = None,
-        error: Optional[Exception] = None,
+        session_id: str,
+        browser_id: str,
+        page: Page,
+        variables: Dict[str, Any] | None = None,
+        mid: int = 0,
     ) -> List[ActionResult]:
         """
         执行指定钩子类型的插件
-        
+
         Args:
-            hook_type: 钩子类型 (before_action, after_action, on_success, on_error)
-            action_id: 当前执行的动作 ID
-            ctx: 动作上下文
-            mid: 用户 ID
-            result: 动作执行结果（用于 after_action/on_success/on_error）
-            error: 异常信息（用于 on_error）
-            
+            hook_type: 钩子类型
+            action_id: 触发插件的动作ID
+            session_id: 会话ID
+            browser_id: 浏览器ID
+            page: 页面
+            variables: 变量池
+            mid: 用户 mid
+
         Returns:
-            List[ActionResult]: 插件执行结果列表
+            插件执行结果列表
         """
-        if not mid:
-            return []
-        
         plugin_results = []
-        
+
         try:
-            # 1. 查询该动作关联的插件
-            enabled_plugins = await action_crud.get_enabled_plugins(action_id)
-            
-            if not enabled_plugins:
-                logger.debug(f"[Plugin] 动作 {action_id} 没有关联的插件")
-                return []
-            
-            logger.info(f"[Plugin] 找到 {len(enabled_plugins)} 个关联插件")
-            
-            # 2. 遍历每个插件配置
-            for plugin_config in enabled_plugins:
-                plugin_id = plugin_config.get("plugin_id")
-                config_params = plugin_config.get("config_params", {})
-                
-                if not plugin_id:
-                    continue
-                
-                # 3. 查询插件详情
-                plugin_model = await plugin_crud.get_by_plugin_id(plugin_id)
-                if not plugin_model or not plugin_model.is_enabled:
-                    logger.warning(f"[Plugin] 插件 {plugin_id} 不存在或已禁用")
-                    continue
-                
-                # 4. 检查钩子类型是否匹配
-                if plugin_model.hook_type != hook_type:
-                    continue
-                
-                # 5. 获取插件关联的自定义动作
-                custom_action_id = plugin_model.custom_action_id
-                if not custom_action_id:
+            plugins = await plugin_crud.get_plugins_by_hook(hook_type)
+
+            for plugin_model in plugins:
+                plugin_id = plugin_model.plugin_id
+
+                if not plugin_model.custom_action_id:
                     logger.warning(f"[Plugin] 插件 {plugin_id} 没有关联自定义动作")
                     continue
-                
-                logger.info(f"[Plugin] 执行插件: {plugin_model.name} (hook={hook_type})")
-                
-                # 6. 创建插件动作上下文
-                plugin_ctx = ActionContext(
-                    session_id=ctx.session_id,
-                    browser_id=ctx.browser_id,
-                    page=ctx.page,
-                    browser=ctx.browser,
-                    params=config_params,  # 使用插件的配置参数
-                    user_data=ctx.user_data,
-                )
-                
-                # 7. 执行插件关联的自定义动作
+
+                logger.info(
+                    f"[Plugin] 执行插件: {plugin_model.name} (hook={hook_type})")
+
                 try:
                     plugin_start_time = time.time()
-                    plugin_result = await self.execute_action(
-                        session_id=ctx.session_id,
-                        browser_id=ctx.browser_id,
-                        page=ctx.page,
-                        browser=ctx.browser,
-                        action_id=custom_action_id,
-                        params=config_params,
-                        user_data=ctx.user_data,
+                    plugin_req = ActionExecutionRequest(
                         mid=mid,
+                        browser_id=int(browser_id) if browser_id.isdigit() else 0,
+                        action_id=plugin_model.custom_action_id,
+                        params=plugin_model.config_params if hasattr(plugin_model, 'config_params') else {},
+                        variables=variables or {},
+                    )
+                    plugin_result = await self.execute_action(
+                        plugin_req,
+                        session_id=session_id,
+                        browser_id=browser_id,
+                        page=page,
                     )
                     plugin_result.execution_time = time.time() - plugin_start_time
                     plugin_results.append(plugin_result)
-                    
+
                     logger.info(
                         f"[Plugin] 插件 '{plugin_model.name}' 执行完成: "
                         f"success={plugin_result.success}, "
                         f"time={plugin_result.execution_time:.2f}s"
                     )
                 except Exception as e:
-                    logger.error(f"[Plugin] 插件 '{plugin_model.name}' 执行失败: {e}")
+                    logger.error(
+                        f"[Plugin] 插件 '{plugin_model.name}' 执行失败: {e}")
                     plugin_results.append(ActionResult(
                         success=False,
                         error=str(e),
                         execution_time=time.time() - plugin_start_time,
-                        action_id=custom_action_id,
+                        action_id=plugin_model.custom_action_id,
                         action_name=f"Plugin: {plugin_model.name}",
                     ))
-        
+
         except Exception as e:
             logger.error(f"[Plugin] 加载插件配置失败: {e}")
-        
+
         return plugin_results
 
     async def execute_action(
         self,
+        req: ActionExecutionRequest,
+        *,
         session_id: str,
         browser_id: str,
-        page: Any,
-        browser: Any,
-        action_id: str,
-        params: Dict[str, Any],
-        user_data: Optional[Dict[str, Any]] = None,
-        mid: Optional[str] = None,
-        page_index: Optional[int] = None,  # 🔑 新增：页面索引参数
+        page: Page,
     ) -> ActionResult:
         """
         执行单个操作
 
         Args:
+            req: 操作执行请求参数
             session_id: 会话ID
             browser_id: 浏览器ID
             page: Playwright Page对象（默认页面）
-            browser: Playwright BrowserContext对象
-            action_id: 操作ID
-            params: 操作参数
-            user_data: 用户自定义数据
-            mid: 用户 mid，用于按需加载用户私有的自定义组合操作
-            page_index: 🔑 页面索引，如果提供则切换到指定页面执行操作
 
         Returns:
             ActionResult: 操作结果
         """
         start_time = time.time()
 
-        # 🔑 如果指定了 page_index，需要获取对应的页面
         target_page = page
-        if page_index is not None:
+        if req.page_index is not None:
             session_key = LiveService._get_session_key(
-                int(session_id.split("_")[0]) if "_" in session_id else int(session_id),
+                int(session_id.split("_")[
+                    0]) if "_" in session_id else int(session_id),
                 int(browser_id),
             )
 
@@ -288,658 +223,521 @@ class ExecutionEngine:
                 entry = LiveService.browser_sessions[session_key]
                 all_pages = await entry.plugined_session.get_all_pages()
 
-                if 0 <= page_index < len(all_pages):
-                    target_page = all_pages[page_index]
-                    logger.info(f"📄 使用页面索引 {page_index}: {target_page.url}")
+                if 0 <= req.page_index < len(all_pages):
+                    target_page = all_pages[req.page_index]
+                    logger.info(f"📄 使用页面索引 {req.page_index}: {target_page.url}")
                 else:
                     return ActionResult(
                         success=False,
-                        error=f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})",
+                        error=f"页面索引 {req.page_index} 超出范围 (0-{len(all_pages)-1})",
                         execution_time=0,
-                        action_id=action_id,
+                        action_id=req.action_id,
                     )
             else:
-                logger.warning(f"会话 {session_key} 不存在，使用默认页面")
+                logger.debug(f"会话 {session_key} 不存在，使用默认页面")
 
-        # 创建操作上下文
-        ctx = ActionContext(
-            session_id=session_id,
-            browser_id=browser_id,
-            page=target_page,  # 🔑 使用目标页面
-            browser=browser,
-            params=params,
-            user_data=user_data or {},
-        )
-
-        # 获取操作实例：优先系统级，再按 mid 按需加载用户私有操作
-        if mid:
-            action = await self._action_registry.create_action_for_user(action_id, mid)
-        else:
-            action = self._action_registry.create_action(action_id)
-        if not action:
+        action_class = await self._action_registry.get_action_class_for_user(req.action_id, req.mid)
+        if not action_class:
             return ActionResult(
                 success=False,
-                error=f"未找到操作: {action_id}",
+                error=f"未找到操作: {req.action_id}",
                 execution_time=0,
-                action_id=action_id,
+                action_id=req.action_id,
             )
+        action: BaseAction = action_class(
+            action_id=req.action_id,
+            action_name=action_class.action_name,
+            page=page,
+            params=req.params,
+            input=req.input_data,
+            output=req.output,
+        )
 
-        # 验证参数
-        valid, error_msg = action.validate_params(params)
+        valid, error_msg = action.validate_params(req.params)
         if not valid:
             return ActionResult(
-                success=False, error=error_msg, execution_time=0, action_id=action_id
+                success=False, error=error_msg, execution_time=0, action_id=req.action_id
             )
 
         try:
-            # ========== 1. 执行 before_action 插件 ==========
-            if mid:
-                before_plugins = await self._execute_plugins(
-                    hook_type="before_action",
-                    action_id=action_id,
-                    ctx=ctx,
-                    mid=mid,
-                )
-                if before_plugins:
-                    logger.info(f"[Plugin] before_action 插件执行完成: {len(before_plugins)} 个")
-            
-            # ========== 2. 执行主动作 ==========
-            logger.info(f"[ExecutionEngine] 正在执行操作 {action_id} (ID: {action_id})")
-            result = await action.execute(ctx)
+            before_plugins = await self._execute_plugins(
+                hook_type="before_action",
+                action_id=req.action_id,
+                session_id=session_id,
+                browser_id=browser_id,
+                page=target_page,
+                variables=req.variables,
+                mid=req.mid,
+            )
+
+            for plugin_result in before_plugins:
+                if not plugin_result.success:
+                    return ActionResult(
+                        success=False,
+                        error=f"前置插件执行失败: {plugin_result.error}",
+                        execution_time=time.time() - start_time,
+                        action_id=req.action_id,
+                        action_name=action.action_name,
+                    )
+
+            logger.info(
+                f"🚀 开始执行动作: {action.action_name} ({req.action_id})")
+
+            result = await action.execute()
+
+            after_plugins = await self._execute_plugins(
+                hook_type="after_action",
+                action_id=req.action_id,
+                session_id=session_id,
+                browser_id=browser_id,
+                page=target_page,
+                variables=req.variables,
+                mid=req.mid,
+            )
+
+            for plugin_result in after_plugins:
+                if not plugin_result.success:
+                    logger.warning(
+                        f"[Plugin] 后置插件执行失败: {plugin_result.error}")
+
             result.execution_time = time.time() - start_time
-            
-            # 记录执行日志到 ActionResult
-            if hasattr(action, 'logs') and action.logs:
-                result.logs.extend(action.logs)
-            result.logs.append(f"Action '{action_id}' executed in {result.execution_time:.2f}s")
-            
-            # ========== 3. 执行 after_action / on_success / on_error 插件 ==========
-            if mid:
-                # 根据执行结果决定触发哪个钩子
-                if result.success:
-                    # 执行成功：触发 after_action 和 on_success
-                    after_plugins = await self._execute_plugins(
-                        hook_type="after_action",
-                        action_id=action_id,
-                        ctx=ctx,
-                        mid=mid,
-                        result=result,
-                    )
-                    success_plugins = await self._execute_plugins(
-                        hook_type="on_success",
-                        action_id=action_id,
-                        ctx=ctx,
-                        mid=mid,
-                        result=result,
-                    )
-                    if after_plugins or success_plugins:
-                        logger.info(
-                            f"[Plugin] 成功钩子插件执行完成: "
-                            f"after={len(after_plugins)}, success={len(success_plugins)}"
-                        )
-                else:
-                    # 执行失败：触发 after_action 和 on_error
-                    after_plugins = await self._execute_plugins(
-                        hook_type="after_action",
-                        action_id=action_id,
-                        ctx=ctx,
-                        mid=mid,
-                        result=result,
-                    )
-                    error_plugins = await self._execute_plugins(
-                        hook_type="on_error",
-                        action_id=action_id,
-                        ctx=ctx,
-                        mid=mid,
-                        result=result,
-                        error=Exception(result.error),
-                    )
-                    if after_plugins or error_plugins:
-                        logger.info(
-                            f"[Plugin] 失败钩子插件执行完成: "
-                            f"after={len(after_plugins)}, error={len(error_plugins)}"
-                        )
-            
+            result.action_id = req.action_id
+            result.action_name = action.action_name
+
+            success_plugins = after_plugins
+            error_plugins = []
+
+            if result.success:
+                success_plugins = await self._execute_plugins(
+                    hook_type="on_success",
+                    action_id=req.action_id,
+                    session_id=session_id,
+                    browser_id=browser_id,
+                    page=target_page,
+                    variables=req.variables,
+                    mid=req.mid,
+                )
+            else:
+                error_plugins = await self._execute_plugins(
+                    hook_type="on_error",
+                    action_id=req.action_id,
+                    session_id=session_id,
+                    browser_id=browser_id,
+                    page=target_page,
+                    variables=req.variables,
+                    mid=req.mid,
+                )
+
             return result
 
         except asyncio.TimeoutError:
-            result = ActionResult(
+            timeout_plugins = await self._execute_plugins(
+                hook_type="on_timeout",
+                action_id=req.action_id,
+                session_id=session_id,
+                browser_id=browser_id,
+                page=target_page,
+                variables=req.variables,
+                mid=req.mid,
+            )
+            return ActionResult(
                 success=False,
                 error="操作执行超时",
                 execution_time=time.time() - start_time,
-                action_id=action_id,
-                logs=[f"Action '{action_id}' timed out after {time.time() - start_time:.2f}s"]
+                action_id=req.action_id,
+                action_name=action.action_name,
             )
-            return result
-
         except Exception as e:
-            import traceback
-            error_traceback = traceback.format_exc()
-            logger.error(f"[ExecutionEngine] 操作 {action_id} 执行异常: {e}\n{error_traceback}")
-            result = ActionResult(
+            logger.error(f"操作执行失败: {req.action_id} - {e}")
+            error_plugins = await self._execute_plugins(
+                hook_type="on_error",
+                action_id=req.action_id,
+                session_id=session_id,
+                browser_id=browser_id,
+                page=target_page,
+                variables=req.variables,
+                mid=req.mid,
+            )
+            return ActionResult(
                 success=False,
                 error=str(e),
                 execution_time=time.time() - start_time,
-                action_id=action_id,
-                logs=[f"Action '{action_id}' failed with exception: {str(e)}", f"Traceback:\n{error_traceback}"]
+                action_id=req.action_id,
+                action_name=action.action_name,
             )
-            return result
 
     async def _execute_steps(
-        self, steps: List["WorkflowStep"], ctx: ActionContext
-    ) -> List[ActionResult]:
-        """
-        递归执行步骤列表（带循环引用检测）
-        
-        防护机制：
-        1. 嵌套深度限制（防止无限递归）
-        2. 执行栈追踪（检测循环引用）
-        3. 调用链记录（便于调试）
-        """
-        # 检查并增加递归深度
-        current_depth = ctx.user_data.get("_recursion_depth", 0)
-        max_depth = settings.workflow_max_nesting_depth
-        
-        if current_depth >= max_depth:
-            logger.error(f"递归深度超过限制 ({current_depth}/{max_depth})")
-            return [ActionResult(
-                success=False,
-                error=f"递归深度超过限制 ({current_depth}/{max_depth})，请简化工作流结构",
-                execution_time=0,
-                action_id="workflow",
-                action_name="工作流执行",
-            )]
-        
-        # 初始化或获取执行栈（用于检测循环引用）
-        execution_stack = ctx.user_data.setdefault("_execution_stack", [])
-        
-        # 增加递归深度
-        ctx.user_data["_recursion_depth"] = current_depth + 1
-        
-        results = []
-        try:
-            for step in steps:
-                # 🔒 循环引用检测：检查是否已经在执行栈中
-                step_key = f"{step.action_id}@{id(step)}"
-                if step.action_id in execution_stack:
-                    cycle_path = " → ".join(execution_stack + [step.action_id])
-                    error_msg = f"检测到循环引用: {cycle_path}"
-                    logger.error(f"🚫 {error_msg}")
-                    return [ActionResult(
-                        success=False,
-                        error=error_msg,
-                        execution_time=0,
-                        action_id=step.action_id,
-                        action_name=f"步骤 {step.action_id}",
-                        logs=[f"循环引用检测失败，执行栈: {execution_stack}"]
-                    )]
-                
-                # 将当前步骤加入执行栈
-                execution_stack.append(step.action_id)
-                
-                try:
-                    # 1. 条件判断
-                    if step.condition:
-                        state = ctx.user_data.get("state", {})
-                        try:
-                            # 允许访问 state 中的变量
-                            if not eval(step.condition, {"__builtins__": {}}, {"state": state}):
-                                logger.info(f"跳过步骤 {step.action_id}: 条件不满足")
-                                continue
-                        except Exception as e:
-                            logger.warning(f"条件评估失败: {e}")
-                            continue
-
-                    # 2. 准备参数（增强版替换）
-                    replaced_params = self._replace_params_with_context(
-                        step.params, ctx.user_data
-                    )
-
-                    # 3. 处理控制流动作 (Loop / IfElse)
-                    if step.action_id == "loop":
-                        replaced_params["_children_steps"] = step.children or []
-                        replaced_params["_execute_steps_func"] = self._execute_steps
-                    elif step.action_id == "if_else":
-                        # 将子步骤按分支分类，这里假设 children[0] 是 true, children[1] 是 false
-                        if step.children:
-                            replaced_params["_true_branch_steps"] = (
-                                step.children[0].children if len(step.children) > 0 else []
-                            )
-                            replaced_params["_false_branch_steps"] = (
-                                step.children[1].children if len(step.children) > 1 else []
-                            )
-                        replaced_params["_execute_steps_func"] = self._execute_steps
-
-                    # 4. 执行当前步骤
-                    result = await self.execute_action(
-                        session_id=ctx.session_id,
-                        browser_id=ctx.browser_id,
-                        page=ctx.page,
-                        browser=ctx.browser,
-                        action_id=step.action_id,
-                        params=replaced_params,
-                        user_data=ctx.user_data,
-                        mid=ctx.user_data.get("mid"),
-                    )
-                    results.append(result)
-
-                    # 5. 更新状态
-                    if step.output_var and result.success:
-                        ctx.user_data.setdefault("state", {})[step.output_var] = result.data
-
-                    if result.success and isinstance(result.data, dict):
-                        ctx.user_data.setdefault("state", {}).update(result.data)
-
-                    # 6. 错误处理
-                    if not result.success:
-                        # 简单起见，遇到错误停止当前分支
-                        break
-                finally:
-                    # 从执行栈中移除当前步骤（无论成功与否）
-                    if execution_stack and execution_stack[-1] == step.action_id:
-                        execution_stack.pop()
-        finally:
-            # 恢复递归深度
-            ctx.user_data["_recursion_depth"] = current_depth
-
-        return results
-
-    async def execute_workflow(
         self,
+        req: ExecutionRequest,
+        *,
+        steps: List[WorkflowStep],
         session_id: str,
         browser_id: str,
-        page: Any,
-        browser: Any,
-        workflow: Workflow,
-        user_data: Optional[Dict[str, Any]] = None,
-        mid: Optional[str] = None,
+        page: Page,
+        depth: int = 0,
     ) -> List[ActionResult]:
         """
-        执行工作流（重构版：支持嵌套和状态管理）
-        """
-        # 初始化执行上下文
-        ctx = ActionContext(
-            session_id=session_id,
-            browser_id=browser_id,
-            page=page,
-            browser=browser,
-            params={},
-            user_data=user_data or {},
-        )
-
-        # 注入 mid 以便子步骤加载操作
-        ctx.user_data["mid"] = mid
-        
-        # 初始化递归深度
-        ctx.user_data.setdefault("_recursion_depth", 0)
-
-        # 将 workflow.steps 转换为新的 WorkflowStep 模型并执行
-        return await self._execute_steps(workflow.steps, ctx)
-
-    async def execute_batch(
-        self,
-        session_id: str,
-        browser_id: str,
-        page: Any,
-        browser: Any,
-        actions: List[Dict[str, Any]],
-        plugin_ids: Optional[List[str]] = None,
-        parallel: bool = False,
-        max_concurrent: int = 3,
-        mid: Optional[str] = None,
-    ) -> List[ActionResult]:
-        """
-        批量执行操作
+        内部方法：执行步骤列表
 
         Args:
+            req: 执行请求基础参数
+            steps: 步骤列表
             session_id: 会话ID
             browser_id: 浏览器ID
-            page: Playwright Page对象
-            browser: Playwright Browser对象
-            actions: 操作列表 [{"action_id": "click", "params": {...}}, ...]
-            plugin_ids: 启用的插件ID列表
-            parallel: 是否并行执行
-            max_concurrent: 最大并发数
-            mid: 用户 mid，用于按需加载用户私有的自定义组合操作
+            page: 页面
+            depth: 当前嵌套深度
 
         Returns:
-            List[ActionResult]: 执行结果列表
+            执行结果列表
         """
-        if parallel:
-            # 并行执行
-            semaphore = asyncio.Semaphore(max_concurrent)
+        results = []
 
-            async def execute_with_semaphore(action: Dict[str, Any]) -> ActionResult:
-                async with semaphore:
-                    return await self.execute_action(
+        for step in steps:
+            try:
+                if step.condition:
+                    condition_result = _safe_eval(step.condition, req.variables)
+                    if not condition_result:
+                        logger.info(f"跳过步骤 {step.action_id}（条件不满足）")
+                        continue
+
+                replaced_params = self._replace_params(step.params, req.variables)
+
+                if step.action_id == "loop" and step.children:
+                    if step.loop_count is not None:
+                        for i in range(step.loop_count):
+                            req.variables["loop_index"] = i
+                            loop_results = await self._execute_steps(
+                                req, steps=step.children, session_id=session_id, browser_id=browser_id, page=page,
+                                depth=depth + 1,
+                            )
+                            results.extend(loop_results)
+                            if not loop_results[-1].success if loop_results else False:
+                                break
+
+                    elif step.loop_while:
+                        while _safe_eval(step.loop_while, req.variables):
+                            loop_results = await self._execute_steps(
+                                req, steps=step.children, session_id=session_id, browser_id=browser_id, page=page,
+                                depth=depth + 1,
+                            )
+                            results.extend(loop_results)
+                            if not loop_results[-1].success if loop_results else False:
+                                break
+
+                    elif step.loop_until:
+                        while True:
+                            loop_results = await self._execute_steps(
+                                req, steps=step.children, session_id=session_id, browser_id=browser_id, page=page,
+                                depth=depth + 1,
+                            )
+                            results.extend(loop_results)
+                            if _safe_eval(step.loop_until, req.variables):
+                                break
+                            if not loop_results[-1].success if loop_results else False:
+                                break
+
+                elif step.action_id == "if_else" and step.children:
+                    condition = step.params.get("condition", "")
+                    condition_result = _safe_eval(condition, req.variables)
+
+                    true_branch = (
+                        step.children[0].children if step.children else []
+                    )
+                    false_branch = (
+                        step.children[1].children if len(
+                            step.children) > 1 else []
+                    )
+
+                    if condition_result:
+                        branch_results = await self._execute_steps(
+                            req, steps=true_branch, session_id=session_id, browser_id=browser_id, page=page,
+                            depth=depth + 1,
+                        )
+                    else:
+                        branch_results = await self._execute_steps(
+                            req, steps=false_branch, session_id=session_id, browser_id=browser_id, page=page,
+                            depth=depth + 1,
+                        )
+                    results.extend(branch_results)
+
+                else:
+                    req.variables["_execute_steps_func"] = self._execute_steps
+
+                    step_req = ActionExecutionRequest(
+                        mid=req.variables.get("mid", req.mid),
+                        browser_id=req.browser_id,
+                        variables=req.variables,
+                        page_index=req.page_index,
+                        action_id=step.action_id,
+                        params=replaced_params,
+                    )
+
+                    result = await self.execute_action(
+                        step_req,
                         session_id=session_id,
                         browser_id=browser_id,
                         page=page,
-                        browser=browser,
-                        action_id=action["action_id"],
-                        params=action.get("params", {}),
-                        mid=mid,
                     )
+                    results.append(result)
 
-            tasks = [execute_with_semaphore(a) for a in actions]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+                    if step.output_var and result.success:
+                        req.variables.setdefault("state", {})[
+                            step.output_var] = result.data
 
-            # 处理异常结果
-            processed_results = []
-            for i, r in enumerate(results):
-                if isinstance(r, Exception):
-                    processed_results.append(
-                        ActionResult(
-                            success=False,
-                            error=str(r),
-                            action_id=actions[i].get("action_id", "unknown"),
-                        )
-                    )
-                else:
-                    processed_results.append(r)
+                    if not result.success:
+                        if step.retry > 0:
+                            for retry_i in range(step.retry):
+                                logger.info(
+                                    f"重试步骤 {step.action_id} ({retry_i + 1}/{step.retry})"
+                                )
+                                retry_req = ActionExecutionRequest(
+                                    mid=req.variables.get("mid", req.mid),
+                                    browser_id=req.browser_id,
+                                    variables=req.variables,
+                                    page_index=req.page_index,
+                                    action_id=step.action_id,
+                                    params=replaced_params,
+                                )
+                                retry_result = await self.execute_action(
+                                    retry_req,
+                                    session_id=session_id,
+                                    browser_id=browser_id,
+                                    page=page,
+                                )
+                                results[-1] = retry_result
+                                if retry_result.success:
+                                    break
+                        else:
+                            break
 
-            return processed_results
-        else:
-            # 顺序执行
-            results = []
-            for action in actions:
-                result = await self.execute_action(
-                    session_id=session_id,
-                    browser_id=browser_id,
-                    page=page,
-                    browser=browser,
-                    action_id=action["action_id"],
-                    params=action.get("params", {}),
-                    mid=mid,
-                )
-                results.append(result)
+            except Exception as e:
+                logger.error(f"步骤执行异常: {step.action_id} - {e}")
+                results.append(ActionResult(
+                    success=False,
+                    error=str(e),
+                    execution_time=0,
+                    action_id=step.action_id,
+                    action_name=step.action_id,
+                ))
+                break
 
-                # 如果失败，可以选择停止或继续
-                if not result.success:
-                    logger.warning(f"[ExecutionEngine] 操作 {action['action_id']} 失败")
+        return results
 
-            return results
+    def _replace_params(
+        self,
+        params: Dict[str, Any],
+        variables: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        替换参数中的模板变量
 
-    def get_task(self, task_id: str) -> Optional[ExecutionTask]:
-        """获取任务信息"""
-        return self._tasks.get(task_id)
+        支持 {{variable_name}} 格式的变量替换
+        """
+        params_str = str(params)
 
-    def get_all_tasks(self) -> List[ExecutionTask]:
-        """获取所有任务"""
-        return list(self._tasks.values())
+        def replacer(match):
+            variable_name = match.group(1)
+            value = variables.get(variable_name)
+            if value is not None:
+                return str(value)
+            return match.group(0)
 
-    def cancel_task(self, task_id: str) -> bool:
-        """取消任务"""
-        task = self._tasks.get(task_id)
-        if task and task.status == ExecutionStatus.RUNNING:
-            task.status = ExecutionStatus.CANCELLED
-            task.finished_at = time.time()
-            return True
-        return False
+        replaced_str = re.sub(r"\{\{(\w+)\}\}", replacer, params_str)
+
+        return eval(replaced_str)
+
+    async def _ensure_page_ready(self, page: Page) -> None:
+        """
+        确保页面已就绪
+        """
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            pass
+
+
+    def get_all_action_metadatas(self) -> List[ActionMetadata]:
+        return action_registry.get_all_action_metadatas()
 
     @staticmethod
-    async def execute_action_with_session(
-        mid: int,
-        browser_id: int,
-        action_id: str,
-        params: Dict[str, Any],
-        user_data: Optional[Dict[str, Any]] = None,
-        page_index: Optional[int] = None,
+    async def execute_with_session(
+        req: ActionExecutionRequest,
     ) -> ActionResult:
         """
         🔑 Service 层方法：执行操作（自动管理会话和页面）
 
         Args:
-            mid: 用户ID
-            browser_id: 浏览器ID
-            action_id: 操作ID
-            params: 操作参数
-            user_data: 用户自定义数据
-            page_index: 页面索引，指定在哪个 tab 页执行
+            req: 操作执行请求参数
 
         Returns:
-            ActionResult: 执行结果
+            ActionResult: 操作结果
         """
-        session_key = LiveService._get_session_key(mid, browser_id)
+        from app.services.execution.execution_engine import ExecutionEngine
+
+        session_key = LiveService._get_session_key(req.mid, req.browser_id)
         entry = LiveService.browser_sessions.get(session_key)
-
         if not entry:
-            return ActionResult(
-                success=False,
-                error=f"浏览器会话不存在: {session_key}",
-                execution_time=0,
-                action_id=action_id,
-            )
+            raise ValueError("浏览器不存在或未运行")
 
-        # 获取页面
-        if page_index is not None:
+        execution_engine = ExecutionEngine()
+
+        if req.page_index is not None:
             all_pages = await entry.plugined_session.get_all_pages()
-            if 0 <= page_index < len(all_pages):
-                page = all_pages[page_index]
+
+            if not all_pages:
+                raise ValueError(f"浏览器 {req.browser_id} 没有打开任何页面")
+
+            if 0 <= req.page_index < len(all_pages):
+                page = all_pages[req.page_index]
+                logger.info(f"📄 使用页面索引 {req.page_index}: {page.url}")
             else:
-                return ActionResult(
-                    success=False,
-                    error=f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})",
-                    execution_time=0,
-                    action_id=action_id,
+                raise ValueError(
+                    f"页面索引 {req.page_index} 超出范围 (0-{len(all_pages)-1})"
                 )
         else:
             page = await entry.plugined_session.get_current_page()
 
-        # 获取 browser context
-        browser = entry.plugined_session.browser_context
-
-        # 执行操作
         return await execution_engine.execute_action(
-            session_id=str(browser_id),
-            browser_id=str(browser_id),
+            req,
+            session_id=str(req.browser_id),
+            browser_id=str(req.browser_id),
             page=page,
-            browser=browser,
-            action_id=action_id,
-            params=params,
-            user_data=user_data,
-            mid=str(mid),
-            page_index=None,  # 已经在上面处理了页面选择
         )
 
     @staticmethod
     async def execute_action_step_with_session(
-        mid: int,
-        browser_id: int,
-        action_id: str,
-        params: Dict[str, Any],
-        step_index: int = 0,
-        user_data: Optional[Dict[str, Any]] = None,
-        page_index: Optional[int] = None,
+        req: StepExecutionRequest,
     ) -> tuple:
         """
         🔑 Service 层方法：单步执行操作（自动管理会话和页面）
 
         Args:
-            mid: 用户ID
-            browser_id: 浏览器ID
-            action_id: 操作ID
-            params: 操作参数
-            step_index: 步骤索引（如果是复合操作）
-            user_data: 用户自定义数据
-            page_index: 页面索引，指定在哪个 tab 页执行操作
+            req: 步骤执行请求参数
 
         Returns:
             tuple: (step_index, action_id, action_name, ActionResult)
         """
-        session_key = LiveService._get_session_key(mid, browser_id)
+        session_key = LiveService._get_session_key(req.mid, req.browser_id)
         entry = LiveService.browser_sessions.get(session_key)
         if not entry:
             raise ValueError("浏览器不存在或未运行")
 
-        # 根据 page_index 选择页面
-        if page_index is not None:
+        execution_engine = ExecutionEngine()
+
+        if req.page_index is not None:
             all_pages = await entry.plugined_session.get_all_pages()
-            if page_index < 0 or page_index >= len(all_pages):
+
+            if not all_pages:
+                raise ValueError(f"浏览器 {req.browser_id} 没有打开任何页面")
+
+            if 0 <= req.page_index < len(all_pages):
+                page = all_pages[req.page_index]
+                logger.info(f"📄 使用页面索引 {req.page_index}: {page.url}")
+            else:
                 raise ValueError(
-                    f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})"
+                    f"页面索引 {req.page_index} 超出范围 (0-{len(all_pages)-1})"
                 )
-            page = all_pages[page_index]
         else:
             page = await entry.plugined_session.get_current_page()
 
-        browser = entry.plugined_session.browser_context.browser
-
-        # 从数据库加载操作
-        action_instance = await action_registry.create_action_for_user(
-            action_id, str(mid)
-        )
-        metadata = action_registry.get_action_metadata(action_id)
+        action_class = await action_registry.get_action_class_for_user(
+            req.action_id, req.mid)
+        if not action_class:
+            raise ValueError(f"未找到操作: {req.action_id}")
+        action_instance = action_class()
+        metadata = action_registry.get_action_metadata(req.action_id)
         if not metadata:
-            raise ValueError(f"未找到操作: {action_id}")
+            raise ValueError(f"未找到操作: {req.action_id}")
 
-        # 检查是否为组合操作
-        composite = action_instance if hasattr(action_instance, "_steps") else None
+        composite = action_instance if hasattr(
+            action_instance, "_steps") else None
 
         if composite and hasattr(composite, "_steps"):
-            # 组合操作：执行指定步骤
             steps = composite._steps
-            if step_index < 0 or step_index >= len(steps):
-                raise ValueError(f"步骤索引 {step_index} 超出范围 (0-{len(steps)-1})")
+            if req.step_index < 0 or req.step_index >= len(steps):
+                raise ValueError(f"步骤索引 {req.step_index} 超出范围 (0-{len(steps)-1})")
 
-            step = steps[step_index]
-            # 替换参数
-            step_params = composite._replace_params(step.get("params", {}), params)
+            step = steps[req.step_index]
+            step_params = composite._replace_params(
+                step.get("params", {}), req.params)
 
-            # 执行子操作
-            result = await execution_engine.execute_action(
-                session_id=str(browser_id),
-                browser_id=str(browser_id),
-                page=page,
-                browser=browser,
+            step_req = ActionExecutionRequest(
+                mid=req.mid,
+                browser_id=req.browser_id,
+                variables=req.variables,
+                page_index=req.page_index,
                 action_id=step["action_id"],
                 params=step_params,
-                mid=str(mid),
-                user_data=user_data,  # 透传 user_data
-                page_index=None,  # 已经在上面处理了页面选择
             )
 
-            return (step_index, step["action_id"], metadata.name, result)
-        else:
-            # 普通操作：直接执行
             result = await execution_engine.execute_action(
-                session_id=str(browser_id),
-                browser_id=str(browser_id),
+                step_req,
+                session_id=str(req.browser_id),
+                browser_id=str(req.browser_id),
                 page=page,
-                browser=browser,
-                action_id=action_id,
-                params=params,
-                mid=str(mid),
-                user_data=user_data,  # 透传 user_data
-                page_index=None,  # 已经在上面处理了页面选择
             )
 
-            return (0, action_id, metadata.name, result)
+            return (req.step_index, step["action_id"], metadata.name, result)
+        else:
+            step_req = ActionExecutionRequest(
+                mid=req.mid,
+                browser_id=req.browser_id,
+                variables=req.variables,
+                page_index=req.page_index,
+                action_id=req.action_id,
+                params=req.params,
+            )
+
+            result = await execution_engine.execute_action(
+                step_req,
+                session_id=str(req.browser_id),
+                browser_id=str(req.browser_id),
+                page=page,
+            )
+
+            return (0, req.action_id, metadata.name, result)
+
     @staticmethod
     async def execute_workflow_with_session(
-        mid: int,
-        browser_id: int,
-        workflow: Any,  # Workflow 对象
-        user_data: Optional[Dict[str, Any]] = None,
-        page_index: Optional[int] = None,
+        req: WorkflowExecutionRequest,
     ) -> List[ActionResult]:
         """
         🔑 Service 层方法：执行工作流（自动管理会话和页面）
 
         Args:
-            mid: 用户ID
-            browser_id: 浏览器ID
-            workflow: Workflow 对象
-            user_data: 用户自定义数据
-            page_index: 页面索引，指定在哪个 tab 页执行操作
+            req: 工作流执行请求参数
 
         Returns:
-            List[ActionResult]: 执行结果列表
+            工作流执行结果列表
         """
-        session_key = LiveService._get_session_key(mid, browser_id)
+        session_key = LiveService._get_session_key(req.mid, req.browser_id)
         entry = LiveService.browser_sessions.get(session_key)
         if not entry:
             raise ValueError("浏览器不存在或未运行")
 
-        # 根据 page_index 选择页面
-        if page_index is not None:
-            all_pages = await entry.plugined_session.get_all_pages()
-            if page_index < 0 or page_index >= len(all_pages):
-                raise ValueError(
-                    f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})"
-                )
-            page = all_pages[page_index]
-        else:
-            page = await entry.plugined_session.get_current_page()
+        action_model = await action_crud.get_by_id(req.action_id)
+        if not action_model:
+            raise ValueError(f"未找到操作: {req.action_id}")
 
-        browser = entry.plugined_session.browser_context.browser
+        page = await entry.plugined_session.get_current_page()
 
-        # 执行工作流
-        results = await execution_engine.execute_workflow(
-            session_id=str(browser_id),
-            browser_id=str(browser_id),
+        variables = dict(req.variables)
+        if req.input_data:
+            variables.update(req.input_data)
+        if req.output:
+            variables["_output_keys"] = req.output
+
+        execution_engine = ExecutionEngine()
+
+        results = await execution_engine._execute_steps(
+            req,
+            steps=action_model.steps,
+            session_id=str(req.browser_id),
+            browser_id=str(req.browser_id),
             page=page,
-            browser=browser,
-            workflow=workflow,
-            user_data=user_data,
-            mid=str(mid),
         )
 
         return results
 
-    @staticmethod
-    async def execute_batch_with_session(
-        mid: int,
-        browser_id: int,
-        actions: List[Dict[str, Any]],
-        parallel: bool = False,
-        user_data: Optional[Dict[str, Any]] = None,
-        page_index: Optional[int] = None,
-    ) -> List[ActionResult]:
-        """
-        🔑 Service 层方法：批量执行操作（自动管理会话和页面）
 
-        Args:
-            mid: 用户ID
-            browser_id: 浏览器ID
-            actions: 操作列表，每个元素包含 action_id 和 params
-            parallel: 是否并行执行
-            user_data: 共享自定义数据
-            page_index: 页面索引，指定在哪个 tab 页执行操作
-
-        Returns:
-            List[ActionResult]: 执行结果列表
-        """
-        session_key = LiveService._get_session_key(mid, browser_id)
-        entry = LiveService.browser_sessions.get(session_key)
-        if not entry:
-            raise ValueError("浏览器不存在或未运行")
-
-        # 根据 page_index 选择页面
-        if page_index is not None:
-            all_pages = await entry.plugined_session.get_all_pages()
-            if page_index < 0 or page_index >= len(all_pages):
-                raise ValueError(
-                    f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})"
-                )
-            page = all_pages[page_index]
-        else:
-            page = await entry.plugined_session.get_current_page()
-
-        browser = entry.plugined_session.browser_context.browser
-
-        # 批量执行
-        return await execution_engine.execute_batch(
-            session_id=str(browser_id),
-            browser_id=str(browser_id),
-            page=page,
-            browser=browser,
-            actions=actions,
-            parallel=parallel,
-            mid=str(mid),
-            user_data=user_data,  # 透传 user_data
-        )
-
-
-# 全局执行引擎实例
 execution_engine = ExecutionEngine()

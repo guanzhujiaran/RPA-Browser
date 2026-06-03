@@ -1,7 +1,6 @@
 """Alembic 数据库迁移管理路由"""
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional
 from app.utils.alembic_migration import run_alembic_migrations, check_alembic_status
 from app.models.common.response import success_response, error_response
 from loguru import logger
@@ -20,8 +19,8 @@ class MigrationResponse(BaseModel):
     """迁移响应模型"""
     success: bool
     message: str
-    current_revision: Optional[str] = None
-    head_revision: Optional[str] = None
+    current_revision: str | None = None
+    head_revision: str | None = None
 
 
 @router.get("/status", summary="检查数据库迁移状态")

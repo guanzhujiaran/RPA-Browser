@@ -1,19 +1,20 @@
 """全局后台任务调度器管理"""
 
+from __future__ import annotations
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
-from typing import Callable, Optional
+from collections.abc import Callable
 from functools import wraps
 
 
 class SchedulerManager:
     """全局后台任务调度器管理器"""
 
-    _instance: Optional["SchedulerManager"] = None
-    _scheduler: Optional[AsyncIOScheduler] = None
+    _instance: "SchedulerManager" | None = None
+    _scheduler: AsyncIOScheduler | None = None
 
     def __new__(cls):
         """单例模式"""
@@ -37,13 +38,13 @@ class SchedulerManager:
     def add_interval_job(
         self,
         func: Callable,
-        seconds: Optional[int] = None,
-        minutes: Optional[int] = None,
-        hours: Optional[int] = None,
-        id: Optional[str] = None,
-        name: Optional[str] = None,
+        seconds: int | None = None,
+        minutes: int | None = None,
+        hours: int | None = None,
+        id: str | None = None,
+        name: str | None = None,
         replace_existing: bool = False,
-        misfire_grace_time: Optional[int] = None,
+        misfire_grace_time: int | None = None,
         **kwargs,
     ):
         """添加定时任务（间隔触发）
@@ -87,8 +88,8 @@ class SchedulerManager:
         self,
         func: Callable,
         cron_expression: str,
-        id: Optional[str] = None,
-        name: Optional[str] = None,
+        id: str | None = None,
+        name: str | None = None,
         replace_existing: bool = False,
         **kwargs,
     ):

@@ -7,7 +7,7 @@ WebRTCStreamManager - WebRTC 流管理器
 
 import asyncio
 import time
-from typing import Dict, Optional
+from typing import Dict
 from loguru import logger
 
 from app.config import settings
@@ -32,7 +32,7 @@ class WebRTCStreamManager:
         """
         self.session = session
         self.streams: Dict[int, WebRTCStreamSession] = {}
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_task: asyncio.Task | None = None
         self._is_cleanup_running = False
         
     async def start_stream(self, page_index: int) -> WebRTCStreamSession:
@@ -100,7 +100,7 @@ class WebRTCStreamManager:
             
         return stream
         
-    async def get_stream(self, page) -> Optional[WebRTCStreamSession]:
+    async def get_stream(self, page) -> WebRTCStreamSession | None:
         """
         获取指定页面的视频流
         

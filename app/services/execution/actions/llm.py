@@ -6,30 +6,19 @@ import httpx
 
 from app.services.execution.actions.base import BaseAction
 from app.models.execution.params import LLMParams
-from app.models.database.workflow.models import ActionType, ActionMetadata, ActionResult, ActionContext
+from app.models.database.workflow.models import ActionMetadata, ActionResult
+from app.models.database.workflow.models import BuiltinActionType
 
 
 class LLMAction(BaseAction):
     """LLM 对话操作"""
+    action_id: BuiltinActionType = BuiltinActionType.LLM
 
-    params_model = LLMParams
-
-    @staticmethod
-    def get_action_id() -> str:
-        return "llm"
-
-    def get_metadata(self) -> ActionMetadata:
-        return ActionMetadata(
-            id="llm", name="LLM对话", type=ActionType.LLM,
-            description="调用 LLM 进行对话，支持 OpenAI 兼容 API",
-            parameters=self.get_parameters_from_model(),
-            json_schema=self.get_full_schema(),
-        )
-
-    async def execute(self, ctx: ActionContext) -> ActionResult:
+    async def execute(self) -> ActionResult:
         start_time = time.time()
 
-        valid, error_msg, validated_params = self.validate_params_with_model(ctx.params)
+        valid, error_msg, validated_params = self.validate_params_with_model(
+            self.params)
         if not valid:
             return ActionResult(
                 success=False, error=error_msg, execution_time=time.time() - start_time,
@@ -51,7 +40,8 @@ class LLMAction(BaseAction):
             final_messages = []
 
             if system_prompt:
-                final_messages.append({"role": "system", "content": system_prompt})
+                final_messages.append(
+                    {"role": "system", "content": system_prompt})
 
             for msg in messages:
                 if isinstance(msg, dict) and "role" in msg and "content" in msg:

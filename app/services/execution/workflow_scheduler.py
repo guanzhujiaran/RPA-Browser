@@ -9,8 +9,9 @@ Workflow Scheduler - 工作流调度器
 3. 调度任务的状态管理
 """
 
+from app.models.database.workflow.models import WorkflowRecord
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -24,12 +25,7 @@ from apscheduler.events import (
 from loguru import logger
 from sqlmodel import select
 
-from app.models.database.workflow.unified_models import (
-    WorkflowRecord,
-    TriggerType,
-    ExecutionStatus,
-)
-from app.services.execution.unified_engine import unified_execution_engine
+from app.services.execution.execution_engine import execution_engine
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -122,50 +118,47 @@ class WorkflowScheduler:
 
         try:
             page = await entry.plugined_session.get_current_page()
-            browser = entry.plugined_session.browser_context
+            browser = entry.plugined_session.browser_context.browser
 
-            # 构建执行上下文
-            from app.models.database.workflow.unified_models import ActionContext
+            from app.services.execution.execution_engine import Workflow, WorkflowStep
 
-            ctx = ActionContext(
+            steps = []
+            if workflow.steps:
+                for s in workflow.steps:
+                    steps.append(WorkflowStep(
+                        action_id=s.get("action_id", ""),
+                        params=s.get("params", {}),
+                        children=s.get("children", []),
+                    ))
+
+            wf = Workflow(
+                id=workflow_id,
+                name=workflow.name or workflow_id,
+                description=workflow.description or "",
+                steps=steps,
+            )
+
+            variables = {
+                "mid": mid,
+                "workflow_id": workflow_id,
+                "execution_id": execution_id,
+            }
+
+            results = await execution_engine.execute_workflow(
                 session_id=str(params.get("browser_id", 0)),
                 browser_id=str(params.get("browser_id", 0)),
                 page=page,
                 browser=browser,
-                params=workflow.params_template,
-                input={
-                    "mid": str(mid),
-                    "workflow_id": workflow_id,
-                    "execution_id": execution_id,
-                    "trigger_type": TriggerType.SCHEDULED.value,
-                },
-                output=[],
+                workflow=wf,
+                variables=variables,
+                mid=mid,
             )
 
-            # 从数据库加载 action
-            from app.services.execution.action_registry import action_registry
-
-            action = await action_registry.create_action_for_user(
-                workflow.entry_action_id,
-                str(mid),
-            )
-
-            if not action:
-                logger.error(f"[Scheduler] 未找到 action: {workflow.entry_action_id}")
-                return
-
-            # 执行
-            result = await unified_execution_engine._execute_with_plugins(
-                action=action,
-                ctx=ctx,
-                mid=str(mid),
-                execution_id=execution_id,
-            )
-
-            if result.success:
+            if results and results[-1].success:
                 logger.info(f"[Scheduler] 工作流 '{workflow_id}' 执行成功")
             else:
-                logger.error(f"[Scheduler] 工作流 '{workflow_id}' 执行失败: {result.error}")
+                last_error = results[-1].error if results else "无执行结果"
+                logger.error(f"[Scheduler] 工作流 '{workflow_id}' 执行失败: {last_error}")
 
         except Exception as e:
             logger.error(f"[Scheduler] 执行工作流 '{workflow_id}' 失败: {e}")
@@ -187,7 +180,7 @@ class WorkflowScheduler:
         workflow_id: str,
         mid: int,
         crontab_expression: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: Dict[str, Any] | None = None,
     ):
         """
         添加工作流调度
@@ -305,7 +298,7 @@ class WorkflowScheduler:
             logger.error(f"[Scheduler] 恢复调度失败: {e}")
             return False
 
-    def get_schedule_status(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_status(self, workflow_id: str) -> Dict[str, Any] | None:
         """
         获取调度状态
 
@@ -380,7 +373,7 @@ class WorkflowScheduler:
             except Exception as e:
                 logger.error(f"[Scheduler] 加载工作流调度失败: {workflow.workflow_id} - {e}")
 
-    def validate_crontab(self, expression: str) -> tuple[bool, Optional[str]]:
+    def validate_crontab(self, expression: str) -> tuple[bool, str | None]:
         """
         验证 Crontab 表达式
 

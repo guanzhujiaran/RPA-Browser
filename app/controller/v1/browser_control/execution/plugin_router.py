@@ -1,7 +1,7 @@
 """
 插件挂载管理路由
 
-负责管理 UserPlugin，即定义在哪些生命周期钩子处自动执行哪些 CustomAction。
+负责管理 UserPlugin，即定义在哪些生命周期钩子处自动执行哪些 CompositeAction。
 """
 from fastapi import Depends, APIRouter
 from sqlmodel import select
@@ -117,10 +117,10 @@ async def create_plugin(
         ))
     except ValueError as e:
         # 捕获验证错误并返回友好的错误信息
-        return error_response(str(e))
+        return error_response(400, str(e))
     except NameAlreadyExistsException as e:
         # 捕获名称重复错误
-        return error_response(str(e))
+        return error_response(409, str(e))
 
 
 @router.post("/plugins/update", response_model=StandardResponse[str])
@@ -130,8 +130,8 @@ async def update_plugin(
 ):
     """更新插件挂载配置"""
     model = await plugin_crud.get_by_id(request.id)
-    if not model or model.mid != auth.mid:
-        return error_response("插件配置不存在")
+    if not model or str(model.mid) != str(auth.mid):
+        return error_response(404, "插件配置不存在")
 
     try:
         await plugin_crud.update(
@@ -145,10 +145,10 @@ async def update_plugin(
         )
     except ValueError as e:
         # 捕获验证错误并返回友好的错误信息
-        return error_response(str(e))
+        return error_response(400, str(e))
     except NameAlreadyExistsException as e:
         # 捕获名称重复错误
-        return error_response(str(e))
+        return error_response(409, str(e))
     
     if request.is_enabled is not None:
         if request.is_enabled:
@@ -166,8 +166,8 @@ async def delete_plugin(
 ):
     """删除插件挂载配置"""
     model = await plugin_crud.get_by_id(id)
-    if not model or model.mid != auth.mid:
-        return error_response("插件配置不存在")
+    if not model or str(model.mid) != str(auth.mid):
+        return error_response(404, "插件配置不存在")
 
     await plugin_crud.delete(id)
     return success_response("删除成功")
@@ -192,7 +192,7 @@ async def fork_plugin(
         return error_response(404, "插件不存在")
     
     # 检查权限：如果是别人的插件，必须是公开的
-    if original.mid != auth.mid and not original.is_public:
+    if str(original.mid) != str(auth.mid) and not original.is_public:
         return error_response(403, "只能 Fork 公开的插件或自己的插件")
     
     try:
@@ -213,7 +213,7 @@ async def fork_plugin(
                 name=model.name,
                 forked_from=original.name,
             ),
-            message="Fork 成功"
+            msg="Fork 成功"
         )
     except ValueError as e:
         return error_response(400, str(e))

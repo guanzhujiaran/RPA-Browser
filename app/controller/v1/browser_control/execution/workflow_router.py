@@ -51,15 +51,11 @@ async def create_workflow(
         workflow_id=workflow_id,
         name=request.name,
         mid=auth.mid,
+        custom_action_id=None,
         description=request.description,
-        steps=request.steps,
-        enabled_plugins=request.enabled_plugins or [],
-        tags=request.tags or [],
-        icon=request.icon,
-        color=request.color,
-        error_handling=request.error_handling,
-        max_retries=request.max_retries,
-        timeout=request.timeout,
+        trigger_type=request.trigger_type,
+        trigger_config=request.trigger_config,
+        is_public=request.is_public,
     )
     
     return success_response(
@@ -110,8 +106,8 @@ async def list_workflows(
                 id=model.id,
                 workflow_id=model.workflow_id,
                 name=model.name,
+                custom_action_id=model.custom_action_id,
                 description=model.description,
-                tags=model.tags,
                 is_enabled=model.is_enabled,
                 is_public=model.is_public,
                 likes_count=model.likes_count,
@@ -150,7 +146,7 @@ async def get_workflow_detail(
         return error_response(400, "缺少工作流ID")
     
     model = await workflow_crud.get_by_id(workflow_id)
-    if not model or model.mid != auth.mid:
+    if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "工作流不存在")
     
     # 获取关联的插件列表
@@ -162,15 +158,17 @@ async def get_workflow_detail(
             id=model.id,
             workflow_id=model.workflow_id,
             name=model.name,
+            custom_action_id=model.custom_action_id,
             description=model.description,
-            steps=model.steps,
-            enabled_plugins=enabled_plugin_ids,
-            tags=model.tags,
-            icon=model.icon,
-            color=model.color,
-            error_handling=model.error_handling,
-            max_retries=model.max_retries,
-            timeout=model.timeout,
+            trigger_type=model.trigger_type,
+            trigger_config=model.trigger_config,
+            is_enabled=model.is_enabled,
+            is_public=model.is_public,
+            likes_count=model.likes_count,
+            reports_count=model.reports_count,
+            is_verified=model.is_verified,
+            forks_count=model.forks_count,
+            forked_from_id=model.forked_from_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -187,17 +185,13 @@ async def update_workflow(
         id=request.id,
         name=request.name,
         description=request.description,
-        steps=request.steps,
-        enabled_plugins=request.enabled_plugins,
-        tags=request.tags,
-        icon=request.icon,
-        color=request.color,
-        error_handling=request.error_handling,
-        max_retries=request.max_retries,
-        timeout=request.timeout,
+        trigger_type=request.trigger_type,
+        trigger_config=request.trigger_config,
+        is_enabled=request.is_enabled,
+        is_public=request.is_public,
     )
     
-    if not model or model.mid != auth.mid:
+    if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "工作流不存在或无权限")
     
     # 获取关联的插件列表
@@ -209,15 +203,17 @@ async def update_workflow(
             id=model.id,
             workflow_id=model.workflow_id,
             name=model.name,
+            custom_action_id=model.custom_action_id,
             description=model.description,
-            steps=model.steps,
-            enabled_plugins=enabled_plugin_ids,
-            tags=model.tags,
-            icon=model.icon,
-            color=model.color,
-            error_handling=model.error_handling,
-            max_retries=model.max_retries,
-            timeout=model.timeout,
+            trigger_type=model.trigger_type,
+            trigger_config=model.trigger_config,
+            is_enabled=model.is_enabled,
+            is_public=model.is_public,
+            likes_count=model.likes_count,
+            reports_count=model.reports_count,
+            is_verified=model.is_verified,
+            forks_count=model.forks_count,
+            forked_from_id=model.forked_from_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -239,7 +235,7 @@ async def delete_workflow(
         return error_response(400, "缺少工作流ID")
     
     model = await workflow_crud.get_by_id(workflow_id)
-    if not model or model.mid != auth.mid:
+    if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "工作流不存在或无权限")
     
     success = await workflow_crud.delete(workflow_id)
@@ -269,7 +265,7 @@ async def duplicate_workflow(
     
     # 获取原工作流
     original = await workflow_crud.get_by_id(workflow_id)
-    if not original or original.mid != auth.mid:
+    if not original or str(original.mid) != str(auth.mid):
         return error_response(404, "工作流不存在或无权限")
     
     # 创建副本
@@ -279,15 +275,11 @@ async def duplicate_workflow(
         workflow_id=new_workflow_id,
         name=new_name,
         mid=auth.mid,
+        custom_action_id=original.custom_action_id,
         description=f"复制自: {original.name}",
-        steps=original.steps,
-        enabled_plugins=[],  # 需要重新配置插件
-        tags=original.tags,
-        icon=original.icon,
-        color=original.color,
-        error_handling=original.error_handling,
-        max_retries=original.max_retries,
-        timeout=original.timeout,
+        trigger_type=original.trigger_type,
+        trigger_config=original.trigger_config,
+        is_public=False,
     )
     
     return success_response(
@@ -319,7 +311,7 @@ async def fork_workflow(
         return error_response(404, "工作流不存在")
     
     # 检查权限：如果是别人的工作流，必须是公开的
-    if original.mid != auth.mid and not original.is_public:
+    if str(original.mid) != str(auth.mid) and not original.is_public:
         return error_response(403, "只能 Fork 公开的工作流或自己的工作流")
     
     try:
@@ -340,7 +332,7 @@ async def fork_workflow(
                 name=model.name,
                 forked_from=original.name,
             ),
-            message="Fork 成功"
+            msg="Fork 成功"
         )
     except ValueError as e:
         return error_response(400, str(e))

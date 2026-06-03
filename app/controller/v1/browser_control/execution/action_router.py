@@ -1,25 +1,25 @@
 """
 Action 管理路由
 
-提供系统预注册 Action 和用户自定义 Action（Custom Action）的 API
+提供系统预注册 Action 和用户复合 Action（Composite Action）的 API
 """
-from loguru import logger
-from typing import Any, List
+from app.services.execution.actions.all_actions import get_all_actions_metadata
+from typing import List
 import uuid
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from app.services.execution.crud_service import action_crud
-from app.services.execution.action_registry import action_registry
 from app.models.workflow.models import (
-    CustomActionCreateRequest,
-    CustomActionUpdateRequest,
-    CustomActionListRequest,
-    CustomActionDetailResponse,
-    CustomActionListItemResponse,
+    CompositeActionCreateRequest,
+    CompositeActionUpdateRequest,
+    CompositeActionListRequest,
+    CompositeActionDetailResponse,
+    CompositeActionListItemResponse,
     ActionForkRequest,
     ActionForkResponse,
+    InputVarDefinition,
 )
 from app.models.database.workflow.models import ActionMetadataResponse
 from app.models.base.base_sqlmodel import BasePaginationResp
@@ -37,12 +37,13 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
     
     返回精简版 Action 元数据，仅包含 action_id 和 json_schema
     """
-    actions = action_registry.get_all_actions()
+    actions = get_all_actions_metadata()
     # 转换为精简版响应
     response_actions = [
         ActionMetadataResponse(
-            action_id=action.id,
-            json_schema=action.json_schema or {},
+            action_id=action.action_id,
+            action_type=action.action_type,
+            json_schema=action.get_full_schema(None) or {},
         )
         for action in actions
     ]
@@ -54,9 +55,9 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
 
 @router.post(BrowserControlRouterPath.custom_actions_create, summary="创建自定义操作")
 async def create_custom_action(
-    request: CustomActionCreateRequest,
+    request: CompositeActionCreateRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[CustomActionDetailResponse]:
+) -> StandardResponse[CompositeActionDetailResponse]:
     """创建用户自定义操作
     
     用户可以基于系统预注册的操作或插件组合创建自己的操作。
@@ -64,6 +65,12 @@ async def create_custom_action(
     """
     # 生成唯一的 action_id（格式：ca_xxx）
     action_id = f"ca_{uuid.uuid4().hex[:12]}"
+    
+    # 将 InputVarDefinition 对象转换为字典以便正确序列化
+    input_vars_dicts = [
+        var.model_dump() if hasattr(var, "model_dump") else dict(var)
+        for var in (request.input_vars or [])
+    ]
     
     model = await action_crud.create(
         action_id=action_id,
@@ -73,21 +80,50 @@ async def create_custom_action(
         steps=request.steps,
         enabled_plugins=request.enabled_plugins or [],
         tags=request.tags or [],
+        input_vars=input_vars_dicts,
+        output_vars=request.output_vars,
+        timeout=request.timeout,
+        retry_on_error=request.retry_on_error,
+        retry_times=request.retry_times,
+        retry_delay=request.retry_delay,
+        is_public=request.is_public,
     )
     
     # 获取关联的插件列表
     enabled_plugins = await action_crud.get_enabled_plugins(model.action_id)
     enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
     
+    # 将字典转换回 InputVarDefinition 对象
+    input_vars_objs = [
+        InputVarDefinition(**var) if isinstance(var, dict) else var
+        for var in (model.input_vars or [])
+    ]
+    
     return success_response(
-        CustomActionDetailResponse(
+        CompositeActionDetailResponse(
             id=model.id,
             action_id=model.action_id,
             name=model.name,
+            version=model.version,
+            action_type=model.action_type,
             description=model.description,
+            parameters_schema=model.parameters_schema,
             steps=model.steps,
             enabled_plugins=enabled_plugin_ids,
             tags=model.tags,
+            input_vars=input_vars_objs,
+            output_vars=model.output_vars,
+            is_enabled=model.is_enabled,
+            is_public=model.is_public,
+            timeout=model.timeout,
+            retry_on_error=model.retry_on_error,
+            retry_times=model.retry_times,
+            retry_delay=model.retry_delay,
+            likes_count=model.likes_count,
+            reports_count=model.reports_count,
+            is_verified=model.is_verified,
+            forks_count=model.forks_count,
+            forked_from_id=model.forked_from_id,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -96,15 +132,15 @@ async def create_custom_action(
 
 @router.post(BrowserControlRouterPath.custom_actions_list, summary="获取自定义操作列表")
 async def list_custom_actions(
-    request: CustomActionListRequest = None,
+    request: CompositeActionListRequest = None,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[BasePaginationResp[CustomActionListItemResponse]]:
+) -> StandardResponse[BasePaginationResp[CompositeActionListItemResponse]]:
     """获取当前用户的自定义操作列表
     
     支持分页、筛选和排序
     """
     if request is None:
-        request = CustomActionListRequest()
+        request = CompositeActionListRequest()
     
     # 计算 skip
     skip = (request.page - 1) * request.per_page
@@ -128,7 +164,7 @@ async def list_custom_actions(
     items = []
     for model in models:
         items.append(
-            CustomActionListItemResponse(
+            CompositeActionListItemResponse(
                 id=model.id,
                 action_id=model.action_id,
                 name=model.name,
@@ -148,7 +184,7 @@ async def list_custom_actions(
         )
     
     # 构建分页响应
-    pagination = BasePaginationResp[CustomActionListItemResponse](
+    pagination = BasePaginationResp[CompositeActionListItemResponse](
         page=request.page,
         per_page=request.per_page,
         total=total,
@@ -162,7 +198,7 @@ async def list_custom_actions(
 async def get_custom_action(
     request: dict,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[CustomActionDetailResponse]:
+) -> StandardResponse[CompositeActionDetailResponse]:
     """获取自定义操作详情
     
     Args:
@@ -173,15 +209,21 @@ async def get_custom_action(
         return error_response(400, "缺少操作ID")
     
     model = await action_crud.get_by_id(action_id)
-    if not model or model.mid != auth.mid:
+    if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "操作不存在")
     
     # 获取关联的插件列表
     enabled_plugins = await action_crud.get_enabled_plugins(model.action_id)
     enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
     
+    # 将字典转换回 InputVarDefinition 对象
+    input_vars_objs = [
+        InputVarDefinition(**var) if isinstance(var, dict) else var
+        for var in (model.input_vars or [])
+    ]
+    
     return success_response(
-        CustomActionDetailResponse(
+        CompositeActionDetailResponse(
             id=model.id,
             action_id=model.action_id,
             name=model.name,
@@ -192,10 +234,14 @@ async def get_custom_action(
             steps=model.steps,
             enabled_plugins=enabled_plugin_ids,
             tags=model.tags,
-            user_data=model.user_data,
+            input_vars=input_vars_objs,
+            output_vars=model.output_vars,
             is_enabled=model.is_enabled,
             is_public=model.is_public,
             timeout=model.timeout,
+            retry_on_error=model.retry_on_error,
+            retry_times=model.retry_times,
+            retry_delay=model.retry_delay,
             likes_count=model.likes_count,
             reports_count=model.reports_count,
             is_verified=model.is_verified,
@@ -209,10 +255,18 @@ async def get_custom_action(
 
 @router.post(BrowserControlRouterPath.custom_actions_update, summary="更新自定义操作")
 async def update_custom_action(
-    request: CustomActionUpdateRequest,
+    request: CompositeActionUpdateRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[CustomActionDetailResponse]:
+) -> StandardResponse[CompositeActionDetailResponse]:
     """更新自定义操作"""
+    # 将 InputVarDefinition 对象转换为字典以便正确序列化
+    input_vars_dicts = None
+    if request.input_vars is not None:
+        input_vars_dicts = [
+            var.model_dump() if hasattr(var, "model_dump") else dict(var)
+            for var in request.input_vars
+        ]
+    
     model = await action_crud.update(
         id=request.id,
         name=request.name,
@@ -220,17 +274,29 @@ async def update_custom_action(
         steps=request.steps,
         enabled_plugins=request.enabled_plugins,
         tags=request.tags,
+        input_vars=input_vars_dicts,
+        output_vars=request.output_vars,
+        timeout=request.timeout,
+        retry_on_error=request.retry_on_error,
+        retry_times=request.retry_times,
+        retry_delay=request.retry_delay,
     )
     
-    if not model or model.mid != auth.mid:
+    if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "操作不存在或无权限")
     
     # 获取关联的插件列表
     enabled_plugins = await action_crud.get_enabled_plugins(model.action_id)
     enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
     
+    # 将字典转换回 InputVarDefinition 对象
+    input_vars_objs = [
+        InputVarDefinition(**var) if isinstance(var, dict) else var
+        for var in (model.input_vars or [])
+    ]
+    
     return success_response(
-        CustomActionDetailResponse(
+        CompositeActionDetailResponse(
             id=model.id,
             action_id=model.action_id,
             name=model.name,
@@ -241,10 +307,14 @@ async def update_custom_action(
             steps=model.steps,
             enabled_plugins=enabled_plugin_ids,
             tags=model.tags,
-            user_data=model.user_data,
+            input_vars=input_vars_objs,
+            output_vars=model.output_vars,
             is_enabled=model.is_enabled,
             is_public=model.is_public,
             timeout=model.timeout,
+            retry_on_error=model.retry_on_error,
+            retry_times=model.retry_times,
+            retry_delay=model.retry_delay,
             likes_count=model.likes_count,
             reports_count=model.reports_count,
             is_verified=model.is_verified,
@@ -271,7 +341,7 @@ async def delete_custom_action(
         return error_response(400, "缺少操作ID")
     
     model = await action_crud.get_by_id(action_id)
-    if not model or model.mid != auth.mid:
+    if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "操作不存在或无权限")
     
     success = await action_crud.delete(action_id)
@@ -298,9 +368,9 @@ async def fork_custom_action(
     if not original:
         return error_response(404, "操作不存在")
     
-    # 检查是否为公开操作
-    if not original.is_public:
-        return error_response(403, "只能 Fork 公开的操作")
+    # 检查是否为公开操作，或者是自己的操作也允许 fork
+    if not original.is_public and str(original.mid) != str(auth.mid):
+        return error_response(403, "只能 Fork 公开的操作或自己的操作")
     
     try:
         # 执行 Fork
@@ -320,7 +390,7 @@ async def fork_custom_action(
                 name=model.name,
                 forked_from=original.name,
             ),
-            message="Fork 成功"
+            msg="Fork 成功"
         )
     except ValueError as e:
         return error_response(400, str(e))
@@ -332,7 +402,7 @@ async def get_action_forks(
     skip: int = 0,
     limit: int = 50,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[BasePaginationResp[CustomActionListItemResponse]]:
+) -> StandardResponse[BasePaginationResp[CompositeActionListItemResponse]]:
     """获取某自定义操作的所有 Fork 版本列表"""
     original = await action_crud.get_by_id(id)
     if not original:
@@ -341,7 +411,7 @@ async def get_action_forks(
     forks = await action_crud.list_forks(id, skip, limit)
     
     items = [
-        CustomActionListItemResponse(
+        CompositeActionListItemResponse(
             id=f.id,
             action_id=f.action_id,
             name=f.name,
@@ -361,7 +431,7 @@ async def get_action_forks(
         for f in forks
     ]
     
-    pagination = BasePaginationResp[CustomActionListItemResponse](
+    pagination = BasePaginationResp[CompositeActionListItemResponse](
         page=1,
         per_page=limit,
         total=len(items),

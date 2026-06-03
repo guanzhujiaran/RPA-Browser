@@ -9,7 +9,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import uuid
 import time
@@ -66,7 +66,7 @@ class WorkflowManager:
         steps: List[Dict[str, Any]],
         description: str = "",
         author: str = "",
-        tags: Optional[List[str]] = None,
+        tags: List[str] | None = None,
         on_error: str = "stop"
     ) -> WorkflowDefinition:
         """
@@ -125,7 +125,7 @@ class WorkflowManager:
 
         return definition
 
-    def get_workflow(self, workflow_id: str) -> Optional[WorkflowDefinition]:
+    def get_workflow(self, workflow_id: str) -> WorkflowDefinition | None:
         """获取工作流"""
         return self._workflows.get(workflow_id)
 
@@ -136,12 +136,12 @@ class WorkflowManager:
     def update_workflow(
         self,
         workflow_id: str,
-        name: Optional[str] = None,
-        steps: Optional[List[Dict[str, Any]]] = None,
-        description: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        on_error: Optional[str] = None
-    ) -> Optional[WorkflowDefinition]:
+        name: str | None = None,
+        steps: List[Dict[str, Any]] | None = None,
+        description: str | None = None,
+        tags: List[str] | None = None,
+        on_error: str | None = None
+    ) -> WorkflowDefinition | None:
         """
         更新工作流
 
@@ -212,7 +212,7 @@ class WorkflowManager:
             return True
         return False
 
-    def export_workflow(self, workflow_id: str) -> Optional[Dict[str, Any]]:
+    def export_workflow(self, workflow_id: str) -> Dict[str, Any] | None:
         """
         导出工作流为JSON
 
@@ -256,7 +256,7 @@ class WorkflowManager:
             "is_enabled": definition.is_enabled
         }
 
-    def import_workflow(self, workflow_json: Dict[str, Any]) -> Optional[WorkflowDefinition]:
+    def import_workflow(self, workflow_json: Dict[str, Any]) -> WorkflowDefinition | None:
         """
         从JSON导入工作流
 
@@ -310,7 +310,7 @@ class WorkflowManager:
             logger.error(f"[WorkflowManager] 导入工作流失败: {e}")
             return None
 
-    def validate_workflow_steps(self, steps: List[Dict[str, Any]]) -> tuple[bool, Optional[str]]:
+    def validate_workflow_steps(self, steps: List[Dict[str, Any]]) -> tuple[bool, str | None]:
         """
         验证步骤列表
 

@@ -7,7 +7,6 @@ VideoFrameProducer - 视频帧生产者
 
 import asyncio
 import io
-from typing import Optional
 import av
 from PIL import Image
 from loguru import logger
@@ -39,7 +38,7 @@ class VideoFrameProducer:
         self.frame_queue: asyncio.Queue = asyncio.Queue(maxsize=config.frame_queue_size)
         self.screencast_session = None
         self._is_running = False
-        self._last_frame: Optional[av.VideoFrame] = None  # 最后一帧（用于超时返回）
+        self._last_frame: av.VideoFrame | None = None  # 最后一帧（用于超时返回）
         
     async def start(self):
         """启动帧捕获"""
@@ -139,7 +138,7 @@ class VideoFrameProducer:
                 
         await self.frame_queue.put(jpeg_data)
         
-    async def get_next_frame(self) -> Optional[av.VideoFrame]:
+    async def get_next_frame(self) -> av.VideoFrame | None:
         """
         获取下一帧（异步）
         
@@ -202,7 +201,7 @@ class VideoFrameProducer:
             # 返回绿屏帧作为错误恢复
             return self._create_green_frame()
     
-    def _create_green_frame(self) -> Optional[av.VideoFrame]:
+    def _create_green_frame(self) -> av.VideoFrame | None:
         """
         创建绿屏帧（用于初始化或错误恢复）
         

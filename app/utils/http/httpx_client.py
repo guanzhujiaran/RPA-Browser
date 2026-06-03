@@ -5,7 +5,8 @@ if headers is None, provide default headers with random fingerprint
 """
 import httpx
 import asyncio
-from typing import Optional, Dict, Any, Union
+from collections.abc import Callable
+from typing import Dict, Any, Union
 from loguru import logger
 
 from app.utils.http.rand_headers_gen import rand_fingerprint_generator
@@ -19,8 +20,8 @@ class AsyncHttpClient:
 
     def __init__(self, 
                  timeout: float = 30.0,
-                 headers: Optional[Dict[str, str]] = None,
-                 base_url: Optional[str] = None,
+                 headers: Dict[str, str] | None = None,
+                 base_url: str | None = None,
                  **kwargs):
         """
         Initialize the HTTP client
@@ -35,7 +36,7 @@ class AsyncHttpClient:
         self.headers = headers or {}
         self.base_url = base_url
         self.kwargs = kwargs
-        self.client: Optional[httpx.AsyncClient] = None
+        self.client: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
         """Async context manager entry"""
@@ -68,11 +69,11 @@ class AsyncHttpClient:
                       method: str,
                       url: str,
                       *,
-                      content: Optional[Union[str, bytes]] = None,
-                      data: Optional[Dict[str, Any]] = None,
-                      json: Optional[Any] = None,
-                      params: Optional[Dict[str, Any]] = None,
-                      headers: Optional[Dict[str, str]] = None,
+                      content: str | bytes | None = None,
+                      data: Dict[str, Any] | None = None,
+                      json: Any | None = None,
+                      params: Dict[str, Any] | None = None,
+                      headers: Dict[str, str] | None = None,
                       **kwargs) -> httpx.Response:
         """
         Make an HTTP request
@@ -122,8 +123,8 @@ class AsyncHttpClient:
     async def get(self, 
                   url: str,
                   *,
-                  params: Optional[Dict[str, Any]] = None,
-                  headers: Optional[Dict[str, str]] = None,
+                  params: Dict[str, Any] | None = None,
+                  headers: Dict[str, str] | None = None,
                   **kwargs) -> httpx.Response:
         """
         Make a GET request
@@ -142,11 +143,11 @@ class AsyncHttpClient:
     async def post(self,
                    url: str,
                    *,
-                   content: Optional[Union[str, bytes]] = None,
-                   data: Optional[Dict[str, Any]] = None,
-                   json: Optional[Any] = None,
-                   params: Optional[Dict[str, Any]] = None,
-                   headers: Optional[Dict[str, str]] = None,
+                   content: str | bytes | None = None,
+                   data: Dict[str, Any] | None = None,
+                   json: Any | None = None,
+                   params: Dict[str, Any] | None = None,
+                   headers: Dict[str, str] | None = None,
                    **kwargs) -> httpx.Response:
         """
         Make a POST request
@@ -176,11 +177,11 @@ class AsyncHttpClient:
     async def put(self,
                   url: str,
                   *,
-                  content: Optional[Union[str, bytes]] = None,
-                  data: Optional[Dict[str, Any]] = None,
-                  json: Optional[Any] = None,
-                  params: Optional[Dict[str, Any]] = None,
-                  headers: Optional[Dict[str, str]] = None,
+                  content: str | bytes | None = None,
+                  data: Dict[str, Any] | None = None,
+                  json: Any | None = None,
+                  params: Dict[str, Any] | None = None,
+                  headers: Dict[str, str] | None = None,
                   **kwargs) -> httpx.Response:
         """
         Make a PUT request
@@ -210,8 +211,8 @@ class AsyncHttpClient:
     async def delete(self,
                      url: str,
                      *,
-                     params: Optional[Dict[str, Any]] = None,
-                     headers: Optional[Dict[str, str]] = None,
+                     params: Dict[str, Any] | None = None,
+                     headers: Dict[str, str] | None = None,
                      **kwargs) -> httpx.Response:
         """
         Make a DELETE request
@@ -229,7 +230,7 @@ class AsyncHttpClient:
 
 
 # Global client instance for simple use cases
-_default_http_client: Optional[AsyncHttpClient] = None
+_default_http_client: AsyncHttpClient | None = None
 
 
 def get_global_http_client() -> AsyncHttpClient:
@@ -248,12 +249,12 @@ def get_global_http_client() -> AsyncHttpClient:
 async def request(method: str,
                   url: str,
                   *,
-                  content: Optional[Union[str, bytes]] = None,
-                  data: Optional[Dict[str, Any]] = None,
-                  json: Optional[Any] = None,
-                  params: Optional[Dict[str, Any]] = None,
-                  headers: Optional[Dict[str, str]] = None,
-                  timeout: Optional[float] = None,
+                  content: str | bytes | None = None,
+                  data: Dict[str, Any] | None = None,
+                  json: Any | None = None,
+                  params: Dict[str, Any] | None = None,
+                  headers: Dict[str, str] | None = None,
+                  timeout: float | None = None,
                   **kwargs) -> httpx.Response:
     """
     Make an HTTP request using the global client
@@ -306,9 +307,9 @@ async def request(method: str,
 
 async def get(url: str,
               *,
-              params: Optional[Dict[str, Any]] = None,
-              headers: Optional[Dict[str, str]] = None,
-              timeout: Optional[float] = None,
+              params: Dict[str, Any] | None = None,
+              headers: Dict[str, str] | None = None,
+              timeout: float | None = None,
               **kwargs) -> httpx.Response:
     """
     Make a GET request using the global client
@@ -328,12 +329,12 @@ async def get(url: str,
 
 async def post(url: str,
                *,
-               content: Optional[Union[str, bytes]] = None,
-               data: Optional[Dict[str, Any]] = None,
-               json: Optional[Any] = None,
-               params: Optional[Dict[str, Any]] = None,
-               headers: Optional[Dict[str, str]] = None,
-               timeout: Optional[float] = None,
+               content: str | bytes | None = None,
+               data: Dict[str, Any] | None = None,
+               json: Any | None = None,
+               params: Dict[str, Any] | None = None,
+               headers: Dict[str, str] | None = None,
+               timeout: float | None = None,
                **kwargs) -> httpx.Response:
     """
     Make a POST request using the global client
@@ -365,12 +366,12 @@ async def post(url: str,
 
 async def put(url: str,
               *,
-              content: Optional[Union[str, bytes]] = None,
-              data: Optional[Dict[str, Any]] = None,
-              json: Optional[Any] = None,
-              params: Optional[Dict[str, Any]] = None,
-              headers: Optional[Dict[str, str]] = None,
-              timeout: Optional[float] = None,
+              content: str | bytes | None = None,
+              data: Dict[str, Any] | None = None,
+              json: Any | None = None,
+              params: Dict[str, Any] | None = None,
+              headers: Dict[str, str] | None = None,
+              timeout: float | None = None,
               **kwargs) -> httpx.Response:
     """
     Make a PUT request using the global client
@@ -402,9 +403,9 @@ async def put(url: str,
 
 async def delete(url: str,
                  *,
-                 params: Optional[Dict[str, Any]] = None,
-                 headers: Optional[Dict[str, str]] = None,
-                 timeout: Optional[float] = None,
+                 params: Dict[str, Any] | None = None,
+                 headers: Dict[str, str] | None = None,
+                 timeout: float | None = None,
                  **kwargs) -> httpx.Response:
     """
     Make a DELETE request using the global client

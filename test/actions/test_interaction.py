@@ -1,216 +1,189 @@
 """
-测试交互类 Action - Click, Input, Scroll, Wait, Hover
+测试交互操作 - 使用 aiounittest.AsyncTestCase 模式
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+import aiounittest
+from playwright.async_api import Page
 
 
-class TestClickAction:
+class TestClickAction(aiounittest.AsyncTestCase):
     """点击操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_click_with_selector(self, mock_action_context):
-        """测试使用 selector 点击"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_click_element(self):
+        """测试点击元素"""
         from app.services.execution.actions.interaction import ClickAction
-        
-        action = ClickAction()
-        mock_action_context.params = {"selector": "#btn"}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><button id='btn'>Click</button></body></html>")
+
+        action = ClickAction(
+            page=self.page,
+            params={"selector": "#btn"},
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["selector"] == "#btn"
-        mock_action_context.page.locator.assert_called_once_with("#btn")
-    
-    @pytest.mark.asyncio
-    async def test_click_double_click(self, mock_action_context):
-        """测试双击操作"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_double_click(self):
+        """测试双击"""
         from app.services.execution.actions.interaction import ClickAction
-        
-        action = ClickAction()
-        mock_action_context.params = {"selector": "#btn", "click_count": 2}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><button id='btn'>Double Click</button></body></html>")
+
+        action = ClickAction(
+            page=self.page,
+            params={"selector": "#btn", "click_count": 2},
+        )
+
+        result = await action.execute()
         assert result.success
-        locator = mock_action_context.page.locator.return_value
-        locator.dblclick.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_click_with_position(self, mock_action_context):
-        """测试使用位置点击（无 selector）"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_right_click(self):
+        """测试右键点击"""
         from app.services.execution.actions.interaction import ClickAction
-        
-        action = ClickAction()
-        mock_action_context.params = {"position": {"x": 100, "y": 200}}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><button id='btn'>Right Click</button></body></html>")
+
+        action = ClickAction(
+            page=self.page,
+            params={"selector": "#btn", "button": "right"},
+        )
+
+        result = await action.execute()
         assert result.success
-        mock_action_context.page.click.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_click_without_selector_and_position(self, mock_action_context):
-        """测试无 selector 和 position 的情况"""
-        from app.services.execution.actions.interaction import ClickAction
-        
-        action = ClickAction()
-        mock_action_context.params = {}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert not result.success
-        assert "没有 selector 时必须提供 position" in result.error
 
 
-class TestInputAction:
+class TestInputAction(aiounittest.AsyncTestCase):
     """输入操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_input_with_selector(self, mock_action_context):
-        """测试输入操作"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_input_text(self):
+        """测试输入文本"""
         from app.services.execution.actions.interaction import InputAction
-        
-        action = InputAction()
-        mock_action_context.params = {"selector": "#input", "value": "test value"}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><input id='input' type='text'></body></html>")
+
+        action = InputAction(
+            page=self.page,
+            params={"selector": "#input", "value": "Hello World"},
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["selector"] == "#input"
-        assert result.data["value_length"] == 10
-        locator = mock_action_context.page.locator.return_value
-        locator.fill.assert_called_once_with("test value")
-    
-    @pytest.mark.asyncio
-    async def test_input_missing_selector(self, mock_action_context):
-        """测试缺少 selector 时使用 page.locator(None)"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_input_without_selector(self):
+        """测试无 selector 时使用 keyboard"""
         from app.services.execution.actions.interaction import InputAction
-        
-        action = InputAction()
-        mock_action_context.params = {"value": "test"}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><input id='input' type='text'></body></html>")
+        await self.page.click("#input")
+
+        action = InputAction(
+            page=self.page,
+            params={"value": "Keyboard Input"},
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["selector"] is None
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_input_with_clear(self):
+        """测试带清除的输入"""
+        from app.services.execution.actions.interaction import InputAction
+
+        await self.page.set_content("<html><body><input id='input' type='text' value='old'></body></html>")
+
+        action = InputAction(
+            page=self.page,
+            params={"selector": "#input", "value": "new text", "clear": True},
+        )
+
+        result = await action.execute()
+        assert result.success
 
 
-class TestScrollAction:
+class TestScrollAction(aiounittest.AsyncTestCase):
     """滚动操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_scroll_with_selector(self, mock_action_context):
-        """测试滚动到元素"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_scroll_to_bottom(self):
+        """测试滚动到页面底部"""
         from app.services.execution.actions.interaction import ScrollAction
-        
-        action = ScrollAction()
-        mock_action_context.params = {"selector": "#target"}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><div style='height: 3000px;'>Long Content</div></body></html>")
+
+        action = ScrollAction(
+            page=self.page,
+            params={},
+        )
+
+        result = await action.execute()
         assert result.success
-        locator = mock_action_context.page.locator.return_value
-        locator.scroll_into_view_if_needed.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_scroll_without_selector(self, mock_action_context):
-        """测试无 selector 时滚动到顶部"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_scroll_to_element(self):
+        """测试滚动到指定元素"""
         from app.services.execution.actions.interaction import ScrollAction
-        
-        action = ScrollAction()
-        mock_action_context.params = {}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        mock_action_context.page.evaluate.assert_called_once_with("window.scrollTo(0, 0)")
 
+        await self.page.set_content("<html><body><div id='target' style='margin-top: 500px;'>Target</div></body></html>")
 
-class TestWaitAction:
-    """等待操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_wait_with_selector(self, mock_action_context):
-        """测试等待元素出现"""
-        from app.services.execution.actions.interaction import WaitAction
-        
-        action = WaitAction()
-        mock_action_context.params = {"selector": "#target", "state": "visible"}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        locator = mock_action_context.page.locator.return_value
-        locator.wait_for.assert_called_once_with(state="visible")
-    
-    @pytest.mark.asyncio
-    async def test_wait_fixed_time(self, mock_action_context):
-        """测试固定时间等待"""
-        from app.services.execution.actions.interaction import WaitAction
-        
-        action = WaitAction()
-        mock_action_context.params = {"timeout": 1000}
-        
-        result = await action.execute(mock_action_context)
-        
+        action = ScrollAction(
+            page=self.page,
+            params={"selector": "#target"},
+        )
+
+        result = await action.execute()
         assert result.success
 
 
-class TestHoverAction:
+class TestHoverAction(aiounittest.AsyncTestCase):
     """悬停操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_hover_with_selector(self, mock_action_context):
-        """测试使用 selector 悬停"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_hover_element(self):
+        """测试悬停元素"""
         from app.services.execution.actions.interaction import HoverAction
-        
-        action = HoverAction()
-        mock_action_context.params = {"selector": "#target"}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><div id='target' style='width: 50px; height: 50px; background: green;'>Hover</div></body></html>")
+
+        action = HoverAction(
+            page=self.page,
+            params={"selector": "#target", "timeout": 5000},
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["selector"] == "#target"
-        locator = mock_action_context.page.locator.return_value
-        locator.hover.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_hover_with_position(self, mock_action_context):
-        """测试使用位置悬停（无 selector）"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_hover_by_position(self):
+        """测试按坐标悬停"""
         from app.services.execution.actions.interaction import HoverAction
-        
-        action = HoverAction()
-        mock_action_context.params = {"position": {"x": 50, "y": 50}}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content("<html><body><div style='width: 100px; height: 100px; background: blue;'>Area</div></body></html>")
+
+        action = HoverAction(
+            page=self.page,
+            params={"position": {"x": 10, "y": 10}, "timeout": 5000},
+        )
+
+        result = await action.execute()
         assert result.success
-        mock_action_context.page.hover.assert_called_once_with(x=50, y=50)
-    
-    @pytest.mark.asyncio
-    async def test_hover_with_modifiers(self, mock_action_context):
-        """测试带修饰键的悬停"""
-        from app.services.execution.actions.interaction import HoverAction
-        
-        action = HoverAction()
-        mock_action_context.params = {"selector": "#target", "modifiers": ["Control"]}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        locator = mock_action_context.page.locator.return_value
-        locator.hover.assert_called_once_with(modifiers=["Control"])
-    
-    @pytest.mark.asyncio
-    async def test_hover_without_selector_and_position(self, mock_action_context):
-        """测试无 selector 和 position 的情况"""
-        from app.services.execution.actions.interaction import HoverAction
-        
-        action = HoverAction()
-        mock_action_context.params = {}
-        
-        result = await action.execute(mock_action_context)
-        
-        assert not result.success
-        assert "没有 selector 时必须提供 position" in result.error

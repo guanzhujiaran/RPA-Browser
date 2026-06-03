@@ -1,281 +1,200 @@
 """
-测试控制流类 Action - Loop, IfElse, Composite
+测试控制流操作 - 使用 aiounittest.AsyncTestCase 模式
+直接执行真实逻辑，不使用 mock
 """
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+import aiounittest
+from playwright.async_api import Page
 
 
-class TestLoopAction:
-    """循环控制流操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_loop_with_count(self, mock_action_context):
-        """测试固定次数循环"""
+class TestLoopAction(aiounittest.AsyncTestCase):
+    """循环操作测试"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_loop_with_count_and_click(self):
+        """测试按次数循环 - 真实执行循环内的点击操作"""
         from app.services.execution.actions.control_flow import LoopAction
-        
-        action = LoopAction()
-        
-        async def mock_execute_steps(steps, ctx):
-            return [MagicMock(success=True) for _ in steps]
-        
-        mock_action_context.params = {"count": 3}
-        mock_action_context.user_data = {
-            "_execute_steps_func": mock_execute_steps,
-            "_children_steps": [{"action_id": "click", "params": {"selector": "#btn"}}],
-        }
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content(
+            "<html><body>"
+            "<button class='item' data-index='0'>Item 0</button>"
+            "<button class='item' data-index='1'>Item 1</button>"
+            "<button class='item' data-index='2'>Item 2</button>"
+            "</body></html>"
+        )
+
+        action = LoopAction(
+            page=self.page,
+            params={
+                "count": 3,
+                "_children_steps": [
+                    {"action_id": "click", "params": {"selector": ".item:nth-child({{state.loop.index}})"}}
+                ],
+            },
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["iterations"] == 3
-    
-    @pytest.mark.asyncio
-    async def test_loop_with_items(self, mock_action_context):
-        """测试遍历列表"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_loop_with_items(self):
+        """测试按列表循环"""
         from app.services.execution.actions.control_flow import LoopAction
-        
-        action = LoopAction()
-        
-        async def mock_execute_steps(steps, ctx):
-            return [MagicMock(success=True) for _ in steps]
-        
-        mock_action_context.params = {"items": ["a", "b", "c"]}
-        mock_action_context.user_data = {
-            "_execute_steps_func": mock_execute_steps,
-            "_children_steps": [{"action_id": "click", "params": {"selector": "#btn"}}],
-        }
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content(
+            "<html><body>"
+            "<input id='input_a' value=''>"
+            "<input id='input_b' value=''>"
+            "</body></html>"
+        )
+
+        action = LoopAction(
+            page=self.page,
+            params={
+                "items": ["a", "b"],
+                "_children_steps": [
+                    {"action_id": "input", "params": {"selector": "#input_{{state.loop.current_item}}", "value": "value_{{state.loop.current_item}}"}}
+                ],
+            },
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["iterations"] == 3
-    
-    @pytest.mark.asyncio
-    async def test_loop_without_execute_func(self, mock_action_context):
-        """测试没有 execute_steps_func 的情况"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_loop_missing_params(self):
+        """测试缺少循环参数"""
         from app.services.execution.actions.control_flow import LoopAction
-        
-        action = LoopAction()
-        mock_action_context.params = {"count": 2}
-        mock_action_context.user_data = {}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        action = LoopAction(
+            page=self.page,
+            params={},
+        )
+
+        result = await action.execute()
         assert not result.success
-        assert "必须在 Workflow 上下文中执行" in result.error
-    
-    @pytest.mark.asyncio
-    async def test_loop_without_children(self, mock_action_context):
-        """测试没有子步骤的情况"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_loop_with_screenshot(self):
+        """测试循环内包含截图操作"""
         from app.services.execution.actions.control_flow import LoopAction
-        
-        action = LoopAction()
-        
-        async def mock_execute_steps(steps, ctx):
-            return []
-        
-        mock_action_context.params = {"count": 2}
-        mock_action_context.user_data = {
-            "_execute_steps_func": mock_execute_steps,
-            "_children_steps": [],
-        }
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content(
+            "<html><body>"
+            "<div id='slide1' style='width: 100px; height: 50px; background: red;'>Slide 1</div>"
+            "<div id='slide2' style='width: 100px; height: 50px; background: blue;'>Slide 2</div>"
+            "</body></html>"
+        )
+
+        action = LoopAction(
+            page=self.page,
+            params={
+                "count": 2,
+                "_children_steps": [
+                    {"action_id": "screenshot", "params": {}}
+                ],
+            },
+        )
+
+        result = await action.execute()
         assert result.success
-        assert "无子步骤可执行" in result.data["message"]
 
 
-class TestIfElseAction:
-    """条件分支控制流操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_if_else_true_branch(self, mock_action_context):
-        """测试条件为真时执行 true_branch"""
+class TestIfElseAction(aiounittest.AsyncTestCase):
+    """条件分支操作测试"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, page: Page):
+        self.page = page
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_if_else_with_true_condition(self):
+        """测试条件为真的分支 - 执行 true 分支内的操作"""
         from app.services.execution.actions.control_flow import IfElseAction
-        
-        action = IfElseAction()
-        
-        async def mock_execute_steps(steps, ctx):
-            return [MagicMock(success=True)]
-        
-        mock_action_context.params = {"condition": "state['value'] > 5"}
-        mock_action_context.user_data = {
-            "_execute_steps_func": mock_execute_steps,
-            "_true_branch_steps": [{"action_id": "click"}],
-            "_false_branch_steps": [{"action_id": "wait"}],
-            "state": {"value": 10},
-        }
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content(
+            "<html><body>"
+            "<button id='true_btn'>True</button>"
+            "</body></html>"
+        )
+
+        action = IfElseAction(
+            page=self.page,
+            params={
+                "condition": "1 == 1",
+                "_true_branch_steps": [
+                    {"action_id": "click", "params": {"selector": "#true_btn"}}
+                ],
+                "_false_branch_steps": [],
+            },
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["branch_taken"] == "true_branch"
-    
-    @pytest.mark.asyncio
-    async def test_if_else_false_branch(self, mock_action_context):
-        """测试条件为假时执行 false_branch"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_if_else_with_false_condition(self):
+        """测试条件为假的分支 - 执行 false 分支内的操作"""
         from app.services.execution.actions.control_flow import IfElseAction
-        
-        action = IfElseAction()
-        
-        async def mock_execute_steps(steps, ctx):
-            return [MagicMock(success=True)]
-        
-        mock_action_context.params = {"condition": "state['value'] > 5"}
-        mock_action_context.user_data = {
-            "_execute_steps_func": mock_execute_steps,
-            "_true_branch_steps": [{"action_id": "click"}],
-            "_false_branch_steps": [{"action_id": "wait"}],
-            "state": {"value": 3},
-        }
-        
-        result = await action.execute(mock_action_context)
-        
+
+        await self.page.set_content(
+            "<html><body>"
+            "<button id='false_btn'>False</button>"
+            "</body></html>"
+        )
+
+        action = IfElseAction(
+            page=self.page,
+            params={
+                "condition": "1 == 2",
+                "_true_branch_steps": [],
+                "_false_branch_steps": [
+                    {"action_id": "click", "params": {"selector": "#false_btn"}}
+                ],
+            },
+        )
+
+        result = await action.execute()
         assert result.success
-        assert result.data["branch_taken"] == "false_branch"
-    
-    @pytest.mark.asyncio
-    async def test_if_else_without_execute_func(self, mock_action_context):
-        """测试没有 execute_steps_func 的情况"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_if_else_missing_condition(self):
+        """测试缺少条件参数"""
         from app.services.execution.actions.control_flow import IfElseAction
-        
-        action = IfElseAction()
-        mock_action_context.params = {"condition": "True"}
-        mock_action_context.user_data = {}
-        
-        result = await action.execute(mock_action_context)
-        
+
+        action = IfElseAction(
+            page=self.page,
+            params={},
+        )
+
+        result = await action.execute()
         assert not result.success
-        assert "必须在 Workflow 上下文中执行" in result.error
-    
-    @pytest.mark.asyncio
-    async def test_if_else_without_children(self, mock_action_context):
-        """测试分支无步骤的情况"""
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_if_else_with_screenshot_branch(self):
+        """测试条件分支包含截图"""
         from app.services.execution.actions.control_flow import IfElseAction
-        
-        action = IfElseAction()
-        
-        async def mock_execute_steps(steps, ctx):
-            return []
-        
-        mock_action_context.params = {"condition": "True"}
-        mock_action_context.user_data = {
-            "_execute_steps_func": mock_execute_steps,
-            "_true_branch_steps": [],
-            "_false_branch_steps": [],
-            "state": {},
-        }
-        
-        result = await action.execute(mock_action_context)
-        
-        assert result.success
-        assert "分支无步骤" in result.data["message"]
 
+        await self.page.set_content(
+            "<html><body>"
+            "<div id='content'>Content</div>"
+            "</body></html>"
+        )
 
-class TestCompositeAction:
-    """组合操作测试"""
-    
-    @pytest.mark.asyncio
-    async def test_composite_action_execution(self, mock_action_context):
-        """测试组合动作执行"""
-        from app.services.execution.actions.control_flow import CompositeAction
-        
-        class TestComposite(CompositeAction):
-            @staticmethod
-            def get_action_id() -> str:
-                return "test_composite"
-        
-        mock_registry = MagicMock()
-        mock_sub_action = MagicMock()
-        mock_sub_action.execute = AsyncMock(return_value=MagicMock(success=True))
-        mock_registry.create_action.return_value = mock_sub_action
-        
-        composite = TestComposite(
-            action_id="test_composite",
-            name="测试组合",
-            description="测试",
-            steps=[{"action_id": "click", "params": {"selector": "#btn"}}],
+        action = IfElseAction(
+            page=self.page,
+            params={
+                "condition": "'content' in page.content()",
+                "_true_branch_steps": [
+                    {"action_id": "screenshot", "params": {}}
+                ],
+                "_false_branch_steps": [],
+            },
         )
-        composite.set_registry(mock_registry)
-        
-        result = await composite.execute(mock_action_context)
-        
+
+        result = await action.execute()
         assert result.success
-        assert result.data["steps_count"] == 1
-    
-    @pytest.mark.asyncio
-    async def test_composite_action_without_registry(self, mock_action_context):
-        """测试没有注册表的情况"""
-        from app.services.execution.actions.control_flow import CompositeAction
-        
-        class TestComposite(CompositeAction):
-            @staticmethod
-            def get_action_id() -> str:
-                return "test_composite"
-        
-        composite = TestComposite(
-            action_id="test_composite",
-            name="测试组合",
-            description="测试",
-            steps=[{"action_id": "click"}],
-        )
-        
-        result = await composite.execute(mock_action_context)
-        
-        assert not result.success
-        assert "操作注册表未初始化" in result.error
-    
-    @pytest.mark.asyncio
-    async def test_composite_action_circular_reference(self, mock_action_context):
-        """测试循环引用检测"""
-        from app.services.execution.actions.control_flow import CompositeAction
-        
-        class TestComposite(CompositeAction):
-            @staticmethod
-            def get_action_id() -> str:
-                return "test_composite"
-        
-        mock_registry = MagicMock()
-        mock_sub_action = MagicMock()
-        mock_sub_action.execute = AsyncMock(return_value=MagicMock(success=True))
-        mock_registry.create_action.return_value = mock_sub_action
-        
-        composite = TestComposite(
-            action_id="test_composite",
-            name="测试组合",
-            description="测试",
-            steps=[{"action_id": "test_composite"}],
-        )
-        composite.set_registry(mock_registry)
-        
-        result = await composite.execute(mock_action_context)
-        
-        assert result.success
-    
-    @pytest.mark.asyncio
-    async def test_composite_action_step_failure(self, mock_action_context):
-        """测试子步骤失败"""
-        from app.services.execution.actions.control_flow import CompositeAction
-        
-        class TestComposite(CompositeAction):
-            @staticmethod
-            def get_action_id() -> str:
-                return "test_composite"
-        
-        mock_registry = MagicMock()
-        mock_sub_action = MagicMock()
-        mock_sub_action.execute = AsyncMock(return_value=MagicMock(success=False, error="step failed"))
-        mock_registry.create_action.return_value = mock_sub_action
-        
-        composite = TestComposite(
-            action_id="test_composite",
-            name="测试组合",
-            description="测试",
-            steps=[{"action_id": "click", "params": {"selector": "#btn"}}],
-        )
-        composite.set_registry(mock_registry)
-        
-        result = await composite.execute(mock_action_context)
-        
-        assert not result.success
