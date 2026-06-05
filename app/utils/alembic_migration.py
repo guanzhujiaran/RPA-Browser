@@ -44,7 +44,7 @@ def get_alembic_config_for_env() -> Config:
     return _config
 
 # 模型 metadata（供 env.py 使用）
-target_metadata = CompositeAction.metadata
+target_metadata = CompositeActionModel.metadata
 
 # 缓存已创建的引擎，避免重复创建
 _engine_cache = {}
@@ -404,7 +404,7 @@ def _check_and_autogenerate_if_needed(alembic_cfg: Config, engine) -> bool:
     start_time = time.time()
     
     # 获取所有模型的 metadata（复用已加载的模型）
-    target_metadata = CompositeAction.metadata
+    target_metadata = CompositeActionModel.metadata
     
     # 比较差异（最耗时的操作）
     logger.debug(f"🔍 开始比较模型与数据库结构差异...")

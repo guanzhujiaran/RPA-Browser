@@ -1,13 +1,13 @@
 """
-测试控制流操作 - 使用 aiounittest.AsyncTestCase 模式
-直接执行真实逻辑，不使用 mock
+测试控制流操作
 """
 import pytest
-import aiounittest
 from playwright.async_api import Page
 
+from app.models.execution.action_params import LoopParams, IfElseParams, create_workflow_step
 
-class TestLoopAction(aiounittest.AsyncTestCase):
+
+class TestLoopAction:
     """循环操作测试"""
 
     @pytest.fixture(autouse=True)
@@ -27,14 +27,16 @@ class TestLoopAction(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = LoopAction(
+        action = LoopAction.new_action(
+            mid=1,
             page=self.page,
-            params={
-                "count": 3,
-                "_children_steps": [
-                    {"action_id": "click", "params": {"selector": ".item:nth-child({{state.loop.index}})"}}
+            variables={"test": True},
+            params=LoopParams(
+                count=3,
+                loopBranch=[
+                    create_workflow_step(action_id="click", params={"selector": ".item:nth-child({{state.loop.index}})"}),
                 ],
-            },
+            ),
         )
 
         result = await action.execute()
@@ -52,14 +54,16 @@ class TestLoopAction(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = LoopAction(
+        action = LoopAction.new_action(
+            mid=1,
             page=self.page,
-            params={
-                "items": ["a", "b"],
-                "_children_steps": [
-                    {"action_id": "input", "params": {"selector": "#input_{{state.loop.current_item}}", "value": "value_{{state.loop.current_item}}"}}
+            variables={"test": True},
+            params=LoopParams(
+                items=["a", "b"],
+                loopBranch=[
+                    create_workflow_step(action_id="input", params={"selector": "#input_{{state.loop.current_item}}", "value": "value_{{state.loop.current_item}}"}),
                 ],
-            },
+            ),
         )
 
         result = await action.execute()
@@ -70,13 +74,16 @@ class TestLoopAction(aiounittest.AsyncTestCase):
         """测试缺少循环参数"""
         from app.services.execution.actions.control_flow import LoopAction
 
-        action = LoopAction(
+        action = LoopAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
+            variables={"test": True},
+            params=LoopParams(),
         )
 
         result = await action.execute()
-        assert not result.success
+        assert result.success
+        assert "无子步骤可执行" in result.data.get("message", "")
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_loop_with_screenshot(self):
@@ -90,21 +97,23 @@ class TestLoopAction(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = LoopAction(
+        action = LoopAction.new_action(
+            mid=1,
             page=self.page,
-            params={
-                "count": 2,
-                "_children_steps": [
-                    {"action_id": "screenshot", "params": {}}
+            variables={"test": True},
+            params=LoopParams(
+                count=2,
+                loopBranch=[
+                    create_workflow_step(action_id="screenshot", params={}),
                 ],
-            },
+            ),
         )
 
         result = await action.execute()
         assert result.success
 
 
-class TestIfElseAction(aiounittest.AsyncTestCase):
+class TestIfElseAction:
     """条件分支操作测试"""
 
     @pytest.fixture(autouse=True)
@@ -122,15 +131,17 @@ class TestIfElseAction(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = IfElseAction(
+        action = IfElseAction.new_action(
+            mid=1,
             page=self.page,
-            params={
-                "condition": "1 == 1",
-                "_true_branch_steps": [
-                    {"action_id": "click", "params": {"selector": "#true_btn"}}
+            variables={"test": True},
+            params=IfElseParams(
+                condition="1 == 1",
+                TrueBranch=[
+                    create_workflow_step(action_id="click", params={"selector": "#true_btn"}),
                 ],
-                "_false_branch_steps": [],
-            },
+                FalseBranch=[],
+            ),
         )
 
         result = await action.execute()
@@ -147,15 +158,17 @@ class TestIfElseAction(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = IfElseAction(
+        action = IfElseAction.new_action(
+            mid=1,
             page=self.page,
-            params={
-                "condition": "1 == 2",
-                "_true_branch_steps": [],
-                "_false_branch_steps": [
-                    {"action_id": "click", "params": {"selector": "#false_btn"}}
+            variables={"test": True},
+            params=IfElseParams(
+                condition="1 == 2",
+                TrueBranch=[],
+                FalseBranch=[
+                    create_workflow_step(action_id="click", params={"selector": "#false_btn"}),
                 ],
-            },
+            ),
         )
 
         result = await action.execute()
@@ -166,13 +179,16 @@ class TestIfElseAction(aiounittest.AsyncTestCase):
         """测试缺少条件参数"""
         from app.services.execution.actions.control_flow import IfElseAction
 
-        action = IfElseAction(
+        action = IfElseAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
+            variables={"test": True},
+            params=IfElseParams(condition=""),
         )
 
         result = await action.execute()
-        assert not result.success
+        assert result.success
+        # 空 condition 视为 False，走 false 分支（空分支），结果是成功但没有执行任何操作
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_if_else_with_screenshot_branch(self):
@@ -185,15 +201,17 @@ class TestIfElseAction(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = IfElseAction(
+        action = IfElseAction.new_action(
+            mid=1,
             page=self.page,
-            params={
-                "condition": "'content' in page.content()",
-                "_true_branch_steps": [
-                    {"action_id": "screenshot", "params": {}}
+            variables={"test": True},
+            params=IfElseParams(
+                condition="'content' in page.content()",
+                TrueBranch=[
+                    create_workflow_step(action_id="screenshot", params={}),
                 ],
-                "_false_branch_steps": [],
-            },
+                FalseBranch=[],
+            ),
         )
 
         result = await action.execute()

@@ -1,12 +1,16 @@
 """
-测试交互操作 - 使用 aiounittest.AsyncTestCase 模式
+测试交互操作
 """
 import pytest
-import aiounittest
 from playwright.async_api import Page
 
+from app.models.execution.action_params import (
+    ClickParams, InputParams, ScrollParams, HoverParams,
+)
+from app.models.execution.enums import MouseButtonEnum
 
-class TestClickAction(aiounittest.AsyncTestCase):
+
+class TestClickAction:
     """点击操作测试"""
 
     @pytest.fixture(autouse=True)
@@ -20,9 +24,11 @@ class TestClickAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><button id='btn'>Click</button></body></html>")
 
-        action = ClickAction(
+        action = ClickAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#btn"},
+            variables={"test": True},
+            params=ClickParams(selector="#btn"),
         )
 
         result = await action.execute()
@@ -35,9 +41,11 @@ class TestClickAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><button id='btn'>Double Click</button></body></html>")
 
-        action = ClickAction(
+        action = ClickAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#btn", "click_count": 2},
+            variables={"test": True},
+            params=ClickParams(selector="#btn", click_count=2),
         )
 
         result = await action.execute()
@@ -50,16 +58,18 @@ class TestClickAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><button id='btn'>Right Click</button></body></html>")
 
-        action = ClickAction(
+        action = ClickAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#btn", "button": "right"},
+            variables={"test": True},
+            params=ClickParams(selector="#btn", button=MouseButtonEnum.RIGHT),
         )
 
         result = await action.execute()
         assert result.success
 
 
-class TestInputAction(aiounittest.AsyncTestCase):
+class TestInputAction:
     """输入操作测试"""
 
     @pytest.fixture(autouse=True)
@@ -73,9 +83,11 @@ class TestInputAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><input id='input' type='text'></body></html>")
 
-        action = InputAction(
+        action = InputAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#input", "value": "Hello World"},
+            variables={"test": True},
+            params=InputParams(selector="#input", value="Hello World"),
         )
 
         result = await action.execute()
@@ -83,15 +95,17 @@ class TestInputAction(aiounittest.AsyncTestCase):
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_input_without_selector(self):
-        """测试无 selector 时使用 keyboard"""
+        """测试输入操作"""
         from app.services.execution.actions.interaction import InputAction
 
         await self.page.set_content("<html><body><input id='input' type='text'></body></html>")
         await self.page.click("#input")
 
-        action = InputAction(
+        action = InputAction.new_action(
+            mid=1,
             page=self.page,
-            params={"value": "Keyboard Input"},
+            variables={"test": True},
+            params=InputParams(selector="#input", value="Keyboard Input"),
         )
 
         result = await action.execute()
@@ -99,21 +113,23 @@ class TestInputAction(aiounittest.AsyncTestCase):
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_input_with_clear(self):
-        """测试带清除的输入"""
+        """测试输入"""
         from app.services.execution.actions.interaction import InputAction
 
         await self.page.set_content("<html><body><input id='input' type='text' value='old'></body></html>")
 
-        action = InputAction(
+        action = InputAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#input", "value": "new text", "clear": True},
+            variables={"test": True},
+            params=InputParams(selector="#input", value="new text"),
         )
 
         result = await action.execute()
         assert result.success
 
 
-class TestScrollAction(aiounittest.AsyncTestCase):
+class TestScrollAction:
     """滚动操作测试"""
 
     @pytest.fixture(autouse=True)
@@ -127,9 +143,11 @@ class TestScrollAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><div style='height: 3000px;'>Long Content</div></body></html>")
 
-        action = ScrollAction(
+        action = ScrollAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
+            variables={"test": True},
+            params=ScrollParams(),
         )
 
         result = await action.execute()
@@ -142,16 +160,18 @@ class TestScrollAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><div id='target' style='margin-top: 500px;'>Target</div></body></html>")
 
-        action = ScrollAction(
+        action = ScrollAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#target"},
+            variables={"test": True},
+            params=ScrollParams(selector="#target"),
         )
 
         result = await action.execute()
         assert result.success
 
 
-class TestHoverAction(aiounittest.AsyncTestCase):
+class TestHoverAction:
     """悬停操作测试"""
 
     @pytest.fixture(autouse=True)
@@ -165,9 +185,11 @@ class TestHoverAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><div id='target' style='width: 50px; height: 50px; background: green;'>Hover</div></body></html>")
 
-        action = HoverAction(
+        action = HoverAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#target", "timeout": 5000},
+            variables={"test": True},
+            params=HoverParams(selector="#target", timeout=5000),
         )
 
         result = await action.execute()
@@ -177,12 +199,15 @@ class TestHoverAction(aiounittest.AsyncTestCase):
     async def test_hover_by_position(self):
         """测试按坐标悬停"""
         from app.services.execution.actions.interaction import HoverAction
+        from app.models.execution.action_params import Position
 
         await self.page.set_content("<html><body><div style='width: 100px; height: 100px; background: blue;'>Area</div></body></html>")
 
-        action = HoverAction(
+        action = HoverAction.new_action(
+            mid=1,
             page=self.page,
-            params={"position": {"x": 10, "y": 10}, "timeout": 5000},
+            variables={"test": True},
+            params=HoverParams(position=Position(x=10, y=10), timeout=5000),
         )
 
         result = await action.execute()

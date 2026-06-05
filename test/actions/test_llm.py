@@ -4,14 +4,13 @@
 LLM Action 不需要浏览器，只使用 mock
 """
 import pytest
-import aiounittest
 from unittest.mock import patch, AsyncMock, MagicMock
 
-# 提前导入，避免测试过程中 sys.modules 被 mock_database 影响
 from app.services.execution.actions.llm import LLMAction
+from app.models.execution.action_params import LLMParams
 
 
-class TestLLMAction(aiounittest.AsyncTestCase):
+class TestLLMAction:
     """LLM 对话操作测试"""
 
     @pytest.mark.asyncio(loop_scope="session")
@@ -30,17 +29,20 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.return_value = mock_response
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-3.5-turbo",
-                "prompt": "你好",
-                "system_prompt": "你是一个有用的助手",
-                "temperature": 0.7,
-                "max_tokens": 2048,
-                "timeout": 60000,
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-3.5-turbo",
+                prompt="你好",
+                system_prompt="你是一个有用的助手",
+                temperature=0.7,
+                max_tokens=2048,
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -70,18 +72,21 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.return_value = mock_response
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-4",
-                "messages": [
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-4",
+                messages=[
                     {"role": "user", "content": "1+1=?"},
                     {"role": "assistant", "content": "2"},
                 ],
-                "prompt": "前面我问了什么？",
-                "timeout": 60000,
-            },
+                prompt="前面我问了什么？",
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -93,14 +98,17 @@ class TestLLMAction(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_missing_messages_and_prompt(self):
         """测试 messages 和 prompt 同时为空"""
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-3.5-turbo",
-                "messages": [],
-                "prompt": "",
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-3.5-turbo",
+                messages=[],
+                prompt="",
+            ),
         )
 
         result = await action.execute()
@@ -121,14 +129,17 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.return_value = mock_response
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "invalid-key",
-                "model": "gpt-3.5-turbo",
-                "prompt": "hello",
-                "timeout": 60000,
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="invalid-key",
+                model="gpt-3.5-turbo",
+                prompt="hello",
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -145,14 +156,17 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.side_effect = __import__("httpx").TimeoutException("Timeout")
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-3.5-turbo",
-                "prompt": "hello",
-                "timeout": 1000,
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-3.5-turbo",
+                prompt="hello",
+                timeout=1000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -177,14 +191,17 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.return_value = mock_response
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-3.5-turbo",
-                "prompt": "hello",
-                "timeout": 60000,
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-3.5-turbo",
+                prompt="hello",
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -209,17 +226,20 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.return_value = mock_response
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-4",
-                "prompt": "翻译中文'你好'到英文",
-                "system_prompt": "你是一个翻译助手，只输出翻译结果",
-                "temperature": 0.3,
-                "max_tokens": 500,
-                "timeout": 60000,
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-4",
+                prompt="翻译中文'你好'到英文",
+                system_prompt="你是一个翻译助手，只输出翻译结果",
+                temperature=0.3,
+                max_tokens=500,
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -236,14 +256,17 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.side_effect = __import__("httpx").RequestError("Connection refused")
 
-        action = LLMAction(
-            params={
-                "server_url": "https://invalid-server.example.com",
-                "api_key": "sk-test-key",
-                "model": "gpt-3.5-turbo",
-                "prompt": "hello",
-                "timeout": 60000,
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://invalid-server.example.com",
+                api_key="sk-test-key",
+                model="gpt-3.5-turbo",
+                prompt="hello",
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -255,7 +278,16 @@ class TestLLMAction(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_invalid_params(self):
         """测试缺少必填参数"""
-        action = LLMAction(params={})
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="",
+                api_key="",
+                model="",
+            ),
+        )
         result = await action.execute()
         assert not result.success
 
@@ -275,16 +307,18 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.return_value = mock_response
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-3.5-turbo",
-                "prompt": "我的名字是什么",
-                "system_prompt": "你的名字是{name}",
-                "timeout": 60000,
-            },
-            variables={"name": "小明"},
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"name": "小明", "test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-3.5-turbo",
+                prompt="我的名字是什么",
+                system_prompt="你的名字是{name}",
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):
@@ -307,15 +341,18 @@ class TestLLMAction(aiounittest.AsyncTestCase):
         mock_client.__aexit__.return_value = None
         mock_client.post.return_value = mock_response
 
-        action = LLMAction(
-            params={
-                "server_url": "https://api.openai.com/v1",
-                "api_key": "sk-test-key",
-                "model": "gpt-3.5-turbo",
-                "prompt": "用超长文本" + "A" * 10000,
-                "max_tokens": 50,
-                "timeout": 60000,
-            },
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={"test": True},
+            params=LLMParams(
+                server_url="https://api.openai.com/v1",
+                api_key="sk-test-key",
+                model="gpt-3.5-turbo",
+                prompt="用超长文本" + "A" * 10000,
+                max_tokens=50,
+                timeout=60000,
+            ),
         )
 
         with patch("httpx.AsyncClient", return_value=mock_client):

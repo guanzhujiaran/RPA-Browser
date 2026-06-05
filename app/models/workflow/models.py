@@ -4,25 +4,11 @@ Workflow 模块 - 工作流请求/响应模型
 定义工作流相关的 API 请求/响应模型（非数据库表模型）。
 """
 from app.models.database.workflow.models import BuiltinActionType
+from app.models.execution.action_params import PluginConfig
 from typing import Any, Dict, List
 from datetime import datetime
-from enum import Enum
 from sqlmodel import SQLModel, Field
 from app.models.base.base_sqlmodel import BasePaginationReq
-from app.models.execution.params import (
-    BaseActionParams,
-    ClickParams,
-    InputParams,
-    ScrollParams,
-    WaitParams,
-    HoverParams,
-    NavigateParams,
-    NewPageParams,
-    ScreenshotParams,
-    LLMParams,
-    LoopParams,
-    IfElseParams,
-)
 from enum import StrEnum
 
 
@@ -86,8 +72,10 @@ class WorkflowStepResponse(SQLModel):
     retry: int = Field(default=0, description="失败重试次数")
     condition: str | None = Field(default=None, description="执行条件表达式")
     output_var: str | None = Field(default=None, description="结果变量键名")
-    input_vars: Dict[str, Any] = Field(default_factory=dict, description="输入变量")
-    output_vars: List[str] = Field(default_factory=list, description="输出变量名称列表")
+    input_vars: Dict[str, Any] = Field(
+        default_factory=dict, description="输入变量")
+    output_vars: List[str] = Field(
+        default_factory=list, description="输出变量名称列表")
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
     children: List['WorkflowStepResponse'] | None = Field(
         default=None, description="子步骤列表")
@@ -99,24 +87,31 @@ class WorkflowStepResponse(SQLModel):
 class WorkflowCreateRequest(SQLModel):
     """创建工作流请求"""
     name: str = Field(description="工作流显示名称（必填）")
+    custom_action_id: str | None = Field(
+        default=None, description="要执行的自定义动作ID")
     description: str = Field(default="", description="工作流描述")
     trigger_type: str = Field(
         default="manual", max_length=50, description="触发类型: manual/cron")
     trigger_config: Dict[str, Any] = Field(
         default_factory=dict, description="触发配置")
     is_public: bool = Field(default=False, description="是否公开给所有用户")
+    enabled_plugins: List[PluginConfig] | None = Field(
+        default=None, description="关联的插件列表")
 
 
 class WorkflowUpdateRequest(SQLModel):
     """更新工作流请求"""
     id: int = Field(description="工作流数据库ID")
     name: str | None = Field(default=None, description="新名称")
+    custom_action_id: str | None = Field(default=None, description="要执行的自定义动作ID")
     description: str | None = Field(default=None, description="新描述")
     trigger_type: str | None = Field(default=None, description="触发类型")
     trigger_config: Dict[str, Any] | None = Field(
         default=None, description="触发配置")
     is_public: bool | None = Field(default=None, description="是否公开")
     is_enabled: bool | None = Field(default=None, description="是否启用")
+    enabled_plugins: List[PluginConfig] | None = Field(
+        default=None, description="关联的插件列表")
 
 
 class WorkflowListRequest(BasePaginationReq):
@@ -129,6 +124,7 @@ class WorkflowListRequest(BasePaginationReq):
 class WorkflowExecuteRequest(SQLModel):
     """执行工作流请求 - 支持内联步骤或引用已保存操作"""
     action_id: str | None = Field(default=None, description="要执行的自定义操作ID（可选）")
+    workflow_id: str | None = Field(default=None, description="工作流ID（用于关联插件）")
     steps: List[WorkflowStepRequest] | None = Field(
         default=None, description="内联步骤列表（不提供 action_id 时使用）")
     name: str | None = Field(default=None, description="工作流名称（用于内联步骤）")
@@ -157,6 +153,7 @@ class WorkflowDetailResponse(SQLModel):
     is_verified: bool = False
     forks_count: int = 0
     forked_from_id: int | None = None
+    enabled_plugins: List[PluginConfig] = Field(default_factory=list, description="关联的插件列表")
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -233,7 +230,7 @@ class InputVarDefinition(SQLModel):
 
 
 class CompositeActionCreateRequest(SQLModel):
-    """创建复合操作请求 - 与 CompositeAction 数据库模型对齐"""
+    """创建复合操作请求 - 与 CompositeActionModel 数据库模型对齐"""
     name: str = Field(description="操作显示名称（必填）")
     action_type: BuiltinActionType = Field(
         default=BuiltinActionType.COMPOSITE, description="操作类型")
@@ -252,8 +249,6 @@ class CompositeActionCreateRequest(SQLModel):
     retry_on_error: bool = Field(default=False, description="错误时重试")
     retry_times: int = Field(default=0, description="重试次数")
     retry_delay: float = Field(default=1.0, description="重试延迟(秒)")
-    enabled_plugins: List[str] = Field(
-        default_factory=list, description="该动作内部引用的插件ID列表")
 
 
 class CompositeActionUpdateRequest(SQLModel):
@@ -275,8 +270,6 @@ class CompositeActionUpdateRequest(SQLModel):
     retry_on_error: bool | None = Field(default=None, description="错误时重试")
     retry_times: int | None = Field(default=None, description="重试次数")
     retry_delay: float | None = Field(default=None, description="重试延迟(秒)")
-    enabled_plugins: List[str] | None = Field(
-        default=None, description="该动作内部引用的插件ID列表")
 
 
 class CompositeActionListRequest(BasePaginationReq):
@@ -299,7 +292,6 @@ class CompositeActionDetailResponse(SQLModel):
     tags: List[str]
     input_vars: List[InputVarDefinition]
     output_vars: List[str]
-    enabled_plugins: List[str] = []
     is_enabled: bool
     is_public: bool = False
     timeout: int
@@ -371,9 +363,9 @@ class ActionExecuteRequest(SQLModel):
 
     @property
     def action_type(self) -> BuiltinActionType:
-        if self.action_id in BuiltinActionType: 
+        if self.action_id in BuiltinActionType:
             return BuiltinActionType(self.action_id)
-        return BuiltinActionType.COMPOSITE # 自定义操作默认为复合操作
+        return BuiltinActionType.COMPOSITE  # 自定义操作默认为复合操作
 
 
 class ActionPreviewRequest(SQLModel):
@@ -580,19 +572,6 @@ __all__ = [
     "FilterType",
     "SortBy",
     "SortOrder",
-    # Action 参数模型（从 execution/params.py 导入）
-    "BaseActionParams",
-    "ClickParams",
-    "InputParams",
-    "ScrollParams",
-    "WaitParams",
-    "HoverParams",
-    "NavigateParams",
-    "NewPageParams",
-    "ScreenshotParams",
-    "LLMParams",
-    "LoopParams",
-    "IfElseParams",
     # 自定义操作辅助模型
     "InputVarDefinition",
     # 工作流

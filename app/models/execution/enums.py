@@ -1,14 +1,7 @@
 """
 执行模块枚举定义
 """
-import sys
-if sys.version_info >= (3, 11):
-    from enum import StrEnum
-else:
-    from enum import Enum
-    class StrEnum(str, Enum):
-        """Python 3.10 兼容的 StrEnum"""
-        pass
+from enum import StrEnum
 
 
 class WaitUntilEnum(StrEnum):

@@ -1,14 +1,14 @@
 """
-组合测试 - 自定义操作全流程测试
-测试：创建自定义操作（含子步骤和变量）→ 通过 ExecutionEngine 执行
-使用 aiounittest.AsyncTestCase 模式
+组合测试 - 复合操作全流程测试
 """
 import pytest
-import aiounittest
 from playwright.async_api import Page
 from loguru import logger
 
-class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
+from app.models.execution.action_params import CompositeParams, create_workflow_step
+
+
+class TestCompositeActionWorkflow:
     """测试自定义组合操作全流程（不 mock，直接执行真实步骤）"""
 
     @pytest.fixture(autouse=True)
@@ -18,41 +18,43 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_navigate_and_screenshot(self):
         """测试：导航 + 截图 组合执行"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：导航 + 截图 组合执行")
-        action = CompositeAction(
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
-            variables={},
-            steps=[
-                {"action_id": "navigate", "params": {"url": "https://example.com"}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            variables={"test": True},
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="navigate", params={"url": "about:blank", "wait_until": "commit"}),
+                create_workflow_step(action_id="screenshot", params={}),
+            ]),
         )
 
         result = await action.execute()
-
+        logger.info(result)
         assert result.success
         assert result.data["total_steps"] == 2
         assert result.data["success_count"] == 2
-        assert "png" in result.data["details"][1]["data"].get("format", "")
+        assert result.data["results"][1].get("success") is True
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_navigate_click_screenshot(self):
         """测试：导航 → 点击 → 截图 完整流程"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：导航 → 点击 → 截图 完整流程")
         
-        # 先导航到 example.com
-        action = CompositeAction(
+        # 先导航到 about:blank
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
-            variables={},
-            steps=[
-                {"action_id": "navigate", "params": {"url": "https://example.com"}},
-            ],
+            variables={"test": True},
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="navigate", params={"url": "about:blank", "wait_until": "commit"}),
+            ]),
         )
         result = await action.execute()
+        logger.info(result)
+
         assert result.success
 
         # 设置页面内容模拟可交互页面
@@ -63,16 +65,17 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action2 = CompositeAction(
+        action2 = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
-            variables={},
-            steps=[
-                {"action_id": "click", "params": {"selector": "#btn"}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            variables={"test": True},
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="click", params={"selector": "#btn"}),
+                create_workflow_step(action_id="screenshot", params={}),
+            ]),
         )
         result2 = await action2.execute()
+        logger.info(result2)
 
         assert result2.success
         assert result2.data["total_steps"] == 2
@@ -81,7 +84,7 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_with_variable_injection(self):
         """测试：变量注入到步骤参数"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：变量注入到步骤参数")
         
         # 设置页面
@@ -93,23 +96,24 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = CompositeAction(
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
             variables={
                 "target_url": "https://example.com",
                 "user_name": "test_user_123",
                 "email_addr": "test@example.com",
                 "selector_submit": "#submit",
             },
-            steps=[
-                {"action_id": "input", "params": {"selector": "#username", "value": "{user_name}"}},
-                {"action_id": "input", "params": {"selector": "#email", "value": "{email_addr}"}},
-                {"action_id": "click", "params": {"selector": "{selector_submit}"}},
-            ],
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="input", params={"selector": "#username", "value": "{{user_name}}"}),
+                create_workflow_step(action_id="input", params={"selector": "#email", "value": "{{email_addr}}"}),
+                create_workflow_step(action_id="click", params={"selector": "{{selector_submit}}"}),
+            ]),
         )
 
         result = await action.execute()
+        logger.info(result)
 
         assert result.success
         assert result.data["success_count"] == 3
@@ -117,7 +121,7 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_input_and_verify(self):
         """测试：输入 → 验证输入结果"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：输入 → 验证输入结果")
         
         await self.page.set_content(
@@ -127,17 +131,18 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = CompositeAction(
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
             variables={"input_value": "Hello Playwright!"},
-            steps=[
-                {"action_id": "input", "params": {"selector": "#input_field", "value": "{input_value}"}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="input", params={"selector": "#input_field", "value": "{{input_value}}"}),
+                create_workflow_step(action_id="screenshot", params={}),
+            ]),
         )
 
         result = await action.execute()
+        logger.info(result)
 
         assert result.success
         assert result.data["success_count"] == 2
@@ -149,7 +154,7 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_scroll_and_screenshot(self):
         """测试：滚动 + 截图"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：滚动 + 截图")
         
         await self.page.set_content(
@@ -160,17 +165,18 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = CompositeAction(
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
-            variables={},
-            steps=[
-                {"action_id": "scroll", "params": {}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            variables={"test": True},
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="scroll", params={}),
+                create_workflow_step(action_id="screenshot", params={}),
+            ]),
         )
 
         result = await action.execute()
+        logger.info(result)
 
         assert result.success
         assert result.data["success_count"] == 2
@@ -178,34 +184,35 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_multiple_inputs(self):
         """测试：多输入框填写"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：多输入框填写")
         
         await self.page.set_content(
             "<html><body>"
             "<form>"
             "<input id='name' type='text'>"
-            "<input id='age' type='number'>"
+            "<input id='age' type='text'>"
             "<input id='city' type='text'>"
             "<button id='submit_form'>Submit</button>"
             "</form>"
             "</body></html>"
         )
 
-        action = CompositeAction(
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
             variables={"user_name": "张三", "user_age": "25", "user_city": "北京"},
-            steps=[
-                {"action_id": "input", "params": {"selector": "#name", "value": "{user_name}"}},
-                {"action_id": "input", "params": {"selector": "#age", "value": "{user_age}"}},
-                {"action_id": "input", "params": {"selector": "#city", "value": "{user_city}"}},
-                {"action_id": "click", "params": {"selector": "#submit_form"}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="input", params={"selector": "#name", "value": "{{user_name}}"}),
+                create_workflow_step(action_id="input", params={"selector": "#age", "value": "{{user_age}}"}),
+                create_workflow_step(action_id="input", params={"selector": "#city", "value": "{{user_city}}"}),
+                create_workflow_step(action_id="click", params={"selector": "#submit_form"}),
+                create_workflow_step(action_id="screenshot", params={}),
+            ]),
         )
 
         result = await action.execute()
+        logger.info(result)
 
         assert result.success
         assert result.data["total_steps"] == 5
@@ -214,7 +221,7 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_hover_and_click(self):
         """测试：悬停 + 点击"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：悬停 + 点击")
         
         await self.page.set_content(
@@ -224,17 +231,18 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = CompositeAction(
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
-            variables={},
-            steps=[
-                {"action_id": "hover", "params": {"selector": "#menu"}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            variables={"test": True},
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="hover", params={"selector": "#menu"}),
+                create_workflow_step(action_id="screenshot", params={}),
+            ]),
         )
 
         result = await action.execute()
+        logger.info(result)
 
         assert result.success
         assert result.data["success_count"] == 2
@@ -242,26 +250,34 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_failed_step_stops_execution(self):
         """测试：单步失败中断后续操作"""
-        from app.services.execution.actions.base import CompositeAction
+        from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：单步失败中断后续操作")
-        
-        await self.page.set_content("<html><body><div>Content</div></body></html>")
 
-        action = CompositeAction(
+        await self.page.set_content(
+            "<html><body>"
+            "<button id='btn'>Click Me</button>"
+            "<div id='result'>Result</div>"
+            "</body></html>"
+        )
+        logger.info("页面内容已设置")
+
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
-            variables={},
-            steps=[
-                {"action_id": "navigate", "params": {"url": "https://example.com"}},
-                {"action_id": "click", "params": {"selector": "#nonexistent"}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            variables={"test": True},
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="click", params={"selector": "#btn"}),
+                create_workflow_step(action_id="click", params={"selector": "#nonexistent"}),
+                create_workflow_step(action_id="click", params={"selector": "#result"}),
+            ]),
         )
 
         result = await action.execute()
+        logger.info(f"失败中断测试结果: {result}")
 
         # 应该失败，且不是所有步骤都执行成功
         assert not result.success
+        assert result.data["success_count"] == 1  # 只有第一个 click 成功
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_full_login_simulation(self):
@@ -282,22 +298,23 @@ class TestCompositeActionWorkflow(aiounittest.AsyncTestCase):
             "</body></html>"
         )
 
-        action = CompositeAction(
+        action = CompositeAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
             variables={
                 "login_user": "admin",
                 "login_pass": "password123",
             },
-            steps=[
-                {"action_id": "input", "params": {"selector": "#username", "value": "{login_user}"}},
-                {"action_id": "input", "params": {"selector": "#password", "value": "{login_pass}"}},
-                {"action_id": "click", "params": {"selector": "#login_btn"}},
-                {"action_id": "screenshot", "params": {}},
-            ],
+            params=CompositeParams(steps=[
+                create_workflow_step(action_id="input", params={"selector": "#username", "value": "{login_user}"}),
+                create_workflow_step(action_id="input", params={"selector": "#password", "value": "{login_pass}"}),
+                create_workflow_step(action_id="click", params={"selector": "#login_btn"}),
+                create_workflow_step(action_id="screenshot", params={}),
+            ]),
         )
 
         result = await action.execute()
+        logger.info(result)
 
         assert result.success
         assert result.data["success_count"] == 4

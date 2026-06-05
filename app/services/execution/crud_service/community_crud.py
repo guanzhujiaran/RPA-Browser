@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlmodel import select, update, func
 
 from app.models.database.workflow.models import (
-    CompositeAction,
+    CompositeActionModel,
     UserWorkflow,
     UserPlugin,
     ResourceLike,
@@ -29,7 +29,7 @@ class CommunityCrudService:
         async with DatabaseSessionManager.async_session() as session:
             if resource_type == ResourceType.CUSTOM_ACTION:
                 result = await session.exec(
-                    select(CompositeAction).where(CompositeAction.id == resource_id)
+                    select(CompositeActionModel).where(CompositeActionModel.id == resource_id)
                 )
                 resource = result.first()
             elif resource_type == ResourceType.USER_WORKFLOW:
@@ -62,9 +62,9 @@ class CommunityCrudService:
                 await session.delete(existing_like)
                 if resource_type == ResourceType.CUSTOM_ACTION:
                     await session.exec(
-                        update(CompositeAction)
-                        .where(CompositeAction.id == resource_id)
-                        .values(likes_count=CompositeAction.likes_count - 1)
+                        update(CompositeActionModel)
+                        .where(CompositeActionModel.id == resource_id)
+                        .values(likes_count=CompositeActionModel.likes_count - 1)
                     )
                 elif resource_type == ResourceType.USER_WORKFLOW:
                     await session.exec(
@@ -90,9 +90,9 @@ class CommunityCrudService:
 
             if resource_type == ResourceType.CUSTOM_ACTION:
                 await session.exec(
-                    update(CompositeAction)
-                    .where(CompositeAction.id == resource_id)
-                    .values(likes_count=CompositeAction.likes_count + 1)
+                    update(CompositeActionModel)
+                    .where(CompositeActionModel.id == resource_id)
+                    .values(likes_count=CompositeActionModel.likes_count + 1)
                 )
             elif resource_type == ResourceType.USER_WORKFLOW:
                 await session.exec(
@@ -135,7 +135,7 @@ class CommunityCrudService:
         async with DatabaseSessionManager.async_session() as session:
             if resource_type == ResourceType.CUSTOM_ACTION:
                 result = await session.exec(
-                    select(CompositeAction).where(CompositeAction.id == resource_id)
+                    select(CompositeActionModel).where(CompositeActionModel.id == resource_id)
                 )
                 resource = result.first()
             elif resource_type == ResourceType.USER_WORKFLOW:
@@ -178,9 +178,9 @@ class CommunityCrudService:
 
             if resource_type == ResourceType.CUSTOM_ACTION:
                 await session.exec(
-                    update(CompositeAction)
-                    .where(CompositeAction.id == resource_id)
-                    .values(reports_count=CompositeAction.reports_count + 1)
+                    update(CompositeActionModel)
+                    .where(CompositeActionModel.id == resource_id)
+                    .values(reports_count=CompositeActionModel.reports_count + 1)
                 )
             elif resource_type == ResourceType.USER_WORKFLOW:
                 await session.exec(
@@ -219,9 +219,9 @@ class CommunityCrudService:
 
             if report.resource_type == ResourceType.CUSTOM_ACTION:
                 await session.exec(
-                    update(CompositeAction)
-                    .where(CompositeAction.id == report.resource_id)
-                    .values(reports_count=CompositeAction.reports_count - 1)
+                    update(CompositeActionModel)
+                    .where(CompositeActionModel.id == report.resource_id)
+                    .values(reports_count=CompositeActionModel.reports_count - 1)
                 )
             elif report.resource_type == ResourceType.USER_WORKFLOW:
                 await session.exec(

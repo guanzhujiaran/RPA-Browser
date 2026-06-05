@@ -1,6 +1,8 @@
 """
 导航类 Action - Navigate, NewPage
 """
+from typing import Dict, Any, List
+
 import contextlib
 import asyncio
 import socket
@@ -8,10 +10,9 @@ import ipaddress
 from urllib.parse import urlparse
 import time
 from loguru import logger
-
 from app.services.execution.actions.base import BaseAction
-from app.models.execution.params import NavigateParams, NewPageParams
-from app.models.database.workflow.models import ActionMetadata, ActionResult
+from app.models.execution.action_params import NavigateParams, NewPageParams
+from app.models.database.workflow.models import ActionResult
 from app.models.core.browser.security import SecurityCheckResult
 from app.config import settings
 from app.models.database.workflow.models import BuiltinActionType
@@ -23,7 +24,7 @@ class URLSecurityChecker:
     @staticmethod
     def _check_protocol(scheme: str) -> SecurityCheckResult:
         """检查协议是否允许"""
-        if scheme in ["http", "https"]:
+        if scheme in ["http", "https", "about"]:
             return SecurityCheckResult(allowed=True)
         return SecurityCheckResult(
             allowed=False, reason=f"不支持的协议: {scheme}。只允许 http 和 https"
@@ -131,6 +132,10 @@ class URLSecurityChecker:
             hostname = parsed.hostname
             scheme = parsed.scheme.lower()
 
+            # about: 协议（如 about:blank）无需主机名检查，直接放行
+            if scheme == "about":
+                return SecurityCheckResult(allowed=True)
+
             if not hostname:
                 return SecurityCheckResult(allowed=False, reason="无法解析 URL 主机名")
 
@@ -185,6 +190,16 @@ class URLSecurityChecker:
 class NavigateAction(BaseAction):
     """导航操作"""
     action_id: BuiltinActionType = BuiltinActionType.NAVIGATE
+    params: NavigateParams
+
+    @classmethod
+    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: NavigateParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        return super().new_action(
+            mid=mid, page=page, variables=variables,
+            params=params, timeout=timeout,
+            input_vars=input_vars, output_vars=output_vars,
+            action_name=action_name,
+        )
 
     async def execute(self) -> ActionResult:
         start_time = time.time()
@@ -203,7 +218,7 @@ class NavigateAction(BaseAction):
 
         try:
             # 验证 URL 格式
-            if not (url.startswith("http://") or url.startswith("https://")):
+            if not (url.startswith("http://") or url.startswith("https://") or url.startswith("about:")):
                 if "." in url and not url.startswith("www."):
                     url = "https://" + url
                 elif url.startswith("www."):
@@ -254,8 +269,16 @@ class NavigateAction(BaseAction):
 class NewPageAction(BaseAction):
     """新建页面操作"""
     action_id: BuiltinActionType = BuiltinActionType.NEW_PAGE
+    params: NewPageParams
 
-
+    @classmethod
+    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: NewPageParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        return super().new_action(
+            mid=mid, page=page, variables=variables,
+            params=params, timeout=timeout,
+            input_vars=input_vars, output_vars=output_vars,
+            action_name=action_name,
+        )
 
     async def execute(self) -> ActionResult:
         start_time = time.time()

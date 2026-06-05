@@ -3,20 +3,14 @@ Core 模块 - 工作流数据库模型
 
 定义工作流、自定义操作、用户插件等数据库模型。
 """
-from app.models.execution.params import CompositeParams
-from typing import Type
-from app.models.execution.params import AllActionParams
+from app.models.execution.action_params import WorkflowStep
+from app.models.execution.action_params import BuiltinActionType
 from typing import Any, Dict, List, Generic
 from datetime import datetime
 from pydantic.types import T
 from pydantic import field_validator
 from sqlalchemy import Column, JSON, Index, String
-from sqlmodel import SQLModel, Field, Relationship
-from app.models.execution.params import (
-    IfElseParams, LoopParams, LLMParams, ScreenshotParams, NewPageParams,
-    NavigateParams, HoverParams, WaitParams, InputParams, ScrollParams,
-    AllActionParams, ClickParams, WorkflowStep
-)
+from sqlmodel import SQLModel, Field
 from enum import StrEnum, IntEnum
 
 
@@ -25,86 +19,6 @@ class TriggerType(StrEnum):
     MANUAL = "manual"          # 手动触发
     SCHEDULED = "scheduled"    # 定时触发
     EVENT = "event"            # 事件触发
-
-
-class BuiltinActionName(StrEnum):
-    """内置操作名称"""
-    CLICK = "点击"
-    INPUT = "输入"
-    WAIT = "等待"
-    SCROLL = "滚动"
-    NAVIGATE = "导航"
-    SCREENSHOT = "截图"
-    LOOP = "循环"
-    COMPOSITE = "复合操作"
-    LLM = "LLM"
-    IF_ELSE = "条件判断"
-    HOVER = "悬停"
-    NEW_PAGE = "新页面"
-
-
-class BuiltinActionDesc(StrEnum):
-    """内置操作描述"""
-    CLICK = "点击元素"
-    INPUT = "输入文本"
-    WAIT = "等待元素出现"
-    SCROLL = "滚动到元素"
-    NAVIGATE = "导航到 URL"
-    SCREENSHOT = "截图"
-    LOOP = "循环执行操作"
-    LLM = "使用 LLM 生成文本"
-    HOVER = "悬停在元素上"
-    NEW_PAGE = "打开新页面"
-    
-    IF_ELSE = "根据条件执行 true/false 分支"
-    LOOP = "循环执行操作"
-    COMPOSITE = "执行复合操作"
-
-
-
-class BuiltinActionType(StrEnum):
-    """内置操作类型"""
-    CLICK = "click"
-    INPUT = "input"
-    WAIT = "wait"
-    SCROLL = "scroll"
-    NAVIGATE = "navigate"
-    SCREENSHOT = "screenshot"
-    LOOP = "loop"
-    LLM = "llm"
-    IF_ELSE = "if_else"
-    HOVER = "hover"
-    NEW_PAGE = "new_page"
-
-    COMPOSITE = "composite"  # 复合操作 需要拆分开开单独执行
-
-    @property
-    def nameDisplay(self) -> str:
-        return BuiltinActionName(self.name)
-
-    @property
-    def descDisplay(self) -> str:
-        return BuiltinActionDesc(self.name)
-
-    @property
-    def params_model(self) -> Type[AllActionParams]:
-        return BUILTIN_ACTION_PARAMS_MAP.get(self.value)
-
-
-BUILTIN_ACTION_PARAMS_MAP: Dict[str, Type[AllActionParams]] = {
-    BuiltinActionType.CLICK: ClickParams,
-    BuiltinActionType.INPUT: InputParams,
-    BuiltinActionType.SCROLL: ScrollParams,
-    BuiltinActionType.WAIT: WaitParams,
-    BuiltinActionType.HOVER: HoverParams,
-    BuiltinActionType.NAVIGATE: NavigateParams,
-    BuiltinActionType.NEW_PAGE: NewPageParams,
-    BuiltinActionType.SCREENSHOT: ScreenshotParams,
-    BuiltinActionType.LLM: LLMParams,
-    BuiltinActionType.LOOP: LoopParams,
-    BuiltinActionType.IF_ELSE: IfElseParams,
-    BuiltinActionType.COMPOSITE: CompositeParams,
-}
 
 
 class ErrorHandlingEnum(StrEnum):
@@ -139,7 +53,7 @@ class ReportReason(IntEnum):
     OTHER = 5
 
 
-# ============ 执行相关模型 ============
+# region ============ 执行相关模型 ============
 
 class ActionParameter(SQLModel):
     """操作参数定义（内部使用）"""
@@ -181,8 +95,9 @@ class ActionResult(SQLModel, Generic[T]):
     action_name: str = Field(default="", description="操作名称")
     logs: List[str] = Field(default_factory=list, description="日志记录")
 
+# endregion
+# region ============ 社区资源基类 ============
 
-# ============ 社区资源基类 ============
 
 class CommunityResourceBase(SQLModel):
     """社区资源基类 - mid 字段：数据库存储为 str，运行时使用 int"""
@@ -244,17 +159,17 @@ class ExecutionTask(SQLModel):
     total_time: float = 0.0
     error: str | None = None
 
+# endregion
+# region ============ 数据库模型 ============
 
-# ============ 数据库模型 ============
 
-
-class CompositeAction(CommunityResourceBase, table=True):
+class CompositeActionModel(CommunityResourceBase, table=True):
     """
     复合动作表
 
     用户定义的、可复用的动作组合（类似函数）。
     """
-    __tablename__ = "composite_action"
+    __tablename__ = "composite_action_model"
     __table_args__ = (
         Index('idx_user_action_name_unique', 'mid', 'name', unique=True),
     )
@@ -281,16 +196,7 @@ class CompositeAction(CommunityResourceBase, table=True):
         default_factory=list,
         sa_column=Column(JSON),
         description=(
-            "步骤列表，每个元素为 WorkflowStep 结构的字典：\n"
-            "- action_id (str): 操作ID\n"
-            "- params (Dict): 参数字典，支持 {{变量名}} 模板替换\n"
-            "- children (List[Dict], 可选): 子步骤列表\n"
-            "- condition (str, 可选): 执行条件表达式\n"
-            "- output_var (str, 可选): 结果变量键名\n"
-            "- loop_count (int, 可选): 固定循环次数\n"
-            "- loop_while (str, 可选): 条件循环表达式\n"
-            "- loop_until (str, 可选): 条件退出表达式\n"
-            "- retry (int): 失败重试次数"
+            "步骤列表，每个元素为 WorkflowStep 结构"
         )
     )
     is_composite: bool = Field(default=True, description="是否为组合动作")
@@ -310,7 +216,7 @@ class CompositeAction(CommunityResourceBase, table=True):
     )
     forked_from_id: int | None = Field(
         default=None,
-        foreign_key="composite_action.id",
+        foreign_key="composite_action_model.id",
         description="Fork 来源的操作ID"
     )
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
@@ -318,10 +224,6 @@ class CompositeAction(CommunityResourceBase, table=True):
     retry_times: int = Field(default=0)
     retry_delay: float = Field(default=1.0)
 
-    plugin_relations: List["ActionPluginRelation"] = Relationship(
-        back_populates="composite_action",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
-    )
 
 
 class WorkflowPluginRelation(SQLModel, table=True):
@@ -336,21 +238,6 @@ class WorkflowPluginRelation(SQLModel, table=True):
     config_params: Dict[str, Any] = Field(
         default_factory=dict, sa_column=Column(JSON), description="配置参数")
 
-
-class ActionPluginRelation(SQLModel, table=True):
-    """动作插件关联表"""
-    __tablename__ = "action_plugin_relation"
-
-    id: int | None = Field(default=None, primary_key=True,)
-    action_id: str = Field(
-        foreign_key="composite_action.action_id", index=True, description="动作ID")
-    plugin_id: str = Field(
-        foreign_key="user_plugin.plugin_id", index=True, description="插件ID")
-    config_params: Dict[str, Any] = Field(
-        default_factory=dict, sa_column=Column(JSON), description="配置参数")
-
-    composite_action: "CompositeAction" = Relationship(
-        back_populates="plugin_relations")
 
 
 class UserPlugin(CommunityResourceBase, table=True):

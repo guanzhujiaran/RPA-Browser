@@ -1,34 +1,73 @@
 """
-测试配置文件 - 使用 pytest + unittest + playwright-asyncio
-浏览器由 pytest-playwright-asyncio 提供 page/browser fixtures
-参考: https://playwright.dev/python/docs/test-runners#using-with-unittesttestcase
+测试配置文件 - 所有测试共享同一个浏览器和页面
+数据库使用 SQLite 本地文件进行测试
 """
-import pytest
 import os
 import sys
 from pathlib import Path
+
+import pytest
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from sqlmodel import SQLModel
 
 # 添加项目根目录到 sys.path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-os.environ.setdefault("mysql_browser_info_url", "sqlite+aiosqlite:///./test.db")
-os.environ.setdefault("RUNNING_MODE", "dev")
+# 强制使用 SQLite 进行测试，避免依赖外部 MySQL
+os.environ["MYSQL_BROWSER_INFO_URL"] = "sqlite+aiosqlite:///./test.db"
 
 
-@pytest.fixture(autouse=True)
-def mock_database():
-    """Mock 数据库连接"""
-    from unittest.mock import AsyncMock, MagicMock, patch
-    
-    mock_session = AsyncMock()
-    mock_manager = MagicMock()
-    mock_manager.async_session.return_value.__aenter__.return_value = mock_session
-    
-    mock_session_module = MagicMock()
-    mock_session_module.DatabaseSessionManager = mock_manager
-    
-    with patch.dict(sys.modules, {
-        'app.utils.depends.session_manager': mock_session_module,
-    }):
-        yield mock_manager
+@pytest.fixture(scope="session", autouse=True)
+async def _init_test_db():
+    """创建所有数据库表（会话级别，异步）"""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    import app.models.database.workflow.models  # noqa: F401
+    import app.models.database.browser.info  # noqa: F401
+    import app.models.database.notify.models  # noqa: F401
+
+    db_url = os.environ["MYSQL_BROWSER_INFO_URL"]
+    # 删除旧的测试数据库文件，确保每次测试都是干净的
+    if db_url.startswith("sqlite"):
+        db_path = db_url.replace("sqlite+aiosqlite:///", "")
+        if Path(db_path).exists():
+            Path(db_path).unlink()
+
+    engine = create_async_engine(db_url)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    await engine.dispose()
+    yield
+
+
+@pytest.fixture(scope="session")
+async def shared_browser():
+    """会话级别的共享浏览器 - 整个测试会话只启动一次"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=False,
+            slow_mo=0,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        yield browser
+        await browser.close()
+
+
+@pytest.fixture(scope="session")
+async def browser_context(shared_browser: Browser):
+    """会话级别的共享浏览器上下文"""
+    context = await shared_browser.new_context(
+        viewport={"width": 1280, "height": 720},
+    )
+    yield context
+    await context.close()
+
+
+@pytest.fixture(scope="session")
+async def page(browser_context: BrowserContext) -> Page:
+    """会话级别的共享页面 - 所有测试在同一页面上执行"""
+    page = await browser_context.new_page()
+    yield page
+    await page.close()

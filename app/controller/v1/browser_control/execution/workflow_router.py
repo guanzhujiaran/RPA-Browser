@@ -51,11 +51,12 @@ async def create_workflow(
         workflow_id=workflow_id,
         name=request.name,
         mid=auth.mid,
-        custom_action_id=None,
+        custom_action_id=request.custom_action_id,
         description=request.description,
         trigger_type=request.trigger_type,
         trigger_config=request.trigger_config,
         is_public=request.is_public,
+        enabled_plugins=request.enabled_plugins,
     )
     
     return success_response(
@@ -151,7 +152,6 @@ async def get_workflow_detail(
     
     # 获取关联的插件列表
     enabled_plugins = await workflow_crud.get_enabled_plugins(model.workflow_id)
-    enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
     
     return success_response(
         WorkflowDetailResponse(
@@ -169,6 +169,7 @@ async def get_workflow_detail(
             is_verified=model.is_verified,
             forks_count=model.forks_count,
             forked_from_id=model.forked_from_id,
+            enabled_plugins=enabled_plugins,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -185,10 +186,12 @@ async def update_workflow(
         id=request.id,
         name=request.name,
         description=request.description,
+        custom_action_id=request.custom_action_id,
         trigger_type=request.trigger_type,
         trigger_config=request.trigger_config,
         is_enabled=request.is_enabled,
         is_public=request.is_public,
+        enabled_plugins=request.enabled_plugins,
     )
     
     if not model or str(model.mid) != str(auth.mid):
@@ -196,7 +199,6 @@ async def update_workflow(
     
     # 获取关联的插件列表
     enabled_plugins = await workflow_crud.get_enabled_plugins(model.workflow_id)
-    enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
     
     return success_response(
         WorkflowDetailResponse(
@@ -214,6 +216,7 @@ async def update_workflow(
             is_verified=model.is_verified,
             forks_count=model.forks_count,
             forked_from_id=model.forked_from_id,
+            enabled_plugins=enabled_plugins,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -271,6 +274,9 @@ async def duplicate_workflow(
     # 创建副本
     new_workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
     
+    # 复制原工作流的插件关联
+    original_plugins = await workflow_crud.get_enabled_plugins(original.workflow_id)
+    
     model = await workflow_crud.create(
         workflow_id=new_workflow_id,
         name=new_name,
@@ -280,6 +286,7 @@ async def duplicate_workflow(
         trigger_type=original.trigger_type,
         trigger_config=original.trigger_config,
         is_public=False,
+        enabled_plugins=original_plugins,
     )
     
     return success_response(
@@ -358,7 +365,6 @@ async def get_workflow_forks(
             workflow_id=f.workflow_id,
             name=f.name,
             description=f.description,
-            tags=f.tags or [],
             is_enabled=f.is_enabled,
             is_public=f.is_public,
             likes_count=f.likes_count,

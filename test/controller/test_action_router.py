@@ -33,7 +33,6 @@ class TestCreateCompositeAction:
             "retry_on_error": True,
             "retry_times": 3,
             "retry_delay": 2.0,
-            "enabled_plugins": [],
         }
 
         response = client.post(f"{PREFIX}/custom-actions/create", json=request_data)
@@ -47,7 +46,6 @@ class TestCreateCompositeAction:
         assert data["data"]["retry_on_error"] is True
         assert data["data"]["retry_times"] == 3
         assert data["data"]["retry_delay"] == 2.0
-        return data["data"]
 
     def test_create_custom_action_minimal(self, client):
         request_data = {"name": "最小化操作"}
@@ -58,7 +56,6 @@ class TestCreateCompositeAction:
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
         assert data["data"]["name"] == "最小化操作"
-        return data["data"]
 
 
 class TestListCompositeActions:

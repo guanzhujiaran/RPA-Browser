@@ -63,7 +63,7 @@ class BrowserFingerprintUpsertParams(BaseBrowserIdOptional):
     @field_validator("proxy_server", mode="before")
     @classmethod
     def validate_proxy_server(cls, v: str):
-        if v is not None:
+        if v is not None and v.strip():
             split_proxy = v.split(":")
             if len(split_proxy) == 2:
                 ...

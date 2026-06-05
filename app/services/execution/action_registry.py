@@ -1,74 +1,103 @@
 """
-Action Registry - 动作注册表
+操作注册中心
 
-简化设计：只管理原子动作，从数据库加载组合动作
+负责管理内置操作和用户自定义操作的注册、查找。
 """
+from typing import Any
 
-from app.services.execution.actions.all_actions import BUILTIN_ACTION_MAP
-from app.services.execution.actions.control_flow import CompositeAction
-from typing import Type, Dict
+from sqlmodel import select
+
+from app.models.database.workflow.models import (
+    ActionMetadata,
+    BuiltinActionType,
+    CompositeActionModel,
+)
+from app.services.execution.actions.all_actions import (
+    BUILTIN_ACTION_MAP,
+    get_action_class,
+    get_all_actions_metadata,
+)
 from app.services.execution.actions.base import BaseAction
+from app.utils.depends.session_manager import DatabaseSessionManager
 
 
 class ActionRegistry:
-    """
-    动作注册表
-
-    管理所有可用动作：
-    1. 内置原子动作（代码注册）
-    2. 用户组合动作（从数据库加载）
-    3. 用户插件（从数据库加载，合并到 CompositeAction）
-    """
+    """操作注册中心 - 管理内置操作和用户自定义操作"""
 
     def __init__(self):
-        self._actions: Dict[str, Type[BaseAction]] = dict(BUILTIN_ACTION_MAP)
+        self._builtin_map: dict[str, type[BaseAction]] = dict(BUILTIN_ACTION_MAP)
 
-    def register(self, action_class: Type[BaseAction], action_id: str | None = None):
-        """注册动作类"""
-        action_id = action_id or action_class.action_id
-
-        if action_id in self._actions:
-            raise ValueError(f"动作 ID {action_id} 已存在")
-
-        self._actions[action_id] = action_class
-
-    def unregister(self, action_id: str):
-        """注销动作"""
-        if action_id in self._actions:
-            del self._actions[action_id]
-
-
-
-    def is_builtin(self, action_id: str) -> bool:
-        """判断是否为内置动作"""
-        return action_id in BUILTIN_ACTION_MAP
-
-    async def get_action_class_for_user(self, action_id: str, mid: int) -> Type[BaseAction] | None:
+    async def get_action_class_for_user(self, action_id: str, mid: int) -> type[BaseAction] | None:
         """
-        为用户获取动作类
+        获取操作类（先查内置，再查用户自定义）
 
-        查找顺序：
-        1. 内置动作
-        2. 用户自定义组合动作（CompositeAction）
-        3. 用户插件（UserPlugin，合并为带 hook_type 的组合动作）
+        Args:
+            action_id: 操作标识（内置操作为 BuiltinActionType 值，自定义操作为 ca_xxx）
+            mid: 用户 mid
 
         Returns:
-            动作类，调用者需要自行实例化
+            操作类，未找到返回 None
         """
-        # 1. 内置动作
-        if action_class := self._actions.get(action_id):
-            return action_class
-        # 不是内置动作的就全部都是组合动作
-        return CompositeAction
+        # 1. 先查内置操作
+        builtin = get_action_class(action_id)
+        if builtin:
+            return builtin
 
-    def list_builtin_actions(self) -> list[str]:
-        """列出内置动作"""
-        return list(BUILTIN_ACTION_MAP.keys())
+        # 2. 再查用户自定义操作（复合操作）
+        from app.services.execution.actions.control_flow import CompositeAction
 
-    def get_all_actions_metadata(self) -> list[Type[BaseAction]]:
-        """获取所有注册的动作类"""
-        return list(self._actions.values())
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(CompositeActionModel).where(
+                    CompositeActionModel.action_id == action_id
+                )
+            )
+            custom = result.first()
+            if custom:
+                return CompositeAction
+
+        return None
+
+    async def get_custom_action_steps(self, action_id: str) -> list[dict[str, Any]] | None:
+        """
+        获取自定义操作的步骤列表（已确保 action_type 字段存在）
+
+        Args:
+            action_id: 操作标识
+
+        Returns:
+            步骤列表，不是自定义操作返回 None
+        """
+        from app.models.execution.action_params import _ensure_action_type
+
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(CompositeActionModel).where(
+                    CompositeActionModel.action_id == action_id
+                )
+            )
+            custom = result.first()
+            if custom:
+                steps = custom.steps  # List[WorkflowStep] from JSON, may be raw dicts
+                # 确保每个 step dict 都有 action_type 字段
+                return [_ensure_action_type(s) if isinstance(s, dict) else s for s in steps]
+        return None
+
+    def get_action_metadata(self, action_id: str) -> ActionMetadata | None:
+        """获取操作元数据"""
+        action_class = get_action_class(action_id)
+        if action_class and hasattr(action_class, 'metadata'):
+            return action_class.metadata
+        return None
+
+    def get_all_action_metadatas(self) -> list[ActionMetadata]:
+        """获取所有内置操作的元数据"""
+        result: list[ActionMetadata] = []
+        for cls in get_all_actions_metadata():
+            if hasattr(cls, 'metadata'):
+                result.append(cls.metadata)
+        return result
 
 
-# 全局注册表
+# 全局注册中心实例
 action_registry = ActionRegistry()

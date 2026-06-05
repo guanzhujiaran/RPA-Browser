@@ -6,7 +6,8 @@ from datetime import datetime
 import uuid
 from sqlmodel import select, update
 
-from app.models.database.workflow.models import UserWorkflow, WorkflowPluginRelation, CompositeAction
+from app.models.database.workflow.models import UserWorkflow, WorkflowPluginRelation, CompositeActionModel, UserPlugin
+from app.models.execution.action_params import PluginConfig
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
 
@@ -24,7 +25,7 @@ class WorkflowCrudService:
         trigger_type: str = "manual",
         trigger_config: Dict[str, Any] | None = None,
         is_public: bool = False,
-        enabled_plugins: List[Dict[str, Any]] = None,
+        enabled_plugins: List[PluginConfig] | None = None,
     ) -> UserWorkflow:
         async with DatabaseSessionManager.async_session() as session:
             existing = await session.exec(
@@ -49,11 +50,11 @@ class WorkflowCrudService:
             session.add(model)
 
             if enabled_plugins:
-                for link_data in enabled_plugins:
+                for plugin_config in enabled_plugins:
                     link = WorkflowPluginRelation(
                         workflow_id=workflow_id,
-                        plugin_id=link_data.get("plugin_id"),
-                        config_params=link_data.get("config_params", {})
+                        plugin_id=plugin_config.plugin_id,
+                        config_params=plugin_config.config_params
                     )
                     session.add(link)
 
@@ -76,16 +77,30 @@ class WorkflowCrudService:
             return result.first()
 
     @staticmethod
-    async def get_enabled_plugins(workflow_id: str) -> List[Dict[str, Any]]:
+    async def get_enabled_plugins(workflow_id: str) -> List[PluginConfig]:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(WorkflowPluginRelation).where(WorkflowPluginRelation.workflow_id == workflow_id)
             )
             links = result.all()
-            return [
-                {"plugin_id": link.plugin_id, "config_params": link.config_params or {}}
-                for link in links
-            ]
+            
+            plugins: list[PluginConfig] = []
+            for link in links:
+                plugin_info = await session.exec(
+                    select(UserPlugin).where(UserPlugin.plugin_id == link.plugin_id)
+                )
+                plugin = plugin_info.first()
+                if plugin:
+                    plugins.append(PluginConfig(
+                        plugin_id=link.plugin_id,
+                        config_params=link.config_params or {},
+                        hook_type=plugin.hook_type,
+                        priority=plugin.priority,
+                    ))
+            
+            # 按优先级排序
+            plugins.sort(key=lambda x: x.priority)
+            return plugins
 
     @staticmethod
     async def count_by_user(mid: int, filter_type: str = "all") -> int:
@@ -151,7 +166,7 @@ class WorkflowCrudService:
         trigger_config: Dict[str, Any] | None = None,
         is_enabled: bool | None = None,
         is_public: bool | None = None,
-        enabled_plugins: List[Dict[str, Any]] | None = None,
+        enabled_plugins: List[PluginConfig] | None = None,
     ) -> UserWorkflow | None:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
@@ -191,11 +206,11 @@ class WorkflowCrudService:
                 for link in old_links.all():
                     await session.delete(link)
 
-                for link_data in enabled_plugins:
+                for plugin_config in enabled_plugins:
                     link = WorkflowPluginRelation(
                         workflow_id=model.workflow_id,
-                        plugin_id=link_data.get("plugin_id"),
-                        config_params=link_data.get("config_params", {})
+                        plugin_id=plugin_config.plugin_id,
+                        config_params=plugin_config.config_params
                     )
                     session.add(link)
 

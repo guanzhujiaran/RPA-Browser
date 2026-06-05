@@ -1,18 +1,30 @@
 """
 截图类 Action - Screenshot
 """
+from typing import Dict, Any, List
+
 import base64
 import time
 from loguru import logger
 
 from app.services.execution.actions.base import BaseAction
-from app.models.execution.params import ScreenshotParams
-from app.models.database.workflow.models import BuiltinActionType, ActionMetadata, ActionResult
+from app.models.execution.action_params import ScreenshotParams
+from app.models.database.workflow.models import BuiltinActionType, ActionResult
 
 
 class ScreenshotAction(BaseAction):
     """截图操作"""
     action_id: BuiltinActionType = BuiltinActionType.SCREENSHOT
+    params: ScreenshotParams
+
+    @classmethod
+    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: ScreenshotParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        return super().new_action(
+            mid=mid, page=page, variables=variables,
+            params=params, timeout=timeout,
+            input_vars=input_vars, output_vars=output_vars,
+            action_name=action_name,
+        )
 
     async def execute(self) -> ActionResult:
         start_time = time.time()

@@ -42,7 +42,7 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
     response_actions = [
         ActionMetadataResponse(
             action_id=action.action_id,
-            action_type=action.action_type,
+            action_type=action.action_id,
             json_schema=action.get_full_schema(None) or {},
         )
         for action in actions
@@ -78,7 +78,6 @@ async def create_custom_action(
         mid=auth.mid,
         description=request.description,
         steps=request.steps,
-        enabled_plugins=request.enabled_plugins or [],
         tags=request.tags or [],
         input_vars=input_vars_dicts,
         output_vars=request.output_vars,
@@ -88,10 +87,6 @@ async def create_custom_action(
         retry_delay=request.retry_delay,
         is_public=request.is_public,
     )
-    
-    # 获取关联的插件列表
-    enabled_plugins = await action_crud.get_enabled_plugins(model.action_id)
-    enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
     
     # 将字典转换回 InputVarDefinition 对象
     input_vars_objs = [
@@ -109,7 +104,6 @@ async def create_custom_action(
             description=model.description,
             parameters_schema=model.parameters_schema,
             steps=model.steps,
-            enabled_plugins=enabled_plugin_ids,
             tags=model.tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,
@@ -212,10 +206,6 @@ async def get_custom_action(
     if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "操作不存在")
     
-    # 获取关联的插件列表
-    enabled_plugins = await action_crud.get_enabled_plugins(model.action_id)
-    enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
-    
     # 将字典转换回 InputVarDefinition 对象
     input_vars_objs = [
         InputVarDefinition(**var) if isinstance(var, dict) else var
@@ -232,7 +222,6 @@ async def get_custom_action(
             description=model.description,
             parameters_schema=model.parameters_schema,
             steps=model.steps,
-            enabled_plugins=enabled_plugin_ids,
             tags=model.tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,
@@ -272,7 +261,6 @@ async def update_custom_action(
         name=request.name,
         description=request.description,
         steps=request.steps,
-        enabled_plugins=request.enabled_plugins,
         tags=request.tags,
         input_vars=input_vars_dicts,
         output_vars=request.output_vars,
@@ -284,10 +272,6 @@ async def update_custom_action(
     
     if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "操作不存在或无权限")
-    
-    # 获取关联的插件列表
-    enabled_plugins = await action_crud.get_enabled_plugins(model.action_id)
-    enabled_plugin_ids = [p["plugin_id"] for p in enabled_plugins]
     
     # 将字典转换回 InputVarDefinition 对象
     input_vars_objs = [
@@ -305,7 +289,6 @@ async def update_custom_action(
             description=model.description,
             parameters_schema=model.parameters_schema,
             steps=model.steps,
-            enabled_plugins=enabled_plugin_ids,
             tags=model.tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,

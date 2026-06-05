@@ -6,7 +6,7 @@ from datetime import datetime
 import uuid
 from sqlmodel import select, update
 
-from app.models.database.workflow.models import CompositeAction, UserPlugin
+from app.models.database.workflow.models import CompositeActionModel, UserPlugin
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
 
@@ -33,9 +33,9 @@ class PluginCrudService:
                 raise ValueError(f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}")
 
             action_result = await session.exec(
-                select(CompositeAction).where(
-                    (CompositeAction.action_id == custom_action_id) &
-                    (CompositeAction.is_enabled == True)
+                select(CompositeActionModel).where(
+                    (CompositeActionModel.action_id == custom_action_id) &
+                    (CompositeActionModel.is_enabled == True)
                 )
             )
             action_model = action_result.first()
@@ -74,6 +74,18 @@ class PluginCrudService:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(select(UserPlugin).where(UserPlugin.id == id))
             return result.first()
+
+    @staticmethod
+    async def get_plugins_by_hook(hook_type: str) -> List[UserPlugin]:
+        """根据钩子类型获取启用的插件列表"""
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(UserPlugin).where(
+                    (UserPlugin.hook_type == hook_type) &
+                    (UserPlugin.is_enabled == True)
+                )
+            )
+            return result.all()
 
     @staticmethod
     async def get_by_plugin_id(plugin_id: str) -> UserPlugin | None:
@@ -174,9 +186,9 @@ class PluginCrudService:
 
             if custom_action_id is not None and custom_action_id != model.custom_action_id:
                 action_result = await session.exec(
-                    select(CompositeAction).where(
-                        (CompositeAction.action_id == custom_action_id) &
-                        (CompositeAction.is_enabled == True)
+                    select(CompositeActionModel).where(
+                        (CompositeActionModel.action_id == custom_action_id) &
+                        (CompositeActionModel.is_enabled == True)
                     )
                 )
                 action_model = action_result.first()

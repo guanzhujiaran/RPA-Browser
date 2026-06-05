@@ -23,3 +23,5 @@ uv.lock
 .lh
 .history
 alembic/versions/*
+test.db
+test.db-journal

@@ -12,6 +12,12 @@ from loguru import logger
 MAX_RETRIES = 3
 RETRY_DELAY = 1  # 秒
 
+# 通用连接参数
+_connect_args = {"autocommit": False}
+# MySQL 特有参数
+if "mysql" in str(settings.mysql_browser_info_url):
+    _connect_args["charset"] = "utf8mb4"
+
 engine = create_async_engine(
     url=settings.mysql_browser_info_url,
     # 连接池配置 - 增强稳定性
@@ -23,12 +29,7 @@ engine = create_async_engine(
     # 查询配置
     echo=False,  # 是否打印SQL语句，生产环境建议设为False
     future=True,  # 使用SQLAlchemy 2.0风格
-    # 连接配置 - aiomysql 只支持少数参数
-    connect_args={
-        "charset": "utf8mb4",
-        "autocommit": False,
-        # aiomysql 只支持 charset 和 autocommit 参数
-    },
+    connect_args=_connect_args,
 )
 
 

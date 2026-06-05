@@ -120,12 +120,13 @@ class WorkflowScheduler:
             page = await entry.plugined_session.get_current_page()
             browser = entry.plugined_session.browser_context.browser
 
-            from app.services.execution.execution_engine import Workflow, WorkflowStep
+            from app.services.execution.execution_engine import Workflow
+            from app.models.execution.action_params import BaseWorkflowStep
 
             steps = []
             if workflow.steps:
                 for s in workflow.steps:
-                    steps.append(WorkflowStep(
+                    steps.append(BaseWorkflowStep(
                         action_id=s.get("action_id", ""),
                         params=s.get("params", {}),
                         children=s.get("children", []),

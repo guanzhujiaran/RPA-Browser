@@ -15,7 +15,8 @@ import uuid
 import time
 from loguru import logger
 from enum import StrEnum
-from app.services.execution.execution_engine import Workflow, WorkflowStep
+from app.services.execution.execution_engine import Workflow
+from app.models.execution.action_params import BaseWorkflowStep
 
 
 class WorkflowTriggerType(StrEnum):
@@ -88,7 +89,7 @@ class WorkflowManager:
         # 构建步骤
         workflow_steps = []
         for step_def in steps:
-            step = WorkflowStep(
+            step = BaseWorkflowStep(
                 action_id=step_def["action_id"],
                 params=step_def.get("params", {}),
                 retry=step_def.get("retry", 0),
@@ -173,7 +174,7 @@ class WorkflowManager:
 
         if steps is not None:
             definition.workflow.steps = [
-                WorkflowStep(
+                BaseWorkflowStep(
                     action_id=s["action_id"],
                     params=s.get("params", {}),
                     retry=s.get("retry", 0)
@@ -283,7 +284,7 @@ class WorkflowManager:
                 name=workflow_json["workflow"]["name"],
                 description=workflow_json["workflow"].get("description", ""),
                 steps=[
-                    WorkflowStep(
+                    BaseWorkflowStep(
                         action_id=s["action_id"],
                         params=s.get("params", {}),
                         retry=s.get("retry", 0)

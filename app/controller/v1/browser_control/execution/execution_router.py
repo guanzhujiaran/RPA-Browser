@@ -16,8 +16,9 @@ from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.security_depends import verify_browser_ownership
 from app.models.common.depends import BrowserReqAuthInfo
 
-from app.services.execution.execution_engine import execution_engine, Workflow, WorkflowStep
-from app.models.execution.params import (
+from app.services.execution.execution_engine import execution_engine, Workflow
+from app.models.execution.action_params import BaseWorkflowStep
+from app.models.execution.request_params import (
     ActionExecutionRequest,
     StepExecutionRequest,
     WorkflowExecutionRequest,
@@ -94,7 +95,7 @@ async def execute_workflow(
             if hasattr(step_req, 'children') and step_req.children:
                 children = build_steps(step_req.children)
             
-            step = WorkflowStep(
+            step = BaseWorkflowStep(
                 action_id=step_req.action_id,
                 params=step_req.params,
                 retry=step_req.retry,
@@ -119,7 +120,8 @@ async def execute_workflow(
     req = WorkflowExecutionRequest(
         mid=browser_info.auth_info.mid,
         browser_id=browser_info.browser_id,
-        action_id=workflow.id,
+        action_id=request.action_id or workflow.id,
+        workflow_id=request.workflow_id,
         variables=request.variables or {},
         input_data=request.input_data,
         output=request.output,

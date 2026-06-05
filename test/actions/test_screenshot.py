@@ -1,12 +1,14 @@
 """
-测试截图操作 - 使用 aiounittest.AsyncTestCase 模式
+测试截图操作
 """
 import pytest
-import aiounittest
 from playwright.async_api import Page
 
+from app.models.execution.action_params import ScreenshotParams
+from app.models.execution.enums import ScreenshotTypeEnum
 
-class TestScreenshotAction(aiounittest.AsyncTestCase):
+
+class TestScreenshotAction:
     """截图操作测试"""
 
     @pytest.fixture(autouse=True)
@@ -20,9 +22,11 @@ class TestScreenshotAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><h1>Test Page</h1></body></html>")
 
-        action = ScreenshotAction(
+        action = ScreenshotAction.new_action(
+            mid=1,
             page=self.page,
-            params={},
+            variables={"test": True},
+            params=ScreenshotParams(),
         )
 
         result = await action.execute()
@@ -36,9 +40,11 @@ class TestScreenshotAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body><div id='target' style='height: 50px;'>Target</div></body></html>")
 
-        action = ScreenshotAction(
+        action = ScreenshotAction.new_action(
+            mid=1,
             page=self.page,
-            params={"selector": "#target"},
+            variables={"test": True},
+            params=ScreenshotParams(selector="#target"),
         )
 
         result = await action.execute()
@@ -51,9 +57,11 @@ class TestScreenshotAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body>Test</body></html>")
 
-        action = ScreenshotAction(
+        action = ScreenshotAction.new_action(
+            mid=1,
             page=self.page,
-            params={"type": "jpeg", "quality": 80},
+            variables={"test": True},
+            params=ScreenshotParams(type=ScreenshotTypeEnum.JPEG, quality=80),
         )
 
         result = await action.execute()
@@ -67,9 +75,11 @@ class TestScreenshotAction(aiounittest.AsyncTestCase):
 
         await self.page.set_content("<html><body>Test</body></html>")
 
-        action = ScreenshotAction(
+        action = ScreenshotAction.new_action(
+            mid=1,
             page=self.page,
-            params={"full_page": False},
+            variables={"test": True},
+            params=ScreenshotParams(full_page=False),
         )
 
         result = await action.execute()
