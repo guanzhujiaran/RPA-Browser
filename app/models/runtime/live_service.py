@@ -5,13 +5,8 @@ Runtime 模块 - LiveService 数据模型
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Set, Any, TYPE_CHECKING
-from typing_extensions import TypeGuard
+from typing import Set
 import time
-import asyncio
-from app.services.RPA_browser.browser_session_pool.webrtc_session import (
-    WebRTCEnabledSession,
-)
 from app.models.runtime.control import (
     BrowserStatusEnum,
     OperationPriority,
@@ -19,17 +14,16 @@ from app.models.runtime.control import (
     SessionLifecycleState,
 )
 from app.services.RPA_browser.browser_session_pool.session_pool_model import (
-    PluginedSessionInfo,
+    WebRTCEnabledSession,
 )
 
 
 @dataclass
 class BrowserSessionEntry:
     """浏览器会话条目"""
-
     mid: int
     browser_id: int
-    plugined_session: PluginedSessionInfo
+    browser_session: WebRTCEnabledSession
     active_connections: Set[str] = field(default_factory=set)
     last_activity: int = 0
     status: BrowserStatusEnum = BrowserStatusEnum.RUNNING
@@ -37,23 +31,16 @@ class BrowserSessionEntry:
     current_operation_priority: OperationPriority = OperationPriority.NORMAL
     automation_paused_time: int = 0
     manual_operation_start_time: int = 0
-    cleanup_policy: BrowserCleanupPolicy = field(default_factory=BrowserCleanupPolicy)
+    cleanup_policy: BrowserCleanupPolicy = field(
+        default_factory=BrowserCleanupPolicy)
     created_at: int = field(default_factory=lambda: int(time.time()))
     lifecycle_state: SessionLifecycleState = SessionLifecycleState.ACTIVE
     expires_at: int | None = None
 
-    # WebRTC 连接追踪（与 active_connections 分离，专门记录 WebRTC 连接）
-    webrtc_connections: Set[str] = field(default_factory=set)
-
-    # WebRTC 视频流实例追踪
-    webrtc_streams: Dict[str, Any] = field(default_factory=dict)
-
     @property
     def is_expired(self) -> bool:
         """检查会话是否已过期"""
-        if self.expires_at:
-            return int(time.time()) > self.expires_at
-        return False
+        return int(time.time()) > self.expires_at if self.expires_at else False
 
     @property
     def idle_duration(self) -> int:
@@ -88,50 +75,17 @@ class BrowserSessionEntry:
 
         return calculated
 
-    @property
-    def webrtc_session(self):
-        """
-        获取已启用 WebRTC 的会话
-
-        Returns:
-            PluginedSessionInfo 或 None（如果未启用 WebRTC）
-
-        Example:
-            >>> if entry.webrtc_session:
-            ...     mgr = entry.webrtc_session.webrtc_manager
-            ...     stream = mgr.streams.get(0)
-        """
-        if self.has_webrtc():
-            return self.plugined_session
-        return None
-
-    def has_webrtc(self) -> bool:
-        """
-        检查会话是否支持 WebRTC
-
-        Returns:
-            bool: 如果已启用 WebRTC 则返回 True
-
-        Example:
-            >>> if entry.has_webrtc():
-            ...     await entry.webrtc_session.get_webrtc_offer()
-        """
-        # 检查 plugined_session 是否有 _webrtc_manager 属性且不为 None
-        return (
-            hasattr(self.plugined_session, "_webrtc_manager")
-            and self.plugined_session._webrtc_manager is not None
-        )
 
     @property
     def browser_running(self) -> bool:
-        """检查浏览器是否正在运行（委托给 plugined_session）"""
-        return not self.plugined_session.is_closed
+        """检查浏览器是否正在运行（委托给 browser_session）"""
+        return not self.browser_session.is_closed
 
     @property
     def page_count(self) -> int:
-        """获取页面数量（委托给 plugined_session）"""
+        """获取页面数量（委托给 browser_session）"""
         try:
-            return len(self.plugined_session.browser_context.pages)
+            return len(self.browser_session.browser_context.pages)
         except Exception:
             return 0
 

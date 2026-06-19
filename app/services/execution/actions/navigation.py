@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import time
 from loguru import logger
 from app.services.execution.actions.base import BaseAction
-from app.models.execution.action_params import NavigateParams, NewPageParams
+from app.models.execution.action_params import NavigateParams, NewPageParams, NavigateResult, NewPageResult
 from app.models.database.workflow.models import ActionResult
 from app.models.core.browser.security import SecurityCheckResult
 from app.config import settings
@@ -187,21 +187,31 @@ class URLSecurityChecker:
             return SecurityCheckResult(allowed=False, reason=f"URL 安全检查失败: {str(e)}")
 
 
-class NavigateAction(BaseAction):
+class NavigateAction(BaseAction[NavigateParams]):
     """导航操作"""
     action_id: BuiltinActionType = BuiltinActionType.NAVIGATE
+    action_type: BuiltinActionType = BuiltinActionType.NAVIGATE
     params: NavigateParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: NavigateParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: NavigateParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[NavigateResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
@@ -249,7 +259,7 @@ class NavigateAction(BaseAction):
 
             return ActionResult(
                 success=True,
-                data={"url": url, "status": response.status if response else None},
+                data=NavigateResult(status=response.status if response else None),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
@@ -266,21 +276,31 @@ class NavigateAction(BaseAction):
             )
 
 
-class NewPageAction(BaseAction):
+class NewPageAction(BaseAction[NewPageParams]):
     """新建页面操作"""
     action_id: BuiltinActionType = BuiltinActionType.NEW_PAGE
+    action_type: BuiltinActionType = BuiltinActionType.NEW_PAGE
     params: NewPageParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: NewPageParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: NewPageParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[NewPageResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
@@ -355,11 +375,7 @@ class NewPageAction(BaseAction):
 
                 return ActionResult(
                     success=True,
-                    data={
-                        "page_created": True, "url": url,
-                        "status": response.status if response else None,
-                        "page_count": page_count,
-                    },
+                    data=NewPageResult(page_created=True, status=response.status if response else None, page_count=page_count),
                     execution_time=time.time() - start_time,
                     action_id=self.metadata.id, action_name=self.metadata.name,
                 )
@@ -368,8 +384,7 @@ class NewPageAction(BaseAction):
                     [p for p in browser_context.pages if not p.is_closed()])
                 return ActionResult(
                     success=True,
-                    data={"page_created": True, "url": "about:blank",
-                          "page_count": page_count},
+                    data=NewPageResult(page_created=True, page_count=page_count),
                     execution_time=time.time() - start_time,
                     action_id=self.metadata.id, action_name=self.metadata.name,
                 )

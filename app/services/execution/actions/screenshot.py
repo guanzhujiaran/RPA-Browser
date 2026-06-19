@@ -8,25 +8,35 @@ import time
 from loguru import logger
 
 from app.services.execution.actions.base import BaseAction
-from app.models.execution.action_params import ScreenshotParams
+from app.models.execution.action_params import ScreenshotParams, ScreenshotResult
 from app.models.database.workflow.models import BuiltinActionType, ActionResult
 
 
-class ScreenshotAction(BaseAction):
+class ScreenshotAction(BaseAction[ScreenshotParams]):
     """截图操作"""
     action_id: BuiltinActionType = BuiltinActionType.SCREENSHOT
+    action_type: BuiltinActionType = BuiltinActionType.SCREENSHOT
     params: ScreenshotParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: ScreenshotParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: ScreenshotParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[ScreenshotResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(

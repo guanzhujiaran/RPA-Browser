@@ -45,12 +45,22 @@ class PluginIdNotBelongToUserException(BaseException):
     msg = ResponseMsg.exception_plugin_id_not_belong_to_user
 
     def __init__(self, plugin_id: int | str):
-        self.msg = self.msg.format(plugin_id=plugin_id)
+        self.msg = ResponseMsg.exception_plugin_id_not_belong_to_user.format(
+            plugin_id=plugin_id)
 
 
 class BrowserNotStartedException(BaseException):
     code = ResponseCode.NOT_FOUND
     msg = ResponseMsg.exception_browser_not_started
+
+
+class BrowserPageIndexError(BaseException):
+    code = ResponseCode.BAD_REQUEST
+    msg = ResponseMsg.exception_browser_page_index_error
+
+    def __init__(self, page_index: int):
+        self.msg = ResponseMsg.exception_browser_page_index_error.format(
+            page_index=page_index)
 
 
 class VideoStreamInitFailedException(BaseException):

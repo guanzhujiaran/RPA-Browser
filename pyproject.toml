@@ -40,6 +40,7 @@ dependencies = [
     "pytest-playwright-asyncio>=0.8.0",
     "aiounittest>=1.5.0",
     "httpx2>=2.3.0",
+    "langchain-openai>=0.3.0",
 ]
 [tool.uv]
 python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
@@ -48,3 +49,8 @@ python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-st
 name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
+
+[dependency-groups]
+dev = [
+    "ty>=0.0.46",
+]

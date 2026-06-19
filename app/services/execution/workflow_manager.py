@@ -46,7 +46,7 @@ class WorkflowDefinition:
     metadata: WorkflowMetadata
     workflow: Workflow
     trigger_type: WorkflowTriggerType = WorkflowTriggerType.MANUAL
-    trigger_config: Dict[str, Any] = field(default_factory=dict)
+    trigger_config: Dict = field(default_factory=dict)
     is_enabled: bool = True
 
 
@@ -59,12 +59,12 @@ class WorkflowManager:
 
     def __init__(self):
         self._workflows: Dict[str, WorkflowDefinition] = {}
-        self._workflow_storage: Dict[str, Dict[str, Any]] = {}  # 用于持久化存储
+        self._workflow_storage: Dict[str, Dict] = {}  # 用于持久化存储
 
     def create_workflow(
         self,
         name: str,
-        steps: List[Dict[str, Any]],
+        steps: List[Dict],
         description: str = "",
         author: str = "",
         tags: List[str] | None = None,
@@ -138,7 +138,7 @@ class WorkflowManager:
         self,
         workflow_id: str,
         name: str | None = None,
-        steps: List[Dict[str, Any]] | None = None,
+        steps: List[Dict] | None = None,
         description: str | None = None,
         tags: List[str] | None = None,
         on_error: str | None = None
@@ -213,7 +213,7 @@ class WorkflowManager:
             return True
         return False
 
-    def export_workflow(self, workflow_id: str) -> Dict[str, Any] | None:
+    def export_workflow(self, workflow_id: str) -> Dict | None:
         """
         导出工作流为JSON
 
@@ -257,7 +257,7 @@ class WorkflowManager:
             "is_enabled": definition.is_enabled
         }
 
-    def import_workflow(self, workflow_json: Dict[str, Any]) -> WorkflowDefinition | None:
+    def import_workflow(self, workflow_json: Dict) -> WorkflowDefinition | None:
         """
         从JSON导入工作流
 
@@ -311,7 +311,7 @@ class WorkflowManager:
             logger.error(f"[WorkflowManager] 导入工作流失败: {e}")
             return None
 
-    def validate_workflow_steps(self, steps: List[Dict[str, Any]]) -> tuple[bool, str | None]:
+    def validate_workflow_steps(self, steps: List[Dict]) -> tuple[bool, str | None]:
         """
         验证步骤列表
 

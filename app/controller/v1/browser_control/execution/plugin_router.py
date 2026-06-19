@@ -20,7 +20,7 @@ from app.models.workflow.models import (
 )
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
-from app.services.execution.crud_service import plugin_crud, action_crud, workflow_crud
+from app.services.execution.crud_service import plugin_crud_svr, action_crud_svr, workflow_crud_svr
 from app.models.base.base_sqlmodel import BasePaginationResp
 from ..base import new_plugin_router
 
@@ -37,13 +37,13 @@ async def list_plugins(
     skip = (request.page - 1) * request.per_page
     
     # 获取总数
-    total = await plugin_crud.count_by_user(
+    total = await plugin_crud_svr.count_by_user(
         mid=auth.mid,
         filter_type=request.filter_type
     )
     
     # 获取列表数据
-    models = await plugin_crud.list_by_user(
+    models = await plugin_crud_svr.list_by_user(
         mid=auth.mid,
         skip=skip,
         limit=request.per_page,
@@ -93,7 +93,7 @@ async def create_plugin(
     try:
         plugin_id = f"plugin_{uuid.uuid4().hex[:8]}"
         
-        model = await plugin_crud.create(
+        model = await plugin_crud_svr.create(
             mid=auth.mid,
             plugin_id=plugin_id,
             name=request.name,
@@ -129,12 +129,12 @@ async def update_plugin(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ):
     """更新插件挂载配置"""
-    model = await plugin_crud.get_by_id(request.id)
+    model = await plugin_crud_svr.get_by_id(request.id)
     if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "插件配置不存在")
 
     try:
-        await plugin_crud.update(
+        await plugin_crud_svr.update(
             id=request.id,
             name=request.name,
             description=request.description,
@@ -152,9 +152,9 @@ async def update_plugin(
     
     if request.is_enabled is not None:
         if request.is_enabled:
-            await plugin_crud.enable(request.id)
+            await plugin_crud_svr.enable(request.id)
         else:
-            await plugin_crud.disable(request.id)
+            await plugin_crud_svr.disable(request.id)
 
     return success_response("更新成功")
 
@@ -165,11 +165,11 @@ async def delete_plugin(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ):
     """删除插件挂载配置"""
-    model = await plugin_crud.get_by_id(id)
+    model = await plugin_crud_svr.get_by_id(id)
     if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "插件配置不存在")
 
-    await plugin_crud.delete(id)
+    await plugin_crud_svr.delete(id)
     return success_response("删除成功")
 
 
@@ -187,7 +187,7 @@ async def fork_plugin(
         request: {"id": <插件ID>, "new_name": <新名称（可选）>}
     """
     # 获取原插件
-    original = await plugin_crud.get_by_id(request.id)
+    original = await plugin_crud_svr.get_by_id(request.id)
     if not original:
         return error_response(404, "插件不存在")
     
@@ -197,7 +197,7 @@ async def fork_plugin(
     
     try:
         # 执行 Fork
-        model = await plugin_crud.fork(
+        model = await plugin_crud_svr.fork(
             id=request.id,
             target_mid=auth.mid,
             new_name=request.new_name
@@ -227,11 +227,11 @@ async def get_plugin_forks(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[BasePaginationResp[PluginListItemResponse]]:
     """获取某插件的所有 Fork 版本列表"""
-    original = await plugin_crud.get_by_id(id)
+    original = await plugin_crud_svr.get_by_id(id)
     if not original:
         return error_response(404, "插件不存在")
     
-    forks = await plugin_crud.list_forks(id, skip, limit)
+    forks = await plugin_crud_svr.list_forks(id, skip, limit)
     
     items = [
         PluginListItemResponse(

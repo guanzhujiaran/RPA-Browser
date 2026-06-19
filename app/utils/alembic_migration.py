@@ -55,7 +55,7 @@ _last_check_result = None
 _CHECK_CACHE_DURATION = 60  # 缓存有效期60秒
 
 
-def _get_sync_engine(db_url: str) -> object:
+def _get_sync_engine(db_url: str):
     """
     获取或创建 SQLAlchemy 同步引擎（带连接池）
 

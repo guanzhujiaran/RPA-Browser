@@ -11,7 +11,6 @@ from app.utils.alembic_migration import run_alembic_migrations, run_alembic_migr
 import asyncio
 from loguru import logger
 
-@logger.catch
 async def init_alembic_migration() -> None:
     """
     初始化 Alembic 数据库迁移（从 lifespan 中提取的单独函数）

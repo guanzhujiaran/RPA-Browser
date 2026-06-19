@@ -3,15 +3,15 @@
 
 负责管理内置操作和用户自定义操作的注册、查找。
 """
-from typing import Any
+from typing import Any, Dict
 
 from sqlmodel import select
 
 from app.models.database.workflow.models import (
-    ActionMetadata,
     BuiltinActionType,
     CompositeActionModel,
 )
+from app.models.execution.action_params import ActionMetadata
 from app.services.execution.actions.all_actions import (
     BUILTIN_ACTION_MAP,
     get_action_class,
@@ -27,7 +27,7 @@ class ActionRegistry:
     def __init__(self):
         self._builtin_map: dict[str, type[BaseAction]] = dict(BUILTIN_ACTION_MAP)
 
-    async def get_action_class_for_user(self, action_id: str, mid: int) -> type[BaseAction] | None:
+    async def get_action_class_for_user(self, action_id: str) -> type[BaseAction] | None:
         """
         获取操作类（先查内置，再查用户自定义）
 
@@ -58,7 +58,7 @@ class ActionRegistry:
 
         return None
 
-    async def get_custom_action_steps(self, action_id: str) -> list[dict[str, Any]] | None:
+    async def get_custom_action_steps(self, action_id: str) -> list[Dict] | None:
         """
         获取自定义操作的步骤列表（已确保 action_type 字段存在）
 
@@ -85,18 +85,15 @@ class ActionRegistry:
 
     def get_action_metadata(self, action_id: str) -> ActionMetadata | None:
         """获取操作元数据"""
-        action_class = get_action_class(action_id)
-        if action_class and hasattr(action_class, 'metadata'):
-            return action_class.metadata
-        return None
+        from app.models.execution.action_params import BuiltinActionType as BT
+        try:
+            return BT(action_id).metadata
+        except ValueError:
+            return None
 
     def get_all_action_metadatas(self) -> list[ActionMetadata]:
         """获取所有内置操作的元数据"""
-        result: list[ActionMetadata] = []
-        for cls in get_all_actions_metadata():
-            if hasattr(cls, 'metadata'):
-                result.append(cls.metadata)
-        return result
+        return get_all_actions_metadata()
 
 
 # 全局注册中心实例

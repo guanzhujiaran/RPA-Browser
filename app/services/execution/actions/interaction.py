@@ -1,9 +1,12 @@
 """
-交互类 Action - Click, Input, Scroll, Wait
+交互类 Action - Click, Input, Scroll, Wait, Hover
 """
 from typing import Dict, Any, List
 
-from app.models.execution.action_params import WaitParams, HoverParams, ClickParams, InputParams, ScrollParams
+from app.models.execution.action_params import (
+    WaitParams, HoverParams, ClickParams, InputParams, ScrollParams, GetTextParams,
+    ClickResult, InputResult, ScrollResult, WaitResult, HoverResult, GetTextResult,
+)
 import asyncio
 import time
 from loguru import logger
@@ -11,34 +14,44 @@ from app.services.execution.actions.base import BaseAction, ActionResult
 from app.models.database.workflow.models import BuiltinActionType
 
 
-class ClickAction(BaseAction):
+class ClickAction(BaseAction[ClickParams]):
     """点击操作"""
 
     action_id: BuiltinActionType = BuiltinActionType.CLICK
+    action_type: BuiltinActionType = BuiltinActionType.CLICK
     params: ClickParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: ClickParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: ClickParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[ClickResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
             self.params)
-        if not valid:
+        if not valid or not validated_params:
             return ActionResult(
                 success=False, error=error_msg, execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
 
         selector = validated_params.selector
-        button = str(validated_params.button)
+        button = validated_params.button
         click_count = validated_params.click_count
         delay = validated_params.delay
         force = validated_params.force
@@ -49,7 +62,7 @@ class ClickAction(BaseAction):
 
         try:
             # 构建 click 参数字典（符合 Playwright API）
-            click_kwargs = {"button": button}
+            click_kwargs:dict[str,Any] = {"button": button}
 
             if click_count != 1:
                 click_kwargs["click_count"] = click_count
@@ -97,7 +110,7 @@ class ClickAction(BaseAction):
                     await self.page.mouse.click(position.x, position.y)
 
             return ActionResult(
-                success=True, data={"selector": selector, "button": button},
+                success=True, data=ClickResult(clicked=True),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
@@ -110,22 +123,32 @@ class ClickAction(BaseAction):
             )
 
 
-class InputAction(BaseAction):
+class InputAction(BaseAction[InputParams]):
     """输入操作"""
 
     action_id: BuiltinActionType = BuiltinActionType.INPUT
+    action_type: BuiltinActionType = BuiltinActionType.INPUT
     params: InputParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: InputParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: InputParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[InputResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
@@ -162,7 +185,7 @@ class InputAction(BaseAction):
                 await self.page.keyboard.type(value)
 
             return ActionResult(
-                success=True, data={"selector": selector, "value_length": len(value)},
+                success=True, data=InputResult(value_length=len(value)),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
@@ -175,27 +198,37 @@ class InputAction(BaseAction):
             )
 
 
-class ScrollAction(BaseAction):
+class ScrollAction(BaseAction[ScrollParams]):
     """滚动操作"""
 
     action_id: BuiltinActionType = BuiltinActionType.SCROLL
+    action_type: BuiltinActionType = BuiltinActionType.SCROLL
     params: ScrollParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: ScrollParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: ScrollParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[ScrollResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
             self.params)
-        if not valid:
+        if not valid or not validated_params:
             return ActionResult(
                 success=False, error=error_msg, execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
@@ -221,7 +254,7 @@ class ScrollAction(BaseAction):
                 await self.page.evaluate("window.scrollTo(0, 0)")
 
             return ActionResult(
-                success=True, data={"selector": selector},
+                success=True, data=ScrollResult(scrolled=True),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
@@ -234,81 +267,109 @@ class ScrollAction(BaseAction):
             )
 
 
-class WaitAction(BaseAction):
+class WaitAction(BaseAction[WaitParams]):
     """等待操作"""
 
     action_id: BuiltinActionType = BuiltinActionType.WAIT
+    action_type: BuiltinActionType = BuiltinActionType.WAIT
     params: WaitParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: WaitParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: WaitParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[WaitResult]:
+        """
+        等待操作从不异常，因为只是等待而已
+        """
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
             self.params)
-        if not valid:
+        if not valid or not validated_params:
             return ActionResult(
                 success=False, error=error_msg, execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
 
         selector = validated_params.selector
-        state = str(validated_params.state)
+        state = validated_params.state
         timeout = validated_params.timeout
 
+        element_found = True
         try:
-            # 构建 wait_for 参数字典（符合 Playwright API）
-            wait_kwargs = {"state": state}
-
-            if timeout != 30000:
-                wait_kwargs["timeout"] = timeout
-
             if selector:
                 locator = self.page.locator(selector)
-                logger.info(f"[WaitAction] wait_for 参数: {wait_kwargs}")
-                await locator.wait_for(**wait_kwargs)
+                logger.info(f"[WaitAction] wait_for 参数: {validated_params}")
+                await locator.wait_for(
+                    timeout=timeout if timeout != 30000 else None,
+                    state=state.value,
+                )
             else:
                 # 没有 selector 时，使用固定等待
                 await asyncio.sleep(timeout / 1000)
 
             return ActionResult(
-                success=True, data={"selector": selector, "state": state},
+                success=True, data=WaitResult(element_found=element_found),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
 
-        except Exception as e:
-            logger.warning(f"[WaitAction] 等待操作执行异常: {e}")
+        except TimeoutError:
+            element_found = False
+            logger.warning(f"[WaitAction] 等待超时，未找到元素: {selector}")
             return ActionResult(
-                success=False, error=str(e), execution_time=time.time() - start_time,
+                success=True, data=WaitResult(element_found=element_found),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+        except Exception as e:
+            return ActionResult(
+                success=True, error=str(e), execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
 
 
-class HoverAction(BaseAction):
+class HoverAction(BaseAction[HoverParams]):
     """悬停操作"""
 
     action_id: BuiltinActionType = BuiltinActionType.HOVER
+    action_type: BuiltinActionType = BuiltinActionType.HOVER
     params: HoverParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: HoverParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: HoverParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult[HoverResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
@@ -360,13 +421,76 @@ class HoverAction(BaseAction):
                 await self.page.mouse.move(position.x, position.y)
 
             return ActionResult(
-                success=True, data={"selector": selector},
+                success=True, data=HoverResult(hovered=True),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
 
         except Exception as e:
             logger.warning(f"[HoverAction] 悬停操作执行异常: {e}")
+            return ActionResult(
+                success=False, error=str(e), execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+
+class GetTextAction(BaseAction[GetTextParams]):
+    """获取元素文本"""
+
+    action_id: BuiltinActionType = BuiltinActionType.GET_TEXT
+    action_type: BuiltinActionType = BuiltinActionType.GET_TEXT
+    params: GetTextParams
+
+    @classmethod
+    def new_action(cls, *, mid: int, page, variables: Dict, params: GetTextParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
+
+    async def _execute(self) -> ActionResult[GetTextResult]:
+        start_time = time.time()
+
+        valid, error_msg, validated_params = self.validate_params_with_model(
+            self.params)
+        if not valid or not validated_params:
+            return ActionResult(
+                success=False, error=error_msg, execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+        selector = validated_params.selector
+        timeout = validated_params.timeout
+
+        try:
+            if not selector:
+                raise ValueError("获取元素文本必须提供 selector")
+
+            locator = self.page.locator(selector)
+            logger.info(f"[GetTextAction] 获取元素文本: {selector}")
+
+            # 优先使用 visible text, 否则用 text_content
+            text = await locator.inner_text(timeout=timeout if timeout != 30000 else None)
+
+            return ActionResult(
+                success=True, data=GetTextResult(text=text),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+        except Exception as e:
+            logger.warning(f"[GetTextAction] 获取文本异常: {e}")
             return ActionResult(
                 success=False, error=str(e), execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,

@@ -33,9 +33,9 @@ class TestCompositeActionWorkflow:
         result = await action.execute()
         logger.info(result)
         assert result.success
-        assert result.data["total_steps"] == 2
-        assert result.data["success_count"] == 2
-        assert result.data["results"][1].get("success") is True
+        assert result.data.total_steps == 2
+        assert result.data.success_count == 2
+        assert result.data.results[1].get("success") is True
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_navigate_click_screenshot(self):
@@ -78,8 +78,8 @@ class TestCompositeActionWorkflow:
         logger.info(result2)
 
         assert result2.success
-        assert result2.data["total_steps"] == 2
-        assert result2.data["success_count"] == 2
+        assert result2.data.total_steps == 2
+        assert result2.data.success_count == 2
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_with_variable_injection(self):
@@ -116,7 +116,7 @@ class TestCompositeActionWorkflow:
         logger.info(result)
 
         assert result.success
-        assert result.data["success_count"] == 3
+        assert result.data.success_count == 3
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_input_and_verify(self):
@@ -145,7 +145,7 @@ class TestCompositeActionWorkflow:
         logger.info(result)
 
         assert result.success
-        assert result.data["success_count"] == 2
+        assert result.data.success_count == 2
 
         # 验证输入值已填入
         value = await self.page.input_value("#input_field")
@@ -179,7 +179,7 @@ class TestCompositeActionWorkflow:
         logger.info(result)
 
         assert result.success
-        assert result.data["success_count"] == 2
+        assert result.data.success_count == 2
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_multiple_inputs(self):
@@ -215,8 +215,8 @@ class TestCompositeActionWorkflow:
         logger.info(result)
 
         assert result.success
-        assert result.data["total_steps"] == 5
-        assert result.data["success_count"] == 5
+        assert result.data.total_steps == 5
+        assert result.data.success_count == 5
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_hover_and_click(self):
@@ -245,7 +245,7 @@ class TestCompositeActionWorkflow:
         logger.info(result)
 
         assert result.success
-        assert result.data["success_count"] == 2
+        assert result.data.success_count == 2
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_failed_step_stops_execution(self):
@@ -277,7 +277,7 @@ class TestCompositeActionWorkflow:
 
         # 应该失败，且不是所有步骤都执行成功
         assert not result.success
-        assert result.data["success_count"] == 1  # 只有第一个 click 成功
+        assert result.data.success_count == 1  # 只有第一个 click 成功
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_full_login_simulation(self):
@@ -317,4 +317,4 @@ class TestCompositeActionWorkflow:
         logger.info(result)
 
         assert result.success
-        assert result.data["success_count"] == 4
+        assert result.data.success_count == 4

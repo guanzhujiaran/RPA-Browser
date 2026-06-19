@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Generic
 from datetime import datetime
 from pydantic.types import T
 from pydantic import field_validator
-from sqlalchemy import Column, JSON, Index, String
+from sqlalchemy import Column, JSON, Index
 from sqlmodel import SQLModel, Field
 from enum import StrEnum, IntEnum
 
@@ -55,35 +55,6 @@ class ReportReason(IntEnum):
 
 # region ============ 执行相关模型 ============
 
-class ActionParameter(SQLModel):
-    """操作参数定义（内部使用）"""
-    name: str = Field(description="参数名称")
-    json_schema: dict[str, Any] = Field(description="完整的 JSON Schema")
-
-
-class ActionMetadata(SQLModel):
-    """操作元数据（内部使用）"""
-    id: BuiltinActionType = Field(description="操作ID")
-    name: str = Field(description="操作名称")
-    type: BuiltinActionType = Field(description="操作类型")
-    description: str = Field(default="", description="操作描述")
-    parameters: List[ActionParameter] = Field(
-        default_factory=list, description="参数列表")
-    json_schema: dict[str, Any] | None = Field(
-        default=None, description="完整的 JSON Schema")
-    timeout: int = Field(default=30000, description="超时时间(毫秒)")
-    retry_on_error: bool = Field(default=False, description="错误时重试")
-    retry_times: int = Field(default=0, description="重试次数")
-    retry_delay: float = Field(default=1.0, description="重试延迟(秒)")
-    requires_browser: bool = Field(default=True, description="是否需要浏览器上下文")
-
-
-class ActionMetadataResponse(SQLModel):
-    """操作元数据响应（API 返回）"""
-    action_id: str = Field(description="预设操作ID")
-    action_type: BuiltinActionType = Field(description="操作类型")
-    json_schema: dict[str, Any] = Field(description="完整的 JSON Schema")
-
 
 class ActionResult(SQLModel, Generic[T]):
     """操作执行结果"""
@@ -101,9 +72,9 @@ class ActionResult(SQLModel, Generic[T]):
 
 class CommunityResourceBase(SQLModel):
     """社区资源基类 - mid 字段：数据库存储为 str，运行时使用 int"""
-    mid: int = Field(sa_type=String, index=True, description="当前所有者用户ID")
-    original_mid: int = Field(
-        sa_type=String, index=True, description="最初创建者用户ID")
+    mid: str = Field(max_length=255, index=True, description="当前所有者用户ID")
+    original_mid: str = Field(
+        max_length=255, index=True, description="最初创建者用户ID")
     is_enabled: bool = Field(default=True)
     is_public: bool = Field(default=False, description="是否公开")
     likes_count: int = Field(default=0, description="点赞数")
@@ -149,7 +120,7 @@ class ExecutionTask(SQLModel):
     session_id: str
     browser_id: str
     status: ExecutionStatus
-    actions: List[Dict[str, Any]]
+    actions: List[Dict]
     current_index: int = 0
     results: List[ActionResult] = Field(default_factory=list)
     created_at: float = Field(
@@ -169,7 +140,6 @@ class CompositeActionModel(CommunityResourceBase, table=True):
 
     用户定义的、可复用的动作组合（类似函数）。
     """
-    __tablename__ = "composite_action_model"
     __table_args__ = (
         Index('idx_user_action_name_unique', 'mid', 'name', unique=True),
     )
@@ -187,7 +157,7 @@ class CompositeActionModel(CommunityResourceBase, table=True):
         default=BuiltinActionType.COMPOSITE,
         description="操作类型"
     )
-    parameters_schema: List[Dict[str, Any]] = Field(
+    parameters_schema: List[Dict] = Field(
         default_factory=list,
         sa_column=Column(JSON),
         description="参数定义JSON"
@@ -204,7 +174,7 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     author: str = Field(default="", max_length=100)
     tags: List[str] = Field(default_factory=list,
                             sa_column=Column(JSON), description="标签")
-    input_vars: List[Dict[str, Any]] = Field(
+    input_vars: List[Dict] = Field(
         default_factory=list,
         sa_column=Column(JSON),
         description="输入变量定义"
@@ -216,7 +186,7 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     )
     forked_from_id: int | None = Field(
         default=None,
-        foreign_key="composite_action_model.id",
+        foreign_key="compositeactionmodel.id",
         description="Fork 来源的操作ID"
     )
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
@@ -225,29 +195,25 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     retry_delay: float = Field(default=1.0)
 
 
-
 class WorkflowPluginRelation(SQLModel, table=True):
     """工作流插件关联表"""
-    __tablename__ = "workflow_plugin_relation"
 
     id: int | None = Field(default=None, primary_key=True,)
     workflow_id: str = Field(
-        foreign_key="user_workflow.workflow_id", index=True, description="工作流ID")
+        foreign_key="userworkflow.workflow_id", index=True, description="工作流ID")
     plugin_id: str = Field(
-        foreign_key="user_plugin.plugin_id", index=True, description="插件ID")
-    config_params: Dict[str, Any] = Field(
+        foreign_key="userplugin.plugin_id", index=True, description="插件ID")
+    config_params: Dict = Field(
         default_factory=dict, sa_column=Column(JSON), description="配置参数")
-
 
 
 class UserPlugin(CommunityResourceBase, table=True):
     """用户插件表"""
-    __tablename__ = "user_plugin"
     __table_args__ = (
         Index('idx_user_plugin_name_unique', 'mid', 'name', unique=True),
     )
 
-    id: int | None = Field(default=None, primary_key=True,)
+    id: int = Field(default=None, primary_key=True,)
     plugin_id: str = Field(index=True, unique=True,
                            max_length=100, description="插件唯一标识")
     name: str = Field(max_length=200, description="插件名称")
@@ -264,7 +230,7 @@ class UserPlugin(CommunityResourceBase, table=True):
     description: str = Field(default="", max_length=500)
     forked_from_id: int | None = Field(
         default=None,
-        foreign_key="user_plugin.id",
+        foreign_key="userplugin.id",
         description="Fork 来源的插件ID"
     )
     priority: int = Field(default=100, description="优先级")
@@ -272,7 +238,6 @@ class UserPlugin(CommunityResourceBase, table=True):
 
 class UserWorkflow(CommunityResourceBase, table=True):
     """用户工作流表 - 定时任务调度配置"""
-    __tablename__ = "user_workflow"
     __table_args__ = (
         Index('idx_user_workflow_name_unique', 'mid', 'name', unique=True),
     )
@@ -295,12 +260,12 @@ class UserWorkflow(CommunityResourceBase, table=True):
     description: str = Field(default="", max_length=500)
     forked_from_id: int | None = Field(
         default=None,
-        foreign_key="user_workflow.id",
+        foreign_key="userworkflow.id",
         description="Fork 来源的工作流ID"
     )
     trigger_type: str = Field(
         default="manual", max_length=50, description="触发类型")
-    trigger_config: Dict[str, Any] = Field(
+    trigger_config: Dict = Field(
         default_factory=dict,
         sa_column=Column(JSON),
         description="触发配置"
@@ -309,22 +274,21 @@ class UserWorkflow(CommunityResourceBase, table=True):
 
 class WorkflowExecutionLog(SQLModel, table=True):
     """工作流执行日志表"""
-    __tablename__ = "workflow_execution_log"
 
     id: int | None = Field(primary_key=True,)
     workflow_id: str = Field(index=True, max_length=100)
     session_id: str = Field(index=True, max_length=100)
     browser_id: str = Field(index=True, max_length=100)
-    mid: int = Field(index=True)
+    mid: str = Field(max_length=255, index=True)
     execution_id: str = Field(index=True, max_length=100)
     status: str = Field(max_length=50)
     total_time: float = Field(default=0.0)
     steps_count: int = Field(default=0)
     success_count: int = Field(default=0)
     failed_count: int = Field(default=0)
-    results: List[Dict[str, Any]] = Field(
+    results: List[Dict] = Field(
         default_factory=list, sa_column=Column(JSON))
-    variables: Dict[str, Any] | None = Field(
+    variables: Dict | None = Field(
         default=None, sa_column=Column(JSON), description="变量池快照")
     started_at: datetime = Field(default_factory=datetime.now)
     finished_at: datetime | None = Field(default=None)
@@ -332,7 +296,6 @@ class WorkflowExecutionLog(SQLModel, table=True):
 
 class ResourceLike(SQLModel, table=True):
     """资源点赞表"""
-    __tablename__ = "resource_like"
     __table_args__ = (
         Index('idx_unique_like', 'mid', 'resource_type',
               'resource_id', unique=True),
@@ -340,7 +303,7 @@ class ResourceLike(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True,)
-    mid: int = Field(index=True, description="点赞用户ID")
+    mid: str = Field(max_length=255, index=True, description="点赞用户ID")
     resource_type: ResourceType = Field(index=True, description="资源类型")
     resource_id: int = Field(index=True, description="资源ID")
     created_at: datetime = Field(default_factory=datetime.now)
@@ -348,20 +311,20 @@ class ResourceLike(SQLModel, table=True):
 
 class ResourceReport(SQLModel, table=True):
     """资源举报表"""
-    __tablename__ = "resource_report"
     __table_args__ = (
         Index('idx_unique_report', 'mid', 'resource_type', 'resource_id'),
         {"extend_existing": True},
     )
 
     id: int | None = Field(primary_key=True,)
-    mid: int = Field(index=True, description="举报用户ID")
+    mid: str = Field(max_length=255, index=True, description="举报用户ID")
     resource_type: ResourceType = Field(index=True, description="资源类型")
     resource_id: int = Field(index=True, description="资源ID")
     reason: ReportReason = Field(description="举报理由")
     description: str = Field(default="", max_length=500, description="详细描述")
     is_valid: bool = Field(default=True, description="是否有效")
-    reviewed_by_mid: int | None = Field(default=None, description="审核管理员ID")
+    reviewed_by_mid: str | None = Field(
+        default=None, max_length=255, description="审核管理员ID")
     reviewed_at: datetime | None = Field(default=None, description="审核时间")
     created_at: datetime = Field(default_factory=datetime.now)
 
@@ -373,7 +336,6 @@ class ActionExecutionLog(SQLModel, table=True):
     记录每一次动作或插件的执行详情。
     使用树形结构追踪执行链路。
     """
-    __tablename__ = "action_execution_log"
     __table_args__ = {"extend_existing": True}
 
     id: int | None = Field(default=None, primary_key=True)
@@ -387,12 +349,12 @@ class ActionExecutionLog(SQLModel, table=True):
     action_name: str = Field(default="", max_length=200)
     action_type: BuiltinActionType = Field(description="动作类型")
     status: ExecutionStatus = Field(description="执行状态")
-    params: Dict[str, Any] = Field(
+    params: Dict = Field(
         default_factory=dict,
         sa_column=Column(JSON),
         description="实际执行参数"
     )
-    result_data: Dict[str, Any] | None = Field(
+    result_data: Dict | None = Field(
         default=None,
         sa_column=Column(JSON),
         description="执行结果数据"
@@ -410,7 +372,7 @@ class ActionExecutionLog(SQLModel, table=True):
         description="执行日志"
     )
 
-    mid: int = Field(index=True)
+    mid: str = Field(max_length=255, index=True)
 
     workflow_id: str | None = Field(
         default=None,
@@ -432,7 +394,6 @@ class WorkflowRecord(SQLModel, table=True):
     - 不再支持嵌套的 steps 结构
     - 通过 crontab 表达式支持周期运行
     """
-    __tablename__ = "workflow_record"
     __table_args__ = (
         Index('idx_workflow_user_name_unique', 'mid', 'name', unique=True),
         {"extend_existing": True},
@@ -455,7 +416,7 @@ class WorkflowRecord(SQLModel, table=True):
     )
 
     # 运行时参数模板
-    params_template: Dict[str, Any] = Field(
+    params_template: Dict = Field(
         default_factory=dict,
         sa_column=Column(JSON),
         description="参数模板，支持 {{变量}} 语法"
@@ -480,7 +441,7 @@ class WorkflowRecord(SQLModel, table=True):
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
 
     # 输入输出定义
-    input: Dict[str, Any] = Field(
+    input: Dict = Field(
         default_factory=dict,
         sa_column=Column(JSON),
         description="输入变量（全局变量）"
@@ -492,7 +453,7 @@ class WorkflowRecord(SQLModel, table=True):
     )
 
     # 所有权
-    mid: int = Field(index=True)
+    mid: str = Field(max_length=255, index=True)
 
     # 状态
     is_enabled: bool = Field(default=True)
@@ -504,13 +465,13 @@ class WorkflowRecord(SQLModel, table=True):
     is_verified: bool = Field(default=False)
     forks_count: int = Field(default=0)
     forked_from_id: int | None = Field(
-        default=None, foreign_key="workflow_record.id")
+        default=None, foreign_key="workflowrecord.id")
 
     # 错误处理
-    on_error: str = Field(default="stop", max_length=50)
+    on_error: ErrorHandlingEnum = Field(default=ErrorHandlingEnum.STOP)
     max_retries: int = Field(default=0)
 
-    author: str = Field(default="", max_length=100)
+    author: str = Field(..., max_length=100)
     version: str = Field(default="1.0.0", max_length=50)
 
     # 时间戳

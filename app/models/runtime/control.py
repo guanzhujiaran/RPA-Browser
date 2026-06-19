@@ -1,3 +1,4 @@
+from pydantic import computed_field
 import sys
 from enum import StrEnum, IntEnum
 
@@ -76,8 +77,10 @@ class AutomationResumeRequest(SQLModel):
 class BrowserCleanupPolicy(SQLModel):
     """浏览器清理策略"""
 
-    max_idle_time: int = Field(default_factory=lambda: settings.browser_session_max_idle_time, description="最大闲置时间（秒）")
-    cleanup_interval: int = Field(default_factory=lambda: settings.browser_session_cleanup_interval, description="清理检查间隔（秒）")
+    max_idle_time: int = Field(
+        default_factory=lambda: settings.browser_session_max_idle_time, description="最大闲置时间（秒）")
+    cleanup_interval: int = Field(
+        default_factory=lambda: settings.browser_session_cleanup_interval, description="清理检查间隔（秒）")
 
 
 class SessionLifecycleState(StrEnum):
@@ -110,6 +113,7 @@ class CreateSessionResponse(SQLModel):
     success: bool
     session_id: str
     browser_started: bool
+    status: str = Field(default="running", description="浏览器会话状态")
     created_at: int
     expires_at: int | None = Field(None, description="会话过期时间")
     message: str | None = Field(None, description="详细信息")
@@ -138,7 +142,6 @@ class BrowserIdParam(SQLModel):
     """包含browser_id的基础请求模型"""
 
     browser_id: str = Field(description="浏览器实例ID")
-
 
 
 class ScreenshotRequest(SQLModel):
@@ -173,7 +176,8 @@ class BrowserClickRequest(SQLModel):
     browser_id: str = Field(description="浏览器实例ID")
     x: float = Field(description="X坐标相对位置 (0.0-1.0)")
     y: float = Field(description="Y坐标相对位置 (0.0-1.0)")
-    button: str = Field(default="left", description="鼠标按钮: left, middle, right")
+    button: str = Field(
+        default="left", description="鼠标按钮: left, middle, right")
     double: bool = Field(default=False, description="是否双击")
     wait_after: int = Field(default=0, description="点击后等待时间(毫秒)")
 
@@ -221,7 +225,6 @@ class LiveControlCommandWithBrowserId(LiveControlCommand):
     """包含browser_id的实时控制命令"""
 
     browser_id: str = Field(description="浏览器实例ID")
-
 
 
 class BrowserOperationRequest(SQLModel):
@@ -277,9 +280,6 @@ class OperationStatusResponse(SQLModel):
         return str(self.browser_id)
 
 
-
-
-
 class BrowserInfoResponse(SQLModel):
     """浏览器信息响应"""
 
@@ -293,7 +293,6 @@ class BrowserInfoResponse(SQLModel):
     @property
     def browser_id_str(self) -> str:
         return str(self.browser_id)
-
 
 
 class SystemStatisticsResponse(SQLModel):
@@ -355,7 +354,6 @@ class SystemHealthCheckResponse(SQLModel):
     error: str | None = Field(None, description="错误信息（如果有）")
 
 
-
 # LiveService 返回的具体模型
 
 
@@ -370,17 +368,19 @@ class BrowserInfoData(SQLModel):
 class PageInfo(SQLModel):
     """页面信息模型"""
     index: int = Field(description="页面索引（从0开始，可能变化）")
-    page_id: str = Field(description="页面唯一ID（UUID，不会变化）")
     url: str = Field(description="页面URL")
     title: str = Field(description="页面标题")
-    is_closed: bool = Field(description="是否已关闭")
+    is_closed: bool = Field(default=False, description="是否已关闭")
 
 
 class PagesListResponse(SQLModel):
     """页面列表响应模型"""
-    pages_count: int = Field(0, description="页面总数")
     pages: list[PageInfo] = Field(default_factory=list, description="页面列表")
 
+    @computed_field
+    @property
+    def pages_count(self) -> int:
+        return len(self.pages)
 
 
 class ManualOperationResult(SQLModel):
@@ -411,9 +411,6 @@ class OperationStatusData(SQLModel):
     active_connections: int = Field(description="活跃连接数")
     last_activity: int = Field(description="最后活动时间")
     manual_operation_duration: int = Field(description="手动操作持续时间")
-
-
-
 
 
 class SessionStatisticsData(SQLModel):
@@ -453,12 +450,14 @@ class BrowserSessionStatusData(SQLModel):
     created_at: int = Field(description="创建时间")
     expires_at: int | None = Field(None, description="过期时间")
     status: str = Field(description="状态")
-    cleanup_policy: BrowserCleanupPolicy = Field(default_factory=BrowserCleanupPolicy, description="清理策略")
+    cleanup_policy: BrowserCleanupPolicy = Field(
+        default_factory=BrowserCleanupPolicy, description="清理策略")
     message: str = Field(description="状态消息")
     screen_width: int = Field(description="屏幕宽度")
     screen_height: int = Field(description="屏幕高度")
     viewport_width: int = Field(description="视口宽度")
     viewport_height: int = Field(description="视口高度")
+
 
 class JavaScriptExecutionResult(SQLModel):
     """JavaScript执行结果"""

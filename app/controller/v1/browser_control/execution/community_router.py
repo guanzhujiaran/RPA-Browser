@@ -7,7 +7,7 @@ from app.models.response import StandardResponse, success_response, error_respon
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from fastapi import APIRouter, Depends
-from app.services.execution.crud_service import action_crud, workflow_crud, plugin_crud, community_crud
+from app.services.execution.crud_service import action_crud_svr, workflow_crud_svr, plugin_crud_svr, community_crud_svr
 from app.models.workflow.models import (
     CompositeActionListItemResponse,
     WorkflowListItemResponse,
@@ -50,12 +50,12 @@ async def list_community_actions(
     skip = (request.page - 1) * request.per_page
     
     # 获取总数
-    total = await action_crud.count_by_user(
+    total = await action_crud_svr.count_by_user(
         mid=auth.mid,
         filter_type=request.filter_type
     )
     
-    models = await action_crud.list_by_user(
+    models = await action_crud_svr.list_by_user(
         mid=auth.mid,
         skip=skip,
         limit=request.per_page,
@@ -108,12 +108,12 @@ async def list_community_workflows(
     skip = (request.page - 1) * request.per_page
     
     # 获取总数
-    total = await workflow_crud.count_by_user(
+    total = await workflow_crud_svr.count_by_user(
         mid=auth.mid,
         filter_type=request.filter_type
     )
     
-    models = await workflow_crud.list_by_user(
+    models = await workflow_crud_svr.list_by_user(
         mid=auth.mid,
         skip=skip,
         limit=request.per_page,
@@ -165,12 +165,12 @@ async def list_community_plugins(
     skip = (request.page - 1) * request.per_page
     
     # 获取总数
-    total = await plugin_crud.count_by_user(
+    total = await plugin_crud_svr.count_by_user(
         mid=auth.mid,
         filter_type=request.filter_type
     )
     
-    models = await plugin_crud.list_by_user(
+    models = await plugin_crud_svr.list_by_user(
         mid=auth.mid,
         skip=skip,
         limit=request.per_page,
@@ -220,7 +220,7 @@ async def fork_community_action(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[ActionForkResponse]:
     """Fork 社区公开的自定义操作到自己的空间"""
-    original = await action_crud.get_by_id(request.id)
+    original = await action_crud_svr.get_by_id(request.id)
     if not original:
         return error_response(404, "操作不存在")
     
@@ -228,7 +228,7 @@ async def fork_community_action(
         return error_response(403, "只能 Fork 公开的操作")
     
     try:
-        model = await action_crud.fork(
+        model = await action_crud_svr.fork(
             id=request.id,
             target_mid=auth.mid,
             new_name=request.new_name
@@ -244,7 +244,7 @@ async def fork_community_action(
                 name=model.name,
                 forked_from=original.name,
             ),
-            message="Fork 成功"
+            msg="Fork 成功"
         )
     except ValueError as e:
         return error_response(400, str(e))
@@ -256,7 +256,7 @@ async def fork_community_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowForkResponse]:
     """Fork 社区公开的工作流到自己的空间"""
-    original = await workflow_crud.get_by_id(request.id)
+    original = await workflow_crud_svr.get_by_id(request.id)
     if not original:
         return error_response(404, "工作流不存在")
     
@@ -264,7 +264,7 @@ async def fork_community_workflow(
         return error_response(403, "只能 Fork 公开的工作流")
     
     try:
-        model = await workflow_crud.fork(
+        model = await workflow_crud_svr.fork(
             id=request.id,
             target_mid=auth.mid,
             new_name=request.new_name
@@ -280,7 +280,7 @@ async def fork_community_workflow(
                 name=model.name,
                 forked_from=original.name,
             ),
-            message="Fork 成功"
+            msg="Fork 成功"
         )
     except ValueError as e:
         return error_response(400, str(e))
@@ -292,7 +292,7 @@ async def fork_community_plugin(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[PluginForkResponse]:
     """Fork 社区公开的插件到自己的空间"""
-    original = await plugin_crud.get_by_id(request.id)
+    original = await plugin_crud_svr.get_by_id(request.id)
     if not original:
         return error_response(404, "插件不存在")
     
@@ -300,7 +300,7 @@ async def fork_community_plugin(
         return error_response(403, "只能 Fork 公开的插件")
     
     try:
-        model = await plugin_crud.fork(
+        model = await plugin_crud_svr.fork(
             id=request.id,
             target_mid=auth.mid,
             new_name=request.new_name
@@ -316,7 +316,7 @@ async def fork_community_plugin(
                 name=model.name,
                 forked_from=original.name,
             ),
-            message="Fork 成功"
+            msg="Fork 成功"
         )
     except ValueError as e:
         return error_response(400, str(e))
@@ -331,7 +331,7 @@ async def like_action(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """点赞或取消点赞自定义操作"""
-    result = await community_crud.toggle_like(
+    result = await community_crud_svr.toggle_like(
         mid=auth.mid,
         resource_type=1,  # CustomAction
         resource_id=action_id
@@ -352,7 +352,7 @@ async def like_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """点赞或取消点赞工作流"""
-    result = await community_crud.toggle_like(
+    result = await community_crud_svr.toggle_like(
         mid=auth.mid,
         resource_type=2,  # UserWorkflow
         resource_id=workflow_id
@@ -373,7 +373,7 @@ async def like_plugin(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """点赞或取消点赞插件"""
-    result = await community_crud.toggle_like(
+    result = await community_crud_svr.toggle_like(
         mid=auth.mid,
         resource_type=3,  # UserPlugin
         resource_id=plugin_id
@@ -404,7 +404,7 @@ async def report_action(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """举报自定义操作"""
-    result = await community_crud.report(
+    result = await community_crud_svr.report(
         mid=auth.mid,
         resource_type=1,  # CustomAction
         resource_id=action_id,
@@ -430,7 +430,7 @@ async def report_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """举报工作流"""
-    result = await community_crud.report(
+    result = await community_crud_svr.report(
         mid=auth.mid,
         resource_type=2,  # UserWorkflow
         resource_id=workflow_id,
@@ -456,7 +456,7 @@ async def report_plugin(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """举报插件"""
-    result = await community_crud.report(
+    result = await community_crud_svr.report(
         mid=auth.mid,
         resource_type=3,  # UserPlugin
         resource_id=plugin_id,
@@ -504,7 +504,7 @@ async def update_report(
     if request.reason is None and request.description is None:
         return error_response(400, "至少需要修改举报理由或描述")
     
-    result = await community_crud.update_report(
+    result = await community_crud_svr.update_report(
         report_id=request.report_id,
         mid=auth.mid,
         reason=request.reason,

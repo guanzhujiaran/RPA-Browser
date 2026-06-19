@@ -17,7 +17,7 @@ class AdminSessionInfo(SQLModel):
     is_manual_mode: bool = Field(description="是否手动模式")
     priority: str = Field(description="优先级")
     active_connections: int = Field(description="活跃连接数")
-    cleanup_policy: Dict[str, Any] = Field(description="清理策略")
+    cleanup_policy: Dict = Field(description="清理策略")
 
 
 class AdminAllSessionsResponse(SQLModel):
@@ -32,7 +32,7 @@ class AdminLiveStreamInfo(SQLModel):
     mid: int = Field(description="用户ID")
     browser_id: int = Field(description="浏览器实例ID")
     is_active: bool = Field(description="是否活跃")
-    params: Dict[str, Any] = Field(description="流参数")
+    params: Dict = Field(description="流参数")
 
 
 class AdminWebRTCConnectionInfo(SQLModel):

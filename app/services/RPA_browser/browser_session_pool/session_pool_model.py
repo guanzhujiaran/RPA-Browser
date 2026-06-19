@@ -1,11 +1,12 @@
+from app.models.runtime.control import PageInfo
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import AsyncGenerator, Any, Dict, List
+from typing import AsyncGenerator, Any, Dict
 import uuid
 import loguru
-from playwright.async_api import BrowserContext, Page
+from botright.playwright_mock import BrowserContext, Page
 from app.models.runtime.session import (
     SessionCloseResponse,
     BrowserSessionCreateParams,
@@ -29,6 +30,7 @@ from loguru import logger
 _browser_creation_locks: Dict[str, asyncio.Lock] = {}
 _global_browser_lock = asyncio.Lock()  # 用于保护 _browser_creation_locks 字典本身
 
+
 @dataclass
 class InitSessionRes:
     playwright_instance: BaseUndetectedPlaywright
@@ -40,11 +42,11 @@ class InitSessionRes:
 async def _get_browser_creation_lock(mid, browser_id) -> asyncio.Lock:
     """
     获取浏览器创建锁（懒创建）
-    
+
     Args:
         mid: 用户ID
         browser_id: 浏览器ID
-    
+
     Returns:
         asyncio.Lock: 针对该uid+browser_id的锁
     """
@@ -58,7 +60,7 @@ async def _get_browser_creation_lock(mid, browser_id) -> asyncio.Lock:
 async def _cleanup_browser_creation_lock(mid, browser_id):
     """
     清理浏览器创建锁（在浏览器创建完成后调用）
-    
+
     Args:
         mid: 用户ID
         browser_id: 浏览器ID
@@ -69,20 +71,18 @@ async def _cleanup_browser_creation_lock(mid, browser_id):
 
 
 @dataclass
-@log_class_decorator.decorator
 class SessionInfo:
     """
     会话信息数据类
     尽量不要直接实例化，通过`new`方法实例化
     """
-
     playwright_instance: BaseUndetectedPlaywright
     browser_context: BrowserContext
     browser_generator: AsyncGenerator[BrowserContext, Any]
     fingerprint_params: BaseFingerprintBrowserInitParams
     _headless: bool
     created_at: datetime = datetime.now()
-    logger: "loguru.Logger" = None
+    logger: "loguru.Logger" = loguru.logger
 
     @computed_field
     @property
@@ -105,41 +105,26 @@ class SessionInfo:
     @property
     def headless(self) -> bool:
         return self._headless
-    
-    @staticmethod
-    def _ensure_page_id(page: Page) -> str:
-        """
-        确保 Page 对象有唯一的 page_id
-        
-        如果 Page 对象已经有 _webrtc_page_id 属性，则返回它；
-        否则生成一个新的 UUID 并附加到 Page 对象上。
-        
-        Args:
-            page: Playwright Page 对象
-            
-        Returns:
-            str: 页面的唯一 ID
-        """
-        if not hasattr(page, '_webrtc_page_id'):
-            page._webrtc_page_id = str(uuid.uuid4())
-        return page._webrtc_page_id
-    
-    async def get_all_pages(self) -> list[Page]:
-        """获取所有页面列表（自动为每个页面设置 page_id）"""
-        if self.is_closed:
-            return []
 
-        # 返回所有未关闭的页面，并确保每个页面都有 page_id
-        pages = []
-        for page in self.browser_context.pages:
-            if not page.is_closed():
-                self._ensure_page_id(page)  # 确保有 page_id
-                pages.append(page)
-        return pages
+    @property
+    def all_pages(self) -> list[Page]:
+        """获取所有页面列表（自动为每个页面设置 page_id）"""
+        return [] if self.is_closed else self.browser_context.pages
+
+    async def get_all_page_infos(self) -> list[PageInfo]:
+        """获取所有页面信息列表（自动为每个页面设置 page_id）"""
+        ret_list = []
+        for idx, p in enumerate(self.all_pages):
+            ret_list.append(PageInfo(
+                index=idx,
+                url=p.url,
+                title=await p.title(),
+            ))
+        return ret_list
 
 
 @log_class_decorator.decorator
-class PluginedSessionInfo(SessionInfo):
+class WebRTCEnabledSession(SessionInfo):
     page_methods_to_enhance: list[str] = [
         "click",
         "fill",
@@ -162,54 +147,43 @@ class PluginedSessionInfo(SessionInfo):
         "query_selector",
         "query_selector_all",
     ]
-    
-    # WebRTC 管理器（惰性初始化）
-    _webrtc_manager = None
-    
+
+    # WebRTC 管理器缓存（惰性属性，首次访问时自动初始化，无需 enable_webrtc）
+    __webrtc_mgr_cache = None
+
+    @property
+    def _webrtc_manager(self) -> WebRTCStreamManager:
+        """
+        WebRTC 管理器（惰性初始化，首次访问时自动创建）。
+        使用 weakref 持有 session，无循环引用。
+        流在首次调用 start_stream() 时才真正分配资源，在此之前管理器为空壳。
+        """
+        if self.__webrtc_mgr_cache is None:
+            self.__webrtc_mgr_cache = WebRTCStreamManager(self)
+        return self.__webrtc_mgr_cache
+
     @property
     def max_pages(self) -> int:
         """获取最大页面数限制"""
         return settings.browser_max_pages_per_context
-    
-    async def enable_webrtc(self):
-        """
-        动态启用 WebRTC 功能（惰性初始化）
-        
-        如果会话尚未启用 WebRTC，则创建 WebRTCStreamManager。
-        如果已经启用，则直接返回现有的管理器。
-        
-        Returns:
-            WebRTCStreamManager: WebRTC 流管理器实例
-        """
-        if self._webrtc_manager is None:
-            self._webrtc_manager = WebRTCStreamManager(self)
-        return self._webrtc_manager
-    
+
     @property
-    def has_webrtc(self) -> bool:
-        """检查是否已启用 WebRTC 功能"""
-        return self._webrtc_manager is not None
-    
-    @property
-    def webrtc_manager(self):
+    def webrtc_manager(self) -> WebRTCStreamManager:
         """
-        获取 WebRTC 管理器
-        
-        如果尚未启用，会抛出异常。应该先调用 enable_webrtc()。
+        获取 WebRTC 管理器（始终可用，无需 enable_webrtc）。
+
+        管理器在会话创建时就已初始化，但流资源直到
+        首次调用 start_stream() 时才分配。
         """
-        if self._webrtc_manager is None:
-            raise RuntimeError(
-                "WebRTC not enabled. Call await session.enable_webrtc() first."
-            )
         return self._webrtc_manager
-    
+
     @property
     def webrtc_active_streams(self) -> int:
         """获取活跃的 WebRTC 流数量"""
         if self._webrtc_manager:
             return self._webrtc_manager.active_stream_count
         return 0
-    
+
     @property
     def webrtc_total_streams(self) -> int:
         """获取总的 WebRTC 流数量"""
@@ -231,7 +205,7 @@ class PluginedSessionInfo(SessionInfo):
             # 如果启用了 WebRTC，先关闭所有 WebRTC 流
             if self._webrtc_manager:
                 await self._webrtc_manager.close_all_streams()
-            
+
             # 如果指定了页面索引，只关闭该页面
             if page_index is not None:
                 success = await self.close_page(page_index)
@@ -254,7 +228,8 @@ class PluginedSessionInfo(SessionInfo):
 
             # 关闭浏览器上下文
             if self.browser_context and not (
-                self.browser_context.pages and self.browser_context.pages[0].is_closed()
+                self.browser_context.pages and self.browser_context.pages[0].is_closed(
+                )
             ):
                 await self.browser_context.close()
 
@@ -283,7 +258,7 @@ class PluginedSessionInfo(SessionInfo):
             # 强制关闭所有 WebRTC 流
             if self._webrtc_manager:
                 await self._webrtc_manager.close_all_streams()
-            
+
             # 强制关闭浏览器上下文
             if self.browser_context:
                 try:
@@ -317,13 +292,12 @@ class PluginedSessionInfo(SessionInfo):
         """创建新页面并自动注入插件"""
         # 检查页面数量限制
         await self._enforce_page_limit()
-        
+
         page = await self.browser_context.new_page()
-        # 为新页面设置 page_id
-        self._ensure_page_id(page)
         # 禁用下载功能
         self._disable_downloads(page)
-        self.logger.info(f"📄 创建新页面，当前页面总数: {len(self.browser_context.pages)}/{self.max_pages}")
+        self.logger.info(
+            f"📄 创建新页面，当前页面总数: {len(self.browser_context.pages)}/{self.max_pages}")
         return page
 
     def _disable_downloads(self, page: Page) -> None:
@@ -350,15 +324,15 @@ class PluginedSessionInfo(SessionInfo):
         强制执行页面数量限制
         如果页面数量超过限制，关闭最旧的页面
         """
-        all_pages = await self.get_all_pages()
+        all_pages = self.all_pages
         current_count = len(all_pages)
-        
+
         if current_count >= self.max_pages:
             pages_to_close = current_count - self.max_pages + 1
             self.logger.warning(
                 f"⚠️ 页面数量达到限制 ({current_count}/{self.max_pages})，将关闭 {pages_to_close} 个最旧的页面"
             )
-            
+
             # 关闭最旧的页面（前面的页面）
             for i in range(pages_to_close):
                 if i < len(all_pages):
@@ -367,18 +341,18 @@ class PluginedSessionInfo(SessionInfo):
                         if not old_page.is_closed():
                             await old_page.close()
                             self.logger.info(f"🗑️ 已关闭旧页面: {old_page.url}")
-                            
+
                     except Exception as e:
                         self.logger.error(f"关闭旧页面失败: {e}")
-            
+
             # 等待一下让浏览器完成清理
             await asyncio.sleep(0.5)
-    
+
     async def create_new_page_with_limit(self) -> Page:
         """
         创建新页面并遵守页面数量限制
         这是推荐的使用方式，会自动执行页面限制检查
-        
+
         Returns:
             Page: 新创建的页面对象
         """
@@ -400,7 +374,7 @@ class PluginedSessionInfo(SessionInfo):
         if self.is_closed:
             raise RuntimeError("会话已关闭，无法切换页面")
 
-        all_pages = await self.get_all_pages()
+        all_pages = self.all_pages
 
         if not all_pages:
             raise IndexError("没有可用的页面")
@@ -411,14 +385,14 @@ class PluginedSessionInfo(SessionInfo):
             )
 
         target_page = all_pages[page_index]
-        
+
         # 使用 bring_to_front() 真正激活页面
         try:
             await target_page.bring_to_front()
             self.logger.info(f"✅ 已激活页面索引 {page_index}: {target_page.url}")
         except Exception as e:
             self.logger.warning(f"⚠️ bring_to_front() 失败: {e}，但仍返回页面对象")
-        
+
         return target_page
 
     async def close_page(self, page_index: int) -> bool:
@@ -434,7 +408,7 @@ class PluginedSessionInfo(SessionInfo):
         if self.is_closed:
             raise RuntimeError("会话已关闭，无法关闭页面")
 
-        all_pages = await self.get_all_pages()
+        all_pages = self.all_pages
 
         if not all_pages:
             raise IndexError("没有可用的页面")
@@ -458,17 +432,16 @@ class PluginedSessionInfo(SessionInfo):
     async def get_current_page(self) -> Page:
         """获取当前活动页面并确保已注入插件"""
         all_pages = self.browser_context.pages if self.browser_context else []
-        
+
         if not all_pages:
             # 没有页面，创建新页面
             return await self.__new_page()
-        
+
         # 查找第一个未关闭且可用的页面
         for page in all_pages:
             if not page.is_closed():
-                self._ensure_page_id(page)  # 确保有 page_id
                 return page
-        
+
         # 所有页面都关闭了，创建新页面
         return await self.__new_page()
 
@@ -499,9 +472,10 @@ class PluginedSessionInfo(SessionInfo):
 
                 # 🔑 调试日志：记录指纹信息类型和字段
                 logger.debug(f"指纹信息类型: {type(fingerprint_info).__name__}")
-                fingerprint_dict = fingerprint_info.model_dump(exclude_none=True)
+                fingerprint_dict = fingerprint_info.model_dump(
+                    exclude_none=True)
                 logger.debug(f"指纹信息字段: {list(fingerprint_dict.keys())}")
-                
+
                 # 🔑 确保 fingerprint 字段存在（如果为 None 会被 exclude_none 排除）
                 if 'fingerprint' not in fingerprint_dict:
                     logger.warning(f"⚠️ fingerprint 字段不存在或为 None，设置为默认值 0")
@@ -514,7 +488,8 @@ class PluginedSessionInfo(SessionInfo):
                 playwright_instance = BaseUndetectedPlaywright(
                     mid=mid, browser_id=browser_id, headless=headless
                 )
-                browser_generator = playwright_instance.launch_browser_span(fingerprint_params)
+                browser_generator = playwright_instance.launch_browser_span(
+                    fingerprint_params)
                 browser_context = await anext(browser_generator)
 
                 return InitSessionRes(
@@ -562,17 +537,17 @@ class PluginedSessionInfo(SessionInfo):
 class BrowserSession:
     """浏览器会话数据类，包含特定mid下的所有browser_id会话"""
 
-    mid: str
-    sessions: Dict[int, PluginedSessionInfo]
+    mid: int
+    sessions: Dict[int, WebRTCEnabledSession]
     created_at: datetime = datetime.now()
 
     async def create_session(
         self, params: BrowserSessionCreateParams
-    ) -> PluginedSessionInfo:
+    ) -> WebRTCEnabledSession:
         """添加新的会话"""
         if sess := self.get_session(params):
             return sess
-        session_info: PluginedSessionInfo = await PluginedSessionInfo.new(
+        session_info: WebRTCEnabledSession = await WebRTCEnabledSession.new(
             mid=self.mid,
             browser_id=params.browser_id,
             headless=params.headless,
@@ -583,7 +558,7 @@ class BrowserSession:
 
     def get_session(
         self, params: BrowserSessionGetParams
-    ) -> PluginedSessionInfo | None:
+    ) -> WebRTCEnabledSession | None:
         """根据browser_id获取会话"""
         if session_info := self.sessions.get(params.browser_id):
             session_info.last_used_at = int(time.time())
@@ -626,6 +601,6 @@ class BrowserSession:
 
 __all__ = [
     "SessionInfo",
-    "PluginedSessionInfo",
+    "WebRTCEnabledSession",
     "BrowserSession",
 ]

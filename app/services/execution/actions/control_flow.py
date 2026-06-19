@@ -8,10 +8,18 @@
 4. 备忘录模式：保存/恢复执行状态
 5. 模板方法模式：统一执行流程框架
 """
-from app.models.execution.action_params import CompositeParams
-from app.models.execution.action_params import IfElseParams
-from app.models.execution.action_params import LoopParams
+from app.models.execution.action_params import CompositeParams, CompositeResult
+from app.models.execution.action_params import IfElseParams, IfElseResult
+from app.models.execution.action_params import LoopParams, LoopResult
 from app.models.execution.action_params import BaseWorkflowStep, WorkflowStep, workflow_step_adapter, _ensure_action_type
+from app.models.execution.condition_models import (
+    ConditionRule,
+    evaluate_rule,
+    evaluate_condition,
+    ConditionEvaluateError,
+)
+import ast
+import operator
 import time
 import re
 import uuid
@@ -33,13 +41,13 @@ from app.utils.depends.session_manager import DatabaseSessionManager
 class ExecutionContext:
     """执行上下文 - 保存执行状态（备忘录模式）"""
 
-    def __init__(self, variables: Dict[str, Any] = None):
+    def __init__(self, variables: Dict = None):
         self.variables = dict(variables) if variables else {}
         self.execution_stack: List[str] = []
         self.current_depth = 0
         self.execution_id = str(uuid.uuid4())
 
-    def save_state(self) -> Dict[str, Any]:
+    def save_state(self) -> Dict:
         """保存当前状态"""
         return {
             'variables': dict(self.variables),
@@ -47,7 +55,7 @@ class ExecutionContext:
             'current_depth': self.current_depth
         }
 
-    def restore_state(self, state: Dict[str, Any]):
+    def restore_state(self, state: Dict):
         """恢复状态"""
         self.variables = state['variables']
         self.execution_stack = state['execution_stack']
@@ -116,6 +124,121 @@ class ExecutionStrategy:
         """执行策略"""
         raise NotImplementedError
 
+    def _evaluate_condition(self, condition: ConditionRule | str | None) -> bool:
+        """安全评估条件表达式
+
+        - ConditionRule: 使用 evaluate_rule() 结构化评估（零 eval）
+        - str: 使用 AST 递归 safe_evaluate_condition()（无 eval，用于循环条件）
+        """
+        if condition is None:
+            return False
+        if isinstance(condition, ConditionRule):
+            try:
+                return evaluate_rule(condition, self.context.variables)
+            except ConditionEvaluateError as e:
+                logger.warning(f"ConditionRule 评估失败: {e}")
+                return False
+        return safe_evaluate_condition(condition, self.context.variables)
+
+    def _eval_node(self, node: ast.AST, variables: Dict | None = None) -> Any:
+        """委托给模块级 _eval_ast_node"""
+        if variables is None:
+            variables = self.context.variables
+        return _eval_ast_node(node, variables)
+
+
+# 模块级安全条件评估函数，供 ConditionIterator、LoopAction 等使用
+def safe_evaluate_condition(condition: str | None, variables: dict) -> bool:
+    """安全评估条件表达式（AST 白名单方式，不使用 eval）
+
+    variables 中的键可直接作为变量名引用，例如：
+      element_found == True
+      loop_index >= 5
+    """
+    if not condition:
+        return False
+    try:
+        tree = ast.parse(condition.strip(), mode='eval')
+        return _eval_ast_node(tree.body, variables)
+    except Exception as e:
+        logger.warning(f"条件评估失败: {e}")
+        return False
+
+
+def _eval_ast_node(node: ast.AST, variables: dict) -> Any:
+    """递归安全求值 AST 节点，仅允许白名单中的节点类型"""
+    match node:
+        case ast.Constant(value):
+            return value
+        case ast.Name(id):
+            if id in variables:
+                return variables[id]
+            raise NameError(f"变量 '{id}' 未定义")
+        case ast.Subscript():
+            obj = _eval_ast_node(node.value, variables)
+            key = _eval_ast_node(node.slice, variables)
+            if isinstance(obj, dict):
+                return obj.get(key)
+            raise TypeError("仅支持 dict 下标访问")
+        case ast.Tuple(elts):
+            return tuple(_eval_ast_node(e, variables) for e in elts)
+        case ast.List(elts):
+            return [_eval_ast_node(e, variables) for e in elts]
+        case ast.Compare(left, ops, comparators):
+            val = _eval_ast_node(left, variables)
+            for op, comp in zip(ops, comparators):
+                other = _eval_ast_node(comp, variables)
+                val = _apply_compare_op(val, op, other)
+            return val
+        case ast.BoolOp(op, values):
+            vals = [_eval_ast_node(v, variables) for v in values]
+            return all(vals) if isinstance(op, ast.And) else any(vals)
+        case ast.UnaryOp(op, operand):
+            val = _eval_ast_node(operand, variables)
+            if isinstance(op, ast.Not):
+                return not val
+            if isinstance(op, ast.USub):
+                return -val
+            if isinstance(op, ast.UAdd):
+                return +val
+            raise ValueError(f"不支持的一元运算符: {type(op).__name__}")
+        case ast.BinOp(left, op, right):
+            lv = _eval_ast_node(left, variables)
+            rv = _eval_ast_node(right, variables)
+            return _apply_binop(lv, op, rv)
+        case _:
+            raise ValueError(f"不支持的操作: {type(node).__name__}")
+
+
+# 模块级工具函数，不含 eval，安全求值
+_COMPARE_OPS = {
+    ast.Eq: operator.eq, ast.NotEq: operator.ne,
+    ast.Lt: operator.lt, ast.LtE: operator.le,
+    ast.Gt: operator.gt, ast.GtE: operator.ge,
+    ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
+    ast.Is: operator.is_, ast.IsNot: operator.is_not,
+}
+
+_BIN_OPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub,
+    ast.Mult: operator.mul, ast.Div: operator.truediv,
+    ast.Mod: operator.mod, ast.Pow: operator.pow,
+}
+
+
+def _apply_compare_op(val: Any, op: ast.cmpop, other: Any) -> Any:
+    op_type = type(op)
+    if op_type in _COMPARE_OPS:
+        return _COMPARE_OPS[op_type](val, other)
+    raise ValueError(f"不支持的比较运算符: {op_type.__name__}")
+
+
+def _apply_binop(left: Any, op: ast.operator, right: Any) -> Any:
+    op_type = type(op)
+    if op_type in _BIN_OPS:
+        return _BIN_OPS[op_type](left, right)
+    raise ValueError(f"不支持的二元运算符: {op_type.__name__}")
+
 
 class AtomicStrategy(ExecutionStrategy):
     """原子操作执行策略"""
@@ -129,7 +252,8 @@ class AtomicStrategy(ExecutionStrategy):
         params = self._replace_templates(params)
 
         # 确定日志用的 action_type（自定义操作 ca_xxx 映射为 composite）
-        log_action_type = action_id if not action_id.startswith('ca_') else BuiltinActionType.COMPOSITE
+        log_action_type = action_id if not action_id.startswith(
+            'ca_') else BuiltinActionType.COMPOSITE
 
         # 记录执行开始
         await self._log_execution(action_id, params, step_index, ExecutionStatus.RUNNING, log_action_type)
@@ -143,7 +267,7 @@ class AtomicStrategy(ExecutionStrategy):
             # 如果内置操作没找到，尝试从 DB 查找自定义操作
             if not action_class:
                 from app.services.execution.action_registry import action_registry
-                action_class = await action_registry.get_action_class_for_user(action_id, self.mid)
+                action_class = await action_registry.get_action_class_for_user(action_id)
                 if action_class:
                     # 对于自定义复合操作，从 DB 加载 steps 到 params
                     from app.services.execution.actions.control_flow import CompositeAction as CompositeActionCls
@@ -172,7 +296,7 @@ class AtomicStrategy(ExecutionStrategy):
                 output_vars=step.output_vars or [],
             )
 
-            # 执行
+            # 执行（使用 execute() 而非 _execute()，确保 _merge_output_vars 被调用）
             result = await action.execute()
 
             # 更新变量
@@ -199,7 +323,7 @@ class AtomicStrategy(ExecutionStrategy):
             await self._log_execution_complete(action_id, ExecutionStatus.FAILED, error_result)
             return error_result
 
-    def _replace_templates(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _replace_templates(self, params: Dict) -> Dict:
         """模板变量替换（使用递归下降解析）"""
         # 若 params 是 Pydantic 模型，先转为 dict
         if not isinstance(params, dict):
@@ -208,7 +332,7 @@ class AtomicStrategy(ExecutionStrategy):
             else:
                 return params
 
-        def replace_value(value: Any) -> Any:
+        def replace_value(value):
             if isinstance(value, str):
                 # 使用正则匹配 {{变量名}} 格式
                 return re.sub(
@@ -236,13 +360,13 @@ class AtomicStrategy(ExecutionStrategy):
         return str(current) if current is not None else f"{{{{{path}}}}}"
 
     def _update_variables(self, result: ActionResult, step_index: int):
-        """更新共享变量池"""
-        if hasattr(result, 'data') and isinstance(result.data, dict):
-            for key, value in result.data.items():
-                self.context.variables[key] = value
+        """更新共享变量池 — 保存 result_{step_index}，并传播 last_output 和 output_vars 等变量"""
         self.context.variables[f"result_{step_index}"] = result.data
+        # 传播 action.execute() 产生的变量（last_output、output_vars 映射等）
+        if result.variables:
+            self.context.variables.update(result.variables)
 
-    async def _log_execution(self, action_id: str, params: Dict[str, Any], depth: int, status: ExecutionStatus, action_type: str | BuiltinActionType | None = None):
+    async def _log_execution(self, action_id: str, params: Dict, depth: int, status: ExecutionStatus, action_type: str | BuiltinActionType | None = None):
         """记录执行日志"""
         # 若 params 是 Pydantic 模型，先转为 dict 以避免 JSON 序列化错误
         if not isinstance(params, dict) and hasattr(params, 'model_dump'):
@@ -273,8 +397,11 @@ class AtomicStrategy(ExecutionStrategy):
             log = result_row.scalars().first()
             if log:
                 log.status = status
+                data = result.data
+                if hasattr(data, 'model_dump'):
+                    data = data.model_dump()
                 log.result_data = {
-                    "success": result.success, "data": result.data}
+                    "success": result.success, "data": data}
                 log.error_message = result.error
                 log.execution_time = result.execution_time
                 log.finished_at = datetime.now()
@@ -302,11 +429,17 @@ class LoopStrategy(ExecutionStrategy):
                 action_id=BuiltinActionType.LOOP,
             )
 
+        # 获取 break/continue 条件
+        break_cond = getattr(params, 'break_condition', None) or params.get("break_condition")  # type: ignore[union-attr]
+        continue_cond = getattr(params, 'continue_condition', None) or params.get("continue_condition")  # type: ignore[union-attr]
+
         # 创建循环迭代器
         loop_iterator = self._create_loop_iterator(params)
 
         results = []
         iteration = 0
+        was_broken = False
+        was_continued = False
 
         # 递归深度检查
         if self.context.current_depth >= settings.workflow_max_nesting_depth:
@@ -327,11 +460,20 @@ class LoopStrategy(ExecutionStrategy):
                 self.context.variables["loop_item"] = item
                 self.context.variables["loop_total"] = loop_iterator.total
 
-                # 执行子步骤
-                child_results = await self._execute_children(children, iteration)
+                # 执行子步骤（带 break/continue 条件判断）
+                child_results, should_break, should_continue = await self._execute_children(
+                    children, iteration, break_condition=break_cond, continue_condition=continue_cond,
+                )
                 results.extend(child_results)
 
-                # 检查是否需要中断
+                if should_break:
+                    was_broken = True
+                    break
+                if should_continue:
+                    was_continued = True
+                    continue
+
+                # 检查子步骤是否全部失败
                 if child_results and not child_results[-1].success:
                     break
 
@@ -341,16 +483,16 @@ class LoopStrategy(ExecutionStrategy):
 
         return ActionResult(
             success=True,
-            data={
-                "iterations": iteration,
-                "total_results": len(results),
-                "results": [{"action_id": r.action_id, "success": r.success} for r in results]
-            },
+            data=LoopResult(
+                iterations=iteration, total_results=len(results),
+                results=[{"action_id": r.action_id, "success": r.success} for r in results],
+                was_broken=was_broken, was_continued=was_continued,
+            ),
             execution_time=sum(r.execution_time for r in results),
             action_id=BuiltinActionType.LOOP,
         )
 
-    def _create_loop_iterator(self, params: Dict[str, Any]) -> 'LoopIterator':
+    def _create_loop_iterator(self, params: Dict) -> 'LoopIterator':
         """创建循环迭代器"""
         loop_count = params.get("loop_count")
         loop_while = params.get("loop_while")
@@ -366,18 +508,28 @@ class LoopStrategy(ExecutionStrategy):
         else:
             return CountIterator(1)
 
-    async def _execute_children(self, children: List[WorkflowStep], iteration: int) -> List[ActionResult]:
-        """执行子步骤"""
+    async def _execute_children(
+        self, children: List[WorkflowStep], iteration: int,
+        break_condition: str | None = None, continue_condition: str | None = None,
+    ) -> tuple[List[ActionResult], bool, bool]:
+        """执行子步骤，返回 (results, should_break, should_continue)"""
         results = []
         for i, child_step in enumerate(children):
-            result = await self.executor.execute(child_step, iteration * 100 + i)
+            result: ActionResult = await self.executor.execute(child_step, iteration * 100 + i)
             results.append(result)
-            # 检查是否需要中断
+
+            # 每步执行后检查 break/continue 条件
+            if break_condition and self._evaluate_condition(break_condition):
+                return results, True, False
+            if continue_condition and self._evaluate_condition(continue_condition):
+                return results, False, True
+
+            # 检查是否需要中断（失败且不重试）
             retry = child_step.retry if hasattr(
                 child_step, 'retry') else child_step.get("retry", 0)
             if not result.success and retry == 0:
                 break
-        return results
+        return results, False, False
 
 
 class IfElseStrategy(ExecutionStrategy):
@@ -388,8 +540,13 @@ class IfElseStrategy(ExecutionStrategy):
         params = step.params or {}
 
         # 获取条件和分支
-        condition = params.condition if hasattr(
+        raw_condition = params.condition if hasattr(
             params, 'condition') else params.get("condition")
+        # 兼容 dict 形式（JSON 反序列化时 params 可能是 dict）
+        if isinstance(raw_condition, dict):
+            condition = ConditionRule.model_validate(raw_condition)
+        else:
+            condition = raw_condition
         true_branch = list(params.TrueBranch) if hasattr(
             params, 'TrueBranch') and params.TrueBranch else []
         false_branch = list(params.FalseBranch) if hasattr(
@@ -414,7 +571,7 @@ class IfElseStrategy(ExecutionStrategy):
         if not selected_branch:
             return ActionResult(
                 success=True,
-                data={"branch": branch_name, "executed": False},
+                data=IfElseResult(branch=branch_name, executed=False),
                 action_id=BuiltinActionType.IF_ELSE,
             )
 
@@ -428,29 +585,13 @@ class IfElseStrategy(ExecutionStrategy):
 
             return ActionResult(
                 success=last_result.success if last_result else True,
-                data={
-                    "branch": branch_name,
-                    "executed": True,
-                    "results": [{"action_id": r.action_id, "success": r.success} for r in results]
-                },
+                data=IfElseResult(branch=branch_name, executed=True, results=[{"action_id": r.action_id, "success": r.success} for r in results]),
                 execution_time=sum(r.execution_time for r in results),
                 action_id=BuiltinActionType.IF_ELSE,
             )
         finally:
             self.context.current_depth -= 1
             self.context.restore_state(saved_state)
-
-    def _evaluate_condition(self, condition: str) -> bool:
-        """安全评估条件表达式"""
-        if not condition:
-            return False
-
-        try:
-            # 使用安全的 eval，限制可用变量
-            return eval(condition, {"__builtins__": {}}, {"state": self.context.variables})
-        except Exception as e:
-            logger.warning(f"条件评估失败: {e}")
-            return False
 
     async def _execute_branch(self, branch: List[WorkflowStep]) -> List[ActionResult]:
         """执行分支步骤"""
@@ -532,7 +673,7 @@ class ConditionIterator(LoopIterator):
         # 检查 while 条件
         if self.while_expr:
             try:
-                if not eval(self.while_expr, {}, {"state": self.context.variables}):
+                if not safe_evaluate_condition(self.while_expr, self.context.variables):
                     raise StopIteration
             except Exception as e:
                 logger.warning(f"loop_while 评估失败: {e}")
@@ -541,7 +682,7 @@ class ConditionIterator(LoopIterator):
         # 检查 until 条件
         if self.until_expr:
             try:
-                if eval(self.until_expr, {}, {"state": self.context.variables}):
+                if safe_evaluate_condition(self.until_expr, self.context.variables):
                     raise StopIteration
             except Exception as e:
                 logger.warning(f"loop_until 评估失败: {e}")
@@ -554,22 +695,55 @@ class ConditionIterator(LoopIterator):
 
 # ============ Action 类 ============
 
-class LoopAction(BaseAction):
+class LoopAction(BaseAction[LoopParams]):
     """循环控制流操作"""
     action_id: BuiltinActionType = BuiltinActionType.LOOP
+    action_type: BuiltinActionType = BuiltinActionType.LOOP
     params: LoopParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: LoopParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: LoopParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
-        """执行循环 - 委托给策略执行器"""
+    def _merge_output_vars(self, action_result: ActionResult) -> None:
+        """
+        循环操作的特殊变量合并：
+        - 处理 LoopResult 字段到 output_vars 的映射
+        - 不设置 last_output（子步骤已在 _execute() 中设置）
+        """
+        data = action_result.data
+        if data is None:
+            return
+
+        if isinstance(data, dict):
+            data_dict = data
+        elif hasattr(data, 'model_dump'):
+            data_dict = data.model_dump()
+        else:
+            return
+
+        if self.output_vars:
+            data_values = list(data_dict.values())
+            for i, var_name in enumerate(self.output_vars):
+                if i < len(data_values):
+                    self.variables[var_name] = data_values[i]
+
+    async def _execute(self) -> ActionResult[LoopResult]:
+        """执行循环 - 支持 loop_count / loop_while / loop_until"""
         start_time = time.time()
 
         # 参数验证
@@ -585,26 +759,119 @@ class LoopAction(BaseAction):
         # 获取子步骤（从 params 中获取）
         children = self.params.loopBranch
         if not children:
-            return ActionResult(success=True, data={"message": "无子步骤可执行"})
+            return ActionResult(success=True, data=LoopResult(message="无子步骤可执行"), action_id=self.action_id, action_name=self.action_name)
 
         # 创建执行上下文和执行器
         context = ExecutionContext(self.variables)
         executor = StepExecutor(context, self.page, self.mid)
 
-        # 执行
-        results = await self._execute_steps_with_context(executor, children)
+        # 获取循环参数
+        loop_count = self.params.loop_count or self.params.count
+        loop_while = self.params.loop_while
+        loop_until_val = getattr(self.params, 'loop_until', None)
+
+        results: list[dict] = []
+
+        if loop_count is not None and loop_count > 0:
+            # 固定次数循环
+            for i in range(loop_count):
+                context.variables["loop_index"] = i
+                child_results = await self._execute_children_with_condition(
+                    executor, children, context,
+                    loop_while=loop_while, loop_until=loop_until_val,
+                )
+                results.extend(child_results)
+                if child_results and not child_results[-1].get("success"):
+                    break
+
+        elif loop_while:
+            # while 条件循环：每次迭代和每个步骤执行前检查条件
+            loop_index = 0
+            while safe_evaluate_condition(loop_while, context.variables):
+                context.variables["loop_index"] = loop_index
+                child_results = await self._execute_children_with_condition(
+                    executor, children, context,
+                    loop_while=loop_while, loop_until=loop_until_val,
+                )
+                results.extend(child_results)
+                if child_results and not child_results[-1].get("success"):
+                    break
+                if not safe_evaluate_condition(loop_while, context.variables):
+                    break
+                loop_index += 1
+
+        elif loop_until_val:
+            # until 条件循环：循环直到条件满足，每个步骤执行前后检查
+            loop_index = 0
+            while True:
+                context.variables["loop_index"] = loop_index
+                child_results = await self._execute_children_with_condition(
+                    executor, children, context,
+                    loop_while=loop_while, loop_until=loop_until_val,
+                )
+                results.extend(child_results)
+                if child_results and not child_results[-1].get("success"):
+                    break
+                if safe_evaluate_condition(loop_until_val, context.variables):
+                    break
+                loop_index += 1
+
+        else:
+            # 默认：执行一次
+            results = await self._execute_steps_with_context(executor, children)
+
+        # 将子步骤产生的变量（last_output、output_vars 映射等）回写到 self.variables
+        self.variables.update(context.variables)
+
+        # 将最后一个有数据的子步骤的 raw 返回值设为 last_output
+        last_output = None
+        for r_dict in reversed(results):
+            step_results = r_dict.get("results", [])
+            for r in reversed(step_results):
+                if r.success and r.data is not None:
+                    last_output = r.data
+                    break
+            if last_output is not None:
+                break
+        self.variables['last_output'] = last_output
 
         return ActionResult(
             success=True,
-            data={
-                "iterations": len(results),
-                "details": results
-            },
+            data=LoopResult(iterations=len(results), details=results),
             execution_time=time.time() - start_time,
             action_id=self.action_id, action_name=self.action_name,
         )
 
-    async def _execute_steps_with_context(self, executor: StepExecutor, steps: List[WorkflowStep]) -> List[dict]:
+    async def _execute_children_with_condition(
+        self,
+        executor: StepExecutor,
+        steps: list[WorkflowStep],
+        context: ExecutionContext,
+        loop_while: str | None = None,
+        loop_until: str | None = None,
+    ) -> list[dict]:
+        """执行循环体内的所有步骤，每步执行前后检查 loop_while/loop_until 条件"""
+        results = []
+        for i, step in enumerate(steps):
+            # 每步执行前检查条件
+            if loop_while and not safe_evaluate_condition(loop_while, context.variables):
+                break
+            if loop_until and safe_evaluate_condition(loop_until, context.variables):
+                break
+
+            result = await executor.execute(step, i)
+            results.append({
+                "iteration": i,
+                "success": result.success,
+                "results": [result]
+            })
+
+            # 每步执行后检查条件
+            if loop_until and safe_evaluate_condition(loop_until, context.variables):
+                break
+        return results
+
+    async def _execute_steps_with_context(self, executor: StepExecutor, steps: list[WorkflowStep]) -> list[dict]:
         """使用上下文执行步骤列表"""
         results = []
         for i, step in enumerate(steps):
@@ -618,21 +885,54 @@ class LoopAction(BaseAction):
         return results
 
 
-class IfElseAction(BaseAction):
+class IfElseAction(BaseAction[IfElseParams]):
     """条件分支控制流操作"""
     action_id: BuiltinActionType = BuiltinActionType.IF_ELSE
+    action_type: BuiltinActionType = BuiltinActionType.IF_ELSE
     params: IfElseParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: IfElseParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: IfElseParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
-    async def execute(self) -> ActionResult:
+    def _merge_output_vars(self, action_result: ActionResult) -> None:
+        """
+        条件分支操作的特殊变量合并：
+        - 处理 IfElseResult 字段到 output_vars 的映射
+        - 不设置 last_output（子步骤已在 _execute() 中设置）
+        """
+        data = action_result.data
+        if data is None:
+            return
+
+        if isinstance(data, dict):
+            data_dict = data
+        elif hasattr(data, 'model_dump'):
+            data_dict = data.model_dump()
+        else:
+            return
+
+        if self.output_vars:
+            data_values = list(data_dict.values())
+            for i, var_name in enumerate(self.output_vars):
+                if i < len(data_values):
+                    self.variables[var_name] = data_values[i]
+
+    async def _execute(self) -> ActionResult[IfElseResult]:
         """执行条件分支 - 委托给策略执行器"""
         start_time = time.time()
 
@@ -670,7 +970,7 @@ class IfElseAction(BaseAction):
         if not selected_branch:
             return ActionResult(
                 success=True,
-                data={"branch_taken": branch_key, "message": "分支无步骤"},
+                data=IfElseResult(branch_taken=branch_key, message="分支无步骤"),
                 execution_time=time.time() - start_time,
                 action_id=self.action_id, action_name=self.action_name,
             )
@@ -678,19 +978,30 @@ class IfElseAction(BaseAction):
         # 执行分支
         results = await self._execute_steps_with_context(executor, selected_branch)
 
+        # 将子步骤产生的变量（last_output、output_vars 映射等）回写到 self.variables
+        self.variables.update(context.variables)
+
+        # 将最后一个有数据的子步骤的 raw 返回值设为 last_output
+        last_output = None
+        for r_dict in reversed(results):
+            if r_dict.get("success") and r_dict.get("data") is not None:
+                last_output = r_dict["data"]
+                break
+        self.variables['last_output'] = last_output
+
         return ActionResult(
             success=True,
-            data={"branch_taken": branch_key, "results": results},
+            data=IfElseResult(branch_taken=branch_key, results=results),
             execution_time=time.time() - start_time,
             action_id=self.action_id, action_name=self.action_name,
         )
 
-    def _evaluate_condition(self, condition: str) -> bool:
-        """评估条件"""
-        state = self.variables.get("state", {})
+    def _evaluate_condition(self, condition: ConditionRule) -> bool:
+        """评估条件规则（纯 Python 逻辑，不使用 eval）"""
         try:
-            return eval(condition, {"__builtins__": {}}, {"state": state})
-        except:
+            return evaluate_rule(condition, self.variables)
+        except ConditionEvaluateError as e:
+            logger.warning(f"IfElseAction 条件评估失败: {e}")
             return False
 
     async def _execute_steps_with_context(self, executor: StepExecutor, steps: List[WorkflowStep]) -> List[dict]:
@@ -706,19 +1017,29 @@ class IfElseAction(BaseAction):
         return results
 
 
-class CompositeAction(BaseAction):
+class CompositeAction(BaseAction[CompositeParams]):
     """组合动作基类 - 使用责任链模式执行步骤"""
     action_id: BuiltinActionType = BuiltinActionType.COMPOSITE
+    action_type: BuiltinActionType = BuiltinActionType.COMPOSITE
     params: CompositeParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict[str, Any], params: CompositeParams | None = None, timeout: int = 30000, input_vars: Dict[str, Any] | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
-        return super().new_action(
-            mid=mid, page=page, variables=variables,
-            params=params, timeout=timeout,
-            input_vars=input_vars, output_vars=output_vars,
-            action_name=action_name,
-        )
+    def new_action(cls, *, mid: int, page, variables: Dict, params: CompositeParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
 
     @property
     def steps(self):
@@ -726,7 +1047,34 @@ class CompositeAction(BaseAction):
             return self.params.steps
         return None
 
-    async def execute(self) -> ActionResult:
+    def _merge_output_vars(self, action_result: ActionResult) -> None:
+        """
+        复合操作的特殊变量合并：
+        - 处理 CompositeResult 字段到 output_vars 的映射
+        - 不设置 last_output（子步骤已在 _execute() 中设置）
+        """
+        data = action_result.data
+        if data is None:
+            return
+
+        # 将 data 转为 dict
+        if isinstance(data, dict):
+            data_dict = data
+        elif hasattr(data, 'model_dump'):
+            data_dict = data.model_dump()
+        else:
+            return  # 非 dict/模型，不做处理
+
+        # 处理 output_vars 映射（从 CompositeResult 字段）
+        if self.output_vars:
+            data_values = list(data_dict.values())
+            for i, var_name in enumerate(self.output_vars):
+                if i < len(data_values):
+                    self.variables[var_name] = data_values[i]
+
+        # 注意：不设置 last_output，子步骤已在 _execute() 中设置了最后一个步骤的 raw 返回值
+
+    async def _execute(self) -> ActionResult:
         """执行组合动作 - 责任链模式"""
         start_time = time.time()
 
@@ -753,7 +1101,8 @@ class CompositeAction(BaseAction):
                 steps.append(s)
             elif isinstance(s, dict):
                 try:
-                    steps.append(workflow_step_adapter.validate_python(_ensure_action_type(s)))
+                    steps.append(workflow_step_adapter.validate_python(
+                        _ensure_action_type(s)))
                 except Exception as e:
                     return ActionResult(
                         success=False,
@@ -770,17 +1119,24 @@ class CompositeAction(BaseAction):
         # 执行所有步骤（责任链模式）
         results = await self._execute_chain(executor, steps)
 
+        # 将子步骤产生的变量（last_output、output_vars 映射等）回写到 self.variables
+        self.variables.update(context.variables)
+
+        # 将最后一个有数据的子步骤的 raw 返回值设为 last_output
+        last_output = None
+        for r in reversed(results):
+            if r.success and r.data is not None:
+                last_output = r.data
+                break
+        self.variables['last_output'] = last_output
+
         total = len(results)
         success_count = sum(1 for r in results if r.success)
         all_success = all(r.success for r in results)
 
         return ActionResult(
             success=all_success,
-            data={
-                "total_steps": total,
-                "success_count": success_count,
-                "results": [{"action_id": r.action_id, "success": r.success} for r in results]
-            },
+            data=CompositeResult(total_steps=total, success_count=success_count, results=[{"action_id": r.action_id, "action_name": r.action_name, "success": r.success, "error": r.error, "execution_time": r.execution_time} for r in results]),
             error=results[-1].error if results and not all_success else None,
             execution_time=time.time() - start_time,
             action_id=self.action_id,

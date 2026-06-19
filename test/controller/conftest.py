@@ -1,21 +1,29 @@
 """
 Controller 接口测试配置
 
-使用 FastAPI TestClient 对 router 接口进行测试。
+使用 httpx.AsyncClient + ASGITransport 对 router 接口进行异步测试。
+参考: https://fastapi.org.cn/advanced/async-tests/
 使用真实数据库（SQLite）和真实 CRUD 操作，不 mock CRUD 服务。
 """
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.controller.v1.browser_control.execution.action_router import router as action_router
 from app.controller.v1.browser_control.execution.workflow_router import router as workflow_router
 from app.controller.v1.browser_control.execution.plugin_router import router as plugin_router
+from app.controller.v1.browser_control.execution.execution_router import router as execution_router
 from app.utils.depends.mid_depends import get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
 TEST_MID = 12345678
+
+
+# 覆盖 anyio_backend 为 session 级别，与父级 conftest 的 session fixture 兼容
+@pytest.fixture(scope="session")
+def anyio_backend():
+    return "asyncio"
 
 
 @pytest.fixture
@@ -36,18 +44,21 @@ def auth_headers(mock_auth):
 
 
 @pytest.fixture
-def client(mock_auth):
-    """创建 FastAPI TestClient，覆盖认证依赖"""
+async def client(mock_auth):
+    """创建 httpx.AsyncClient，覆盖认证依赖"""
     app = FastAPI()
     app.include_router(action_router)
     app.include_router(workflow_router)
     app.include_router(plugin_router)
+    app.include_router(execution_router)
 
     # 覆盖认证依赖，使用 mock auth
     app.dependency_overrides[get_auth_info_from_header] = lambda: mock_auth
 
-    with TestClient(app) as c:
-        yield c
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
 
     app.dependency_overrides.clear()
 

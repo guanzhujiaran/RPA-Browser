@@ -7,16 +7,21 @@ Base Action - 操作基类 (简化 OOP 设计)
 3. execute() 无需传参：所有属性在初始化时已赋值
 4. input_vars/output_vars：输入输出变量管理
 """
+from sqlmodel import SQLModel
+from typing import TypeVar
+from typing import Generic
 import types
-from app.models.execution.action_params import BuiltinActionName, BuiltinActionType, AllActionParams
+from app.models.execution.action_params import BuiltinActionName, BuiltinActionType, AllActionResult
 import contextlib
 from typing import Type
-from app.models.database.workflow.models import ActionMetadata
+from app.models.execution.action_params import ActionMetadata
 from botright.playwright_mock import Page
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, List, Dict
 from enum import Enum
+ParamsT = TypeVar("ParamsT", bound=SQLModel)
+DataT = TypeVar("DataT", default=Any)
 
 
 class ExecutionPhase(Enum):
@@ -29,75 +34,111 @@ class ExecutionPhase(Enum):
 
 
 @dataclass
-class ActionResult:
-    """操作执行结果"""
+class ActionResult(Generic[DataT]):
+    """操作执行结果（泛型版本，DataT 为结果数据类型）"""
     success: bool = False
-    data: Any = None
+    data: DataT | None = None
     error: str | None = None
     execution_time: float = 0.0
     action_id: str = ""
     action_name: str = ""
     logs: List[str] = field(default_factory=list)
-    output: Dict[str, Any] = field(default_factory=dict)
+    output: Dict = field(default_factory=dict)
+    variables: Dict = field(default_factory=dict)
+    replaced_params: Dict = field(default_factory=dict)
 
 
 @dataclass
-class BaseAction(ABC):
+class BaseAction(ABC, Generic[ParamsT]):
     """
     操作基类（dataclass 风格）
-
     """
 
-    action_id: BuiltinActionType | str
+    action_id: Any
+    action_type: BuiltinActionType
+    page: Page
+    params: ParamsT
     _action_name: BuiltinActionName | str | None = None
     mid: int = 0  # 有的action可能会用上
-    page: Page = None
-    params: AllActionParams | None = None
     timeout: int = 30000
-    input_vars: Dict[str, Any] = field(default_factory=dict)
+    input_vars: Dict = field(default_factory=dict)
     output_vars: List[str] = field(default_factory=list)
-    variables: Dict[str, Any] = field(default_factory=dict)
+    variables: Dict = field(default_factory=dict)
     _logs: List[str] = field(default_factory=list, repr=False)
     _phase: ExecutionPhase = field(
         default=ExecutionPhase.VALIDATION, repr=False)
-    
+
+    def _merge_output_vars(self, action_result: ActionResult) -> None:
+        """
+        合并输出变量
+
+        将 action_result.data 的键值对按需赋值到 variables 中：
+        - 如果有 output_vars，按顺序将 data 的值赋给对应的变量名
+        - 始终设置 last_output 为完整的 data
+
+        注意：不会将 data 的所有字段展开到 variables 中，避免 params 泄漏。
+        execute 完了之后必须调用
+        """
+        data = action_result.data
+        if data is None:
+            return
+
+        # 将 data 转为 dict（支持 dict 和模型实例）
+        if isinstance(data, dict):
+            data_dict = data
+        elif hasattr(data, 'model_dump'):
+            data_dict = data.model_dump()
+        else:
+            self.variables['last_output'] = data
+            return
+
+        # 如果有 output_vars，按顺序把 data 的值赋给 output_vars 中对应的变量名
+        if self.output_vars:
+            data_values = list(data_dict.values())
+            for i, var_name in enumerate(self.output_vars):
+                if i < len(data_values):
+                    self.variables[var_name] = data_values[i]
+
+        self.variables['last_output'] = data
+
     @classmethod
-    @abstractmethod
+    def _convert_params(cls, params: Any) -> Any:
+        """将 dict 类型的 params 转换为对应的 Pydantic 模型实例"""
+        if not isinstance(params, dict):
+            return params
+        params_annotation = cls.__annotations__.get('params')
+        if params_annotation is None:
+            return params
+        actual_type = params_annotation
+        if isinstance(actual_type, types.UnionType):
+            if non_none := [a for a in actual_type.__args__ if a is not type(None)]:
+                actual_type = non_none[0]
+        if isinstance(actual_type, type) and actual_type is not dict:
+            with contextlib.suppress(Exception):
+                return actual_type(**params)
+        return params
+
+    @classmethod
     def new_action(
         cls,
         *,
-        mid: int,
+        mid: int | str,
         page: Page,
-        variables: Dict[str, Any],
-        params: AllActionParams | None = None,
+        variables: Dict,
+        params: ParamsT | None = None,
         timeout: int = 30000,
-        input_vars: Dict[str, Any] = None,
-        output_vars: List[str] = None,
+        input_vars: dict | None = None,
+        output_vars: List[str] | None = None,
         action_name: BuiltinActionName | str | None = None,
-    ) -> 'BaseAction':
-        safe_params = params or {}
+    ):
+        safe_params = cls._convert_params(params or {})
         safe_input = input_vars or {}
         safe_output = output_vars or []
         safe_variables = variables or {}
 
-        # 若 safe_params 是 dict，尝试转换为 cls 声明的 params 模型
-        if isinstance(safe_params, dict):
-            params_annotation = cls.__annotations__.get('params')
-            if params_annotation is not None:
-                # 处理 Optional[X | None] → 提取实际类型
-                actual_type = params_annotation
-                if isinstance(actual_type, types.UnionType):
-                    non_none = [a for a in actual_type.__args__ if a is not type(None)]
-                    if non_none:
-                        actual_type = non_none[0]
-                if isinstance(actual_type, type) and actual_type is not dict:
-                    try:
-                        safe_params = actual_type(**safe_params)
-                    except Exception:
-                        pass  # 转换失败则保持 dict
-
-        # 从类的 class 属性获取 action_id
-        kwargs = {
+        kwargs: Dict = {
+            'action_id': getattr(cls, 'action_id', BuiltinActionType.COMPOSITE),
+            'action_type': getattr(cls, 'action_type', BuiltinActionType.COMPOSITE),
             'mid': mid,
             'page': page,
             'params': safe_params,
@@ -106,21 +147,18 @@ class BaseAction(ABC):
             'output_vars': safe_output,
             'variables': safe_variables,
         }
-        if hasattr(cls, 'action_id'):
-            kwargs['action_id'] = cls.action_id
-        # 允许自定义 _action_name，否则由 action_name property 自动从 action_type 推导
         if action_name is not None:
             kwargs['_action_name'] = action_name
         return cls(**kwargs)
 
     @property
-    def params_model(self) -> Type[AllActionParams]:
-        return self.action_type.params_model
+    def params_model(self) -> Type[ParamsT]:
+        return self.action_type.params_model  # type: ignore [return-value]
 
     @property
-    def action_type(self) -> BuiltinActionType:
-        """返回动作类型"""
-        return BuiltinActionType(self.action_id) or BuiltinActionType.COMPOSITE
+    def result_model(self) -> Type[AllActionResult]:
+        """返回该操作类型对应的结果模型"""
+        return self.action_type.result_model
 
     @property
     def action_name(self) -> BuiltinActionName:
@@ -147,18 +185,8 @@ class BaseAction(ABC):
 
     @property
     def metadata(self) -> ActionMetadata:
-        """返回动作元数据"""
-        return self._get_metadata()
-
-    def _get_metadata(self) -> ActionMetadata:
-        return ActionMetadata(
-            id=self.action_id,
-            name=self.action_type.nameDisplay,
-            type=self.action_type,
-            description=self.action_type.descDisplay,
-            parameters=self.get_parameters_from_model(),
-            json_schema=self.get_full_schema(),
-        )
+        """返回动作元数据，委托给 action_type.metadata"""
+        return self.action_type.metadata
 
     def add_log(self, message: str):
         """添加日志"""
@@ -170,7 +198,7 @@ class BaseAction(ABC):
     def clear_logs(self):
         self._logs.clear()
 
-    def validate_params_with_model(self, params: AllActionParams | None = None) -> tuple[bool, str, Any]:
+    def validate_params_with_model(self, params: ParamsT) -> tuple[bool, str, ParamsT | None]:
         """使用模型验证参数"""
         target = params if params is not None else self.params
         if not self.params_model:
@@ -181,7 +209,7 @@ class BaseAction(ABC):
         except Exception as e:
             return False, str(e), None
 
-    def validate_params(self, params: dict[str, Any] | None = None) -> tuple[bool, str | None]:
+    def validate_params(self, params: Dict | None = None) -> tuple[bool, str | None]:
         """验证参数（execution_engine 调用接口）"""
         if params is None:
             return True, None
@@ -193,19 +221,39 @@ class BaseAction(ABC):
         except Exception as e:
             return False, str(e)
 
-    def get_parameters_from_model(self) -> List[Dict[str, Any]]:
-        """从模型获取参数列表"""
-        return []
-
-    def get_full_schema(self) -> Dict[str, Any]:
-        """获取完整的 JSON Schema"""
-        return {}
-
     @abstractmethod
-    async def execute(self) -> ActionResult:
+    async def _execute(self) -> ActionResult:
         """
         执行动作（子类必须实现）
 
         所有参数通过 self 访问，无需传参。
         """
         ...
+
+    async def execute(self) -> ActionResult:
+        """执行动作"""
+        action_result = await self._execute()
+        self._merge_output_vars(action_result)
+        action_result.variables = {k: v for k, v in self.variables.items() if not callable(v)}
+        return action_result
+
+    def preview(self) -> dict:
+        """
+        预览模式：使用 result_model 构造模拟返回值并执行变量合并。
+
+        不实际执行操作，仅用于测试变量赋值效果。
+        返回包含 action_result 和 variables 的字典。
+        """
+        result_model = self.result_model
+        mock_data = result_model()
+        action_result = ActionResult(
+            success=True,
+            data=mock_data,
+            action_id=self.action_id,
+            action_name=self.action_name,
+        )
+        self._merge_output_vars(action_result)
+        return {
+            "action_result": action_result,
+            "variables": self.variables,
+        }

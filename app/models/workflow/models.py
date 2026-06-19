@@ -5,9 +5,11 @@ Workflow 模块 - 工作流请求/响应模型
 """
 from app.models.database.workflow.models import BuiltinActionType
 from app.models.execution.action_params import PluginConfig
+from app.models.execution.condition_models import ConditionRule
 from typing import Any, Dict, List
 from datetime import datetime
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel
+from pydantic import Field
 from app.models.base.base_sqlmodel import BasePaginationReq
 from enum import StrEnum
 
@@ -43,12 +45,12 @@ class WorkflowStepRequest(SQLModel):
     action_type: BuiltinActionType | str | None = Field(
         default=None, description="操作类型")
     mid: int | None = Field(default=None, description="用户ID")
-    params: Dict[str, Any] = Field(
+    params: Dict = Field(
         default_factory=dict, description="操作参数，支持 {{变量名}} 模板替换")
     retry: int = Field(default=0, description="失败重试次数")
-    condition: str | None = Field(default=None, description="执行条件表达式")
+    condition: ConditionRule | None = Field(default=None, description="执行条件规则（结构化条件，不使用 eval）")
     output_var: str | None = Field(default=None, description="结果变量键名")
-    input_vars: Dict[str, Any] = Field(
+    input_vars: Dict = Field(
         default_factory=dict, description="输入变量")
     output_vars: List[str] = Field(
         default_factory=list, description="输出变量名称列表")
@@ -68,11 +70,11 @@ class WorkflowStepResponse(SQLModel):
     action_type: BuiltinActionType | str | None = Field(
         default=None, description="操作类型")
     mid: int | None = Field(default=None, description="用户ID")
-    params: Dict[str, Any] = Field(description="操作参数")
+    params: Dict = Field(description="操作参数")
     retry: int = Field(default=0, description="失败重试次数")
-    condition: str | None = Field(default=None, description="执行条件表达式")
+    condition: ConditionRule | None = Field(default=None, description="执行条件规则")
     output_var: str | None = Field(default=None, description="结果变量键名")
-    input_vars: Dict[str, Any] = Field(
+    input_vars: Dict = Field(
         default_factory=dict, description="输入变量")
     output_vars: List[str] = Field(
         default_factory=list, description="输出变量名称列表")
@@ -92,7 +94,7 @@ class WorkflowCreateRequest(SQLModel):
     description: str = Field(default="", description="工作流描述")
     trigger_type: str = Field(
         default="manual", max_length=50, description="触发类型: manual/cron")
-    trigger_config: Dict[str, Any] = Field(
+    trigger_config: Dict = Field(
         default_factory=dict, description="触发配置")
     is_public: bool = Field(default=False, description="是否公开给所有用户")
     enabled_plugins: List[PluginConfig] | None = Field(
@@ -106,7 +108,7 @@ class WorkflowUpdateRequest(SQLModel):
     custom_action_id: str | None = Field(default=None, description="要执行的自定义动作ID")
     description: str | None = Field(default=None, description="新描述")
     trigger_type: str | None = Field(default=None, description="触发类型")
-    trigger_config: Dict[str, Any] | None = Field(
+    trigger_config: Dict | None = Field(
         default=None, description="触发配置")
     is_public: bool | None = Field(default=None, description="是否公开")
     is_enabled: bool | None = Field(default=None, description="是否启用")
@@ -123,15 +125,16 @@ class WorkflowListRequest(BasePaginationReq):
 
 class WorkflowExecuteRequest(SQLModel):
     """执行工作流请求 - 支持内联步骤或引用已保存操作"""
+    browser_id: int = Field(default=1, description="浏览器ID")
     action_id: str | None = Field(default=None, description="要执行的自定义操作ID（可选）")
     workflow_id: str | None = Field(default=None, description="工作流ID（用于关联插件）")
     steps: List[WorkflowStepRequest] | None = Field(
         default=None, description="内联步骤列表（不提供 action_id 时使用）")
     name: str | None = Field(default=None, description="工作流名称（用于内联步骤）")
-    variables: Dict[str, Any] = Field(default_factory=dict, description="变量池")
-    input_data: Dict[str, Any] = Field(
+    variables: Dict = Field(default_factory=dict, description="变量池")
+    input_data: Dict = Field(
         default_factory=dict, description="输入数据")
-    output: List[str] = Field(default_factory=list, description="输出字段列表")
+    output_vars: List[str] = Field(default_factory=list, description="输出变量名称列表")
     on_error: str = Field(default="stop", description="错误处理")
     page_index: int | None = Field(
         default=None, description="页面索引，指定在哪个 tab 页执行操作")
@@ -145,7 +148,7 @@ class WorkflowDetailResponse(SQLModel):
     custom_action_id: str | None = None
     description: str
     trigger_type: str
-    trigger_config: Dict[str, Any]
+    trigger_config: Dict
     is_enabled: bool
     is_public: bool = False
     likes_count: int = 0
@@ -212,7 +215,7 @@ class WorkflowExecuteResponse(SQLModel):
     execution_id: str
     status: str = Field(default="started", description="执行状态")
     message: str = Field(default="开始执行", description="提示信息")
-    results: List[Dict[str, Any]] = Field(
+    results: List[Dict] = Field(
         default_factory=list, description="执行结果")
     summary: Dict[str, int] = Field(default_factory=dict, description="执行摘要")
 
@@ -235,9 +238,9 @@ class CompositeActionCreateRequest(SQLModel):
     action_type: BuiltinActionType = Field(
         default=BuiltinActionType.COMPOSITE, description="操作类型")
     description: str = Field(default="", description="操作描述")
-    parameters_schema: List[Dict[str, Any]] = Field(
+    parameters_schema: List[Dict] = Field(
         default_factory=list, description="参数定义JSON")
-    steps: List[Dict[str, Any]] = Field(
+    steps: List[Dict] = Field(
         default_factory=list, description="步骤列表JSON")
     tags: List[str] = Field(default_factory=list, description="标签列表")
     input_vars: List[InputVarDefinition] = Field(
@@ -256,9 +259,9 @@ class CompositeActionUpdateRequest(SQLModel):
     id: int = Field(description="操作数据库ID")
     name: str | None = Field(default=None, description="新名称")
     description: str | None = Field(default=None, description="新描述")
-    parameters_schema: List[Dict[str, Any]] | None = Field(
+    parameters_schema: List[Dict] | None = Field(
         default=None, description="参数定义JSON")
-    steps: List[Dict[str, Any]] | None = Field(
+    steps: List[Dict] | None = Field(
         default=None, description="步骤列表JSON")
     tags: List[str] | None = Field(default=None, description="标签列表")
     input_vars: List[InputVarDefinition] | None = Field(
@@ -287,8 +290,9 @@ class CompositeActionDetailResponse(SQLModel):
     version: str
     action_type: str
     description: str
-    parameters_schema: List[Dict[str, Any]]
-    steps: List[Dict[str, Any]]
+    mid: str = ""
+    parameters_schema: List[Dict]
+    steps: List[Dict]
     tags: List[str]
     input_vars: List[InputVarDefinition]
     output_vars: List[str]
@@ -353,11 +357,11 @@ class ActionForkResponse(SQLModel):
 class ActionExecuteRequest(SQLModel):
     """执行操作请求"""
     action_id: str = Field(description="操作ID")
-    params: Dict[str, Any] = Field(default_factory=dict, description="操作参数")
-    variables: Dict[str, Any] = Field(default_factory=dict, description="变量池")
-    input_data: Dict[str, Any] = Field(
-        default_factory=dict, description="输入数据")
-    output: List[str] = Field(default_factory=list, description="输出字段列表")
+    params: Dict = Field(default_factory=dict, description="操作参数")
+    variables: Dict = Field(default_factory=dict, description="变量池")
+    input_vars: Dict = Field(
+        default_factory=dict, description="输入变量，会被合并到 variables 变量池中")
+    output_vars: List[str] = Field(default_factory=list, description="输出变量名称列表")
     page_index: int | None = Field(
         default=None, description="页面索引，指定在哪个 tab 页执行操作")
 
@@ -371,20 +375,24 @@ class ActionExecuteRequest(SQLModel):
 class ActionPreviewRequest(SQLModel):
     """预览参数替换请求"""
     action_id: str = Field(description="操作ID")
-    params: Dict[str, Any] = Field(default_factory=dict, description="参数")
+    params: Dict = Field(default_factory=dict, description="参数")
+    input_vars: Dict = Field(
+        default_factory=dict, description="输入变量，会被合并到预览变量池中")
 
 
 class ActionValidateRequest(SQLModel):
     """验证参数请求"""
     action_id: str = Field(description="操作ID")
-    params: Dict[str, Any] = Field(default_factory=dict, description="待验证参数")
+    params: Dict = Field(default_factory=dict, description="待验证参数")
+    input_vars: Dict = Field(
+        default_factory=dict, description="输入变量，会被合并到变量池中")
 
 
 class ExecuteStepRequest(SQLModel):
     """单步执行请求"""
     action_id: str = Field(description="操作ID")
-    params: Dict[str, Any] = Field(default_factory=dict, description="操作参数")
-    variables: Dict[str, Any] = Field(default_factory=dict, description="变量池")
+    params: Dict = Field(default_factory=dict, description="操作参数")
+    variables: Dict = Field(default_factory=dict, description="变量池")
     step_index: int = Field(default=0, description="步骤索引")
     page_index: int | None = Field(
         default=None, description="页面索引，指定在哪个 tab 页执行操作")
@@ -398,14 +406,22 @@ class ActionResultResponse(SQLModel):
     execution_time: float = 0.0
     action_id: str = ""
     action_name: str = ""
+    variables: dict = Field(default_factory=dict, description="执行后的全局变量")
+    replaced_params: dict = Field(default_factory=dict, description="变量替换后的实际调用参数")
 
 
 class StepPreviewItem(SQLModel):
-    """步骤预览项"""
+    """步骤预览项 — 支持递归展开控制流分支"""
     step_index: int
     action_id: str
-    original_params: Dict[str, Any]
-    replaced_params: Dict[str, Any]
+    original_params: Dict
+    replaced_params: Dict
+    input_vars: Dict = Field(default_factory=dict, description="输入变量")
+    output_vars: List[str] = Field(default_factory=list, description="输出变量名称列表")
+    preview_variables: Dict = Field(default_factory=dict, description="该步骤模拟后的变量")
+    branches: dict | None = Field(default=None, description="if-else 分支配对 {true: [...], false: [...]}")
+    loop_preview: list | None = Field(default=None, description="循环体预览步骤列表")
+    children: list[dict] | None = Field(default=None, description="复合动作子步骤预览列表")
 
 
 class ActionPreviewResponse(SQLModel):
@@ -414,8 +430,10 @@ class ActionPreviewResponse(SQLModel):
     action_name: str
     is_composite: bool
     steps_preview: List[StepPreviewItem]
-    replaced_params: Dict[str, Any]
+    replaced_params: Dict
     found_params: List[str]
+    preview_result: Dict = Field(default_factory=dict, description="模拟执行结果数据")
+    preview_variables: Dict = Field(default_factory=dict, description="模拟执行后的变量池")
 
 
 class ActionValidateResponse(SQLModel):
@@ -441,7 +459,7 @@ class WorkflowStepExecuteRequest(SQLModel):
     browser_id: str = Field(description="浏览器ID")
     steps: List[WorkflowStepRequest] = Field(description="步骤列表")
     step_index: int = Field(description="要执行的步骤索引")
-    user_data: Dict[str, Any] = Field(default_factory=dict, description="用户数据")
+    user_data: Dict = Field(default_factory=dict, description="用户数据")
     page_index: int | None = Field(default=None, description="页面索引")
 
 

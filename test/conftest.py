@@ -19,26 +19,27 @@ os.environ["MYSQL_BROWSER_INFO_URL"] = "sqlite+aiosqlite:///./test.db"
 
 
 @pytest.fixture(scope="session", autouse=True)
-async def _init_test_db():
-    """创建所有数据库表（会话级别，异步）"""
+def _init_test_db():
+    """创建所有数据库表（会话级别，使用 anyio 运行异步代码）"""
+    import anyio
     from sqlalchemy.ext.asyncio import create_async_engine
 
     import app.models.database.workflow.models  # noqa: F401
     import app.models.database.browser.info  # noqa: F401
     import app.models.database.notify.models  # noqa: F401
 
-    db_url = os.environ["MYSQL_BROWSER_INFO_URL"]
-    # 删除旧的测试数据库文件，确保每次测试都是干净的
-    if db_url.startswith("sqlite"):
-        db_path = db_url.replace("sqlite+aiosqlite:///", "")
-        if Path(db_path).exists():
-            Path(db_path).unlink()
+    async def _setup():
+        db_url = os.environ["MYSQL_BROWSER_INFO_URL"]
+        if db_url.startswith("sqlite"):
+            db_path = db_url.replace("sqlite+aiosqlite:///", "")
+            if Path(db_path).exists():
+                Path(db_path).unlink()
+        engine = create_async_engine(db_url)
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        await engine.dispose()
 
-    engine = create_async_engine(db_url)
-
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    await engine.dispose()
+    anyio.run(_setup)
     yield
 
 

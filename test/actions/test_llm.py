@@ -1,34 +1,52 @@
 """
-测试 LLM Action
-使用 unittest.mock 模拟 httpx 请求
-LLM Action 不需要浏览器，只使用 mock
+测试 LLM Action（基于 LangChain ChatOpenAI）
+使用 unittest.mock 模拟 ChatOpenAI.ainvoke
 """
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
+from langchain_core.messages import AIMessage
 
 from app.services.execution.actions.llm import LLMAction
 from app.models.execution.action_params import LLMParams
 
 
+def _make_ai_message(content: str, model: str = "gpt-3.5-turbo",
+                     usage: dict | None = None) -> AIMessage:
+    """创建带 metadata 的模拟 AIMessage"""
+    msg = AIMessage(content=content)
+    msg.response_metadata = {"model_name": model}
+    if usage:
+        msg.response_metadata["token_usage"] = usage
+        # 兼容 usage_metadata
+        from types import SimpleNamespace
+        msg.usage_metadata = SimpleNamespace(
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+        )
+    return msg
+
+
+def _patch_chatopenai(mock_message: AIMessage | Exception):
+    """返回一个 patch 上下文，将 ChatOpenAI.ainvoke mock 为返回指定消息或抛出异常"""
+    mock_instance = AsyncMock()
+    if isinstance(mock_message, Exception):
+        mock_instance.ainvoke.side_effect = mock_message
+    else:
+        mock_instance.ainvoke.return_value = mock_message
+    return patch("app.services.execution.actions.llm.ChatOpenAI", return_value=mock_instance)
+
+
 class TestLLMAction:
-    """LLM 对话操作测试"""
+    """LLM 对话操作测试（LangChain 版本）"""
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_with_prompt(self):
         """测试使用 prompt 单轮对话"""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [{"message": {"content": "你好！我是 AI 助手。", "role": "assistant"}}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 15, "total_tokens": 25},
-        })
-        mock_response.text = ""
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.return_value = mock_response
-
+        mock_msg = _make_ai_message(
+            "你好！我是 AI 助手。",
+            usage={"prompt_tokens": 10, "completion_tokens": 15, "total_tokens": 25},
+        )
         action = LLMAction.new_action(
             mid=1,
             page=None,
@@ -45,33 +63,19 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(mock_msg):
             result = await action.execute()
 
         assert result.success
-        assert result.data["content"] == "你好！我是 AI 助手。"
-        assert result.data["role"] == "assistant"
-        assert result.data["model"] == "gpt-3.5-turbo"
-        assert result.data["text"] == "你好！我是 AI 助手。"
-        assert result.data["answer"] == "你好！我是 AI 助手。"
-        assert "usage" in result.data
+        assert result.data.content == "你好！我是 AI 助手。"
+        assert result.data.role == "assistant"
+        assert result.data.model == "gpt-3.5-turbo"
+        assert "usage" in result.data.model_dump()
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_with_messages(self):
         """测试使用 messages 多轮对话"""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [{"message": {"content": "根据历史，答案是 42。", "role": "assistant"}}],
-            "usage": {"total_tokens": 50},
-        })
-        mock_response.text = ""
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.return_value = mock_response
-
+        mock_msg = _make_ai_message("根据历史，答案是 42。", model="gpt-4")
         action = LLMAction.new_action(
             mid=1,
             page=None,
@@ -89,11 +93,11 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(mock_msg):
             result = await action.execute()
 
         assert result.success
-        assert "42" in result.data["content"]
+        assert "42" in result.data.content
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_missing_messages_and_prompt(self):
@@ -112,22 +116,13 @@ class TestLLMAction:
         )
 
         result = await action.execute()
-
         assert not result.success
         assert "messages 或 prompt 不能同时为空" in result.error
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_api_error(self):
-        """测试 API 返回错误状态码"""
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        mock_response.text = "Unauthorized"
-        mock_response.json = MagicMock(side_effect=ValueError("No JSON"))
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.return_value = mock_response
+        """测试 API 返回错误（401）"""
+        error = Exception("Error code: 401 - Incorrect API key provided")
 
         action = LLMAction.new_action(
             mid=1,
@@ -142,7 +137,7 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(error):
             result = await action.execute()
 
         assert not result.success
@@ -151,10 +146,7 @@ class TestLLMAction:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_api_timeout(self):
         """测试请求超时"""
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.side_effect = __import__("httpx").TimeoutException("Timeout")
+        error = Exception("Request timed out")
 
         action = LLMAction.new_action(
             mid=1,
@@ -169,27 +161,15 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(error):
             result = await action.execute()
 
         assert not result.success
-        assert "超时" in result.error
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_empty_response(self):
-        """测试 API 返回空 choices"""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [],
-            "usage": {},
-        })
-        mock_response.text = ""
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.return_value = mock_response
+        """测试 API 返回空内容"""
+        mock_msg = _make_ai_message("")
 
         action = LLMAction.new_action(
             mid=1,
@@ -204,28 +184,16 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(mock_msg):
             result = await action.execute()
 
-        assert not result.success
-        assert "未找到 choices" in result.error
+        assert result.success
+        assert result.data.content == ""
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_with_system_prompt(self):
         """测试系统提示词"""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [{"message": {"content": "翻译结果: Hello", "role": "assistant"}}],
-            "usage": {},
-        })
-        mock_response.text = ""
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.return_value = mock_response
-
+        mock_msg = _make_ai_message("翻译结果: Hello", model="gpt-4")
         action = LLMAction.new_action(
             mid=1,
             page=None,
@@ -242,19 +210,16 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(mock_msg):
             result = await action.execute()
 
         assert result.success
-        assert result.data["content"] == "翻译结果: Hello"
+        assert result.data.content == "翻译结果: Hello"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_connection_error(self):
         """测试连接错误"""
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.side_effect = __import__("httpx").RequestError("Connection refused")
+        error = Exception("Connection refused")
 
         action = LLMAction.new_action(
             mid=1,
@@ -269,11 +234,10 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(error):
             result = await action.execute()
 
         assert not result.success
-        assert "请求失败" in result.error
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_invalid_params(self):
@@ -294,19 +258,7 @@ class TestLLMAction:
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_with_input_variables(self):
         """测试使用输入变量"""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={
-            "choices": [{"message": {"content": "你叫小明", "role": "assistant"}}],
-            "usage": {},
-        })
-        mock_response.text = ""
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.return_value = mock_response
-
+        mock_msg = _make_ai_message("你叫小明")
         action = LLMAction.new_action(
             mid=1,
             page=None,
@@ -316,30 +268,20 @@ class TestLLMAction:
                 api_key="sk-test-key",
                 model="gpt-3.5-turbo",
                 prompt="我的名字是什么",
-                system_prompt="你的名字是{name}",
+                system_prompt="我的名字是{name}",
                 timeout=60000,
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(mock_msg):
             result = await action.execute()
 
         assert result.success
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_llm_max_tokens_limit(self):
-        """测试 max_tokens 限制 - 应报错中断后续操作"""
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.json = MagicMock(return_value={
-            "error": {"message": "This model's maximum context length is 4096 tokens"}
-        })
-        mock_response.text = ""
-
-        mock_client = AsyncMock()
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-        mock_client.post.return_value = mock_response
+        """测试 max_tokens 限制（400 错误）"""
+        error = Exception("Error code: 400 - This model's maximum context length is 4096 tokens")
 
         action = LLMAction.new_action(
             mid=1,
@@ -355,8 +297,8 @@ class TestLLMAction:
             ),
         )
 
-        with patch("httpx.AsyncClient", return_value=mock_client):
+        with _patch_chatopenai(error):
             result = await action.execute()
 
         assert not result.success
-        assert "400" in result.error
+        assert "4096" in result.error

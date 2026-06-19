@@ -70,9 +70,9 @@ class AsyncHttpClient:
                       url: str,
                       *,
                       content: str | bytes | None = None,
-                      data: Dict[str, Any] | None = None,
+                      data: Dict | None = None,
                       json: Any | None = None,
-                      params: Dict[str, Any] | None = None,
+                      params: Dict | None = None,
                       headers: Dict[str, str] | None = None,
                       **kwargs) -> httpx.Response:
         """
@@ -123,7 +123,7 @@ class AsyncHttpClient:
     async def get(self, 
                   url: str,
                   *,
-                  params: Dict[str, Any] | None = None,
+                  params: Dict | None = None,
                   headers: Dict[str, str] | None = None,
                   **kwargs) -> httpx.Response:
         """
@@ -144,9 +144,9 @@ class AsyncHttpClient:
                    url: str,
                    *,
                    content: str | bytes | None = None,
-                   data: Dict[str, Any] | None = None,
+                   data: Dict | None = None,
                    json: Any | None = None,
-                   params: Dict[str, Any] | None = None,
+                   params: Dict | None = None,
                    headers: Dict[str, str] | None = None,
                    **kwargs) -> httpx.Response:
         """
@@ -178,9 +178,9 @@ class AsyncHttpClient:
                   url: str,
                   *,
                   content: str | bytes | None = None,
-                  data: Dict[str, Any] | None = None,
+                  data: Dict | None = None,
                   json: Any | None = None,
-                  params: Dict[str, Any] | None = None,
+                  params: Dict | None = None,
                   headers: Dict[str, str] | None = None,
                   **kwargs) -> httpx.Response:
         """
@@ -211,7 +211,7 @@ class AsyncHttpClient:
     async def delete(self,
                      url: str,
                      *,
-                     params: Dict[str, Any] | None = None,
+                     params: Dict | None = None,
                      headers: Dict[str, str] | None = None,
                      **kwargs) -> httpx.Response:
         """
@@ -250,9 +250,9 @@ async def request(method: str,
                   url: str,
                   *,
                   content: str | bytes | None = None,
-                  data: Dict[str, Any] | None = None,
+                  data: Dict | None = None,
                   json: Any | None = None,
-                  params: Dict[str, Any] | None = None,
+                  params: Dict | None = None,
                   headers: Dict[str, str] | None = None,
                   timeout: float | None = None,
                   **kwargs) -> httpx.Response:
@@ -307,7 +307,7 @@ async def request(method: str,
 
 async def get(url: str,
               *,
-              params: Dict[str, Any] | None = None,
+              params: Dict | None = None,
               headers: Dict[str, str] | None = None,
               timeout: float | None = None,
               **kwargs) -> httpx.Response:
@@ -330,9 +330,9 @@ async def get(url: str,
 async def post(url: str,
                *,
                content: str | bytes | None = None,
-               data: Dict[str, Any] | None = None,
+               data: Dict | None = None,
                json: Any | None = None,
-               params: Dict[str, Any] | None = None,
+               params: Dict | None = None,
                headers: Dict[str, str] | None = None,
                timeout: float | None = None,
                **kwargs) -> httpx.Response:
@@ -367,9 +367,9 @@ async def post(url: str,
 async def put(url: str,
               *,
               content: str | bytes | None = None,
-              data: Dict[str, Any] | None = None,
+              data: Dict | None = None,
               json: Any | None = None,
-              params: Dict[str, Any] | None = None,
+              params: Dict | None = None,
               headers: Dict[str, str] | None = None,
               timeout: float | None = None,
               **kwargs) -> httpx.Response:
@@ -403,7 +403,7 @@ async def put(url: str,
 
 async def delete(url: str,
                  *,
-                 params: Dict[str, Any] | None = None,
+                 params: Dict | None = None,
                  headers: Dict[str, str] | None = None,
                  timeout: float | None = None,
                  **kwargs) -> httpx.Response:

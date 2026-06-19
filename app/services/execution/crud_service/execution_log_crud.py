@@ -48,7 +48,7 @@ class ExecutionLogCrudService:
     @staticmethod
     async def update_results(
         id: int,
-        results: List[Dict[str, Any]],
+        results: List[Dict],
         status: str,
         total_time: float,
     ) -> bool:
@@ -147,4 +147,4 @@ class ExecutionLogCrudService:
             return result.all()
 
 
-execution_log_crud = ExecutionLogCrudService()
+execution_log_crud_svr = ExecutionLogCrudService()

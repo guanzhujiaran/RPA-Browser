@@ -1,3 +1,5 @@
+from app.models.runtime.control import BrowserSessionStatusData
+from app.services.RPA_browser.live_service import live_service
 from fastapi import Depends, BackgroundTasks
 import time
 from app.config import settings
@@ -16,6 +18,7 @@ from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_session_router
 
 router = new_session_router()
+
 
 @router.post(
     BrowserSessionRouterPath.create,
@@ -42,27 +45,29 @@ async def create_browser_session(
     # 检查会话是否已存在
     session_key = f"{auth_info.mid}_{browser_info.browser_id}"
 
-    if session_key in LiveService.browser_sessions:
+    if session_key in LiveService._browser_sessions:
         # 会话已存在，返回现有会话信息
-        entry = LiveService.browser_sessions[session_key]
+        entry = LiveService._browser_sessions[session_key]
         created_at = getattr(entry, "created_at", entry.last_activity)
         expires_at = getattr(entry, "expires_at", None)
+        # 获取当前会话状态，确保返回的是实际运行状态
+        session_status = getattr(entry, "status", None)
+        status_value = session_status.value if session_status else "running"
 
         response_data = CreateSessionResponse(
             success=True,
             session_id=session_key,
             browser_started=True,
+            status=status_value,
             created_at=created_at,
             expires_at=expires_at,
             message="会话已存在，返回现有会话信息",
         )
         return success_response(data=response_data)
-
-    # 会话不存在，将创建任务添加到后台
-    background_tasks.add_task(
-        LiveService.create_browser_session_background,
+    await LiveService.create_browser_session(
+        live_service,
         auth_info.mid,
-        browser_info.browser_id,
+        int(browser_info.browser_id),
     )
 
     # 立即返回响应，表示任务已启动
@@ -76,10 +81,11 @@ async def create_browser_session(
     response_data = CreateSessionResponse(
         success=True,
         session_id=session_key,
-        browser_started=False,  # 还未启动，在后台创建中
+        browser_started=True,
+        status="running",
         created_at=current_time,
         expires_at=expires_at,
-        message="浏览器会话创建任务已启动，正在后台处理",
+        message="浏览器会话已创建",
     )
 
     return success_response(data=response_data)
@@ -102,8 +108,9 @@ async def browser_session_status(
     Returns:
         BrowserSessionStatus: 会话状态信息
     """
-    status_data = LiveService.get_browser_session_status(
-        auth_info.mid, browser_info.browser_id
+    status_data: BrowserSessionStatusData = live_service.get_browser_session_status(
+        auth_info.mid,
+        int(browser_info.browser_id)
     )
 
     # 确定状态码
@@ -138,11 +145,11 @@ async def close_browser_session(
         CloseSessionResponse: 会话关闭结果
     """
     import time
-    
+
     session_key = f"{auth_info.mid}_{browser_info.browser_id}"
-    
+
     # 检查会话是否存在
-    if session_key not in LiveService.browser_sessions:
+    if session_key not in LiveService._browser_sessions:
         return error_response(
             code=ResponseCode.SESSION_NOT_FOUND,
             msg="浏览器会话不存在",
@@ -155,14 +162,14 @@ async def close_browser_session(
                 message="浏览器会话不存在",
             ),
         )
-    
+
     # 释放浏览器会话
-    success = await LiveService.release_browser_session(
-        auth_info.mid, browser_info.browser_id
+    success = await live_service.release_browser_session(
+        auth_info.mid, int(browser_info.browser_id)
     )
-    
+
     current_time = int(time.time())
-    
+
     if success:
         response_data = CloseSessionResponse(
             success=True,

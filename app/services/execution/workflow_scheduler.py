@@ -25,7 +25,7 @@ from apscheduler.events import (
 from loguru import logger
 from sqlmodel import select
 
-from app.services.execution.execution_engine import execution_engine
+from app.services.execution.engine import execution_engine
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -78,7 +78,7 @@ class WorkflowScheduler:
         """任务错过执行"""
         logger.warning(f"[Scheduler] 工作流 '{event.job_id}' 错过执行")
 
-    async def _execute_workflow_job(self, workflow_id: str, mid: int, params: Dict[str, Any]):
+    async def _execute_workflow_job(self, workflow_id: str, mid: int, params: Dict):
         """
         执行工作流任务
 
@@ -110,15 +110,15 @@ class WorkflowScheduler:
 
         # 获取浏览器会话
         session_key = LiveService._get_session_key(mid, int(params.get("browser_id", 0)))
-        entry = LiveService.browser_sessions.get(session_key)
+        entry = LiveService._browser_sessions.get(session_key)
 
         if not entry:
             logger.error(f"[Scheduler] 浏览器会话不存在: {session_key}")
             return
 
         try:
-            page = await entry.plugined_session.get_current_page()
-            browser = entry.plugined_session.browser_context.browser
+            page = await entry.browser_session.get_current_page()
+            browser = entry.browser_session.browser_context.browser
 
             from app.services.execution.execution_engine import Workflow
             from app.models.execution.action_params import BaseWorkflowStep
@@ -181,7 +181,7 @@ class WorkflowScheduler:
         workflow_id: str,
         mid: int,
         crontab_expression: str,
-        params: Dict[str, Any] | None = None,
+        params: Dict | None = None,
     ):
         """
         添加工作流调度
@@ -299,7 +299,7 @@ class WorkflowScheduler:
             logger.error(f"[Scheduler] 恢复调度失败: {e}")
             return False
 
-    def get_schedule_status(self, workflow_id: str) -> Dict[str, Any] | None:
+    def get_schedule_status(self, workflow_id: str) -> Dict | None:
         """
         获取调度状态
 
@@ -324,7 +324,7 @@ class WorkflowScheduler:
             "is_paused": job.next_run_time is None,
         }
 
-    def list_all_schedules(self) -> list[Dict[str, Any]]:
+    def list_all_schedules(self) -> list[Dict]:
         """
         列出所有调度任务
 

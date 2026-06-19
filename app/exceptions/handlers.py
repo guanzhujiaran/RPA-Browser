@@ -1,7 +1,7 @@
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 import uuid
 from app.models.response import StandardResponse
 from app.models.response_code import ResponseCode
@@ -16,7 +16,7 @@ from loguru import logger
 
 async def http_exception_handler(
     _: Request, exc: StarletteHTTPException
-) -> JSONResponse:
+) -> Response:
     """处理HTTP异常，如404等"""
     if exc.status_code == 404:
         response = StandardResponse(
@@ -42,7 +42,7 @@ async def http_exception_handler(
 
 async def validation_exception_handler(
     _: Request, exc: RequestValidationError
-) -> JSONResponse:
+) -> Response:
     """处理请求验证异常"""
     logger.exception(f"Request validation failed: {exc.errors()}")
     response = StandardResponse(
@@ -56,18 +56,18 @@ async def validation_exception_handler(
 
 async def custom_exception_handler(
     _: Request, exc: CustomBaseException
-) -> JSONResponse:
+) -> Response:
     """处理自定义业务异常"""
     response = StandardResponse(
-        code=exc.code,
+        code=exc.code or ResponseCode.INTERNAL_ERROR,
         data=None,
-        msg=exc.msg,
+        msg=exc.msg or "Error occurred",
     )
 
     return JSONResponse(content=response.model_dump(), status_code=200)
 
 
-async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+async def global_exception_handler(_: Request, exc: Exception) -> Response:
     """处理所有未捕获的异常，特别优化数据库连接丢失处理"""
 
     # 生成错误ID用于追踪
@@ -76,7 +76,8 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     # 检查是否为数据库连接丢失错误
     is_database_error = isinstance(exc, (DisconnectionError, OperationalError))
     is_connection_lost = is_database_error and (
-        "Lost connection" in str(exc) or "MySQL server has gone away" in str(exc)
+        "Lost connection" in str(
+            exc) or "MySQL server has gone away" in str(exc)
     )
 
     # 检查是否为自定义业务异常（有 code 和 msg 属性）
@@ -101,7 +102,7 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
         status_code = 503
         error_message = "数据库连接丢失，请稍后重试"
         response_code = ResponseCode.SERVICE_UNAVAILABLE
-        logger.warning(f"Database connection lost (ID: {error_id}): {exc}")
+        logger.warning(f"Database connection lost (ID: {error_id}): {exc}\n{error_details['traceback']}")
     elif is_custom_exception:
         # 自定义业务异常，使用异常中定义的 code 和 msg
         response_code = exc_code
@@ -116,33 +117,13 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
             f"服务器内部错误 (错误ID: {error_id})\n{error_details['error_message']}"
         )
         logger.error(
-            f"Unexpected error (ID: {error_id}): {error_details['error_type']}: {error_details['error_message']}",
+            f"Unexpected error (ID: {error_id}): {error_details['error_type']}: {error_details['error_message']}\n{error_details['traceback']}",
         )
 
-    # 根据settings中的运行模式配置输出错误信息
-    if settings.RUNNING_MODE == ConfigRunningModeEnum.DEV:
-        # 自定义异常不需要打印详细的错误信息和 traceback
-        if is_custom_exception:
-            print(f"[Custom Exception] {error_details['error_type']}: {error_message}")
-        else:
-            print("\n" + "=" * 80)
-            print("🚨 GLOBAL EXCEPTION HANDLER - DEVELOPMENT MODE 🚨")
-            print("=" * 80)
-            print(f"Error ID: {error_id}")
-            print(f"Error Type: {error_details['error_type']}")
-            print(f"Custom Exception: {is_custom_exception}")
-            print(f"Database Error: {is_database_error}")
-            print(f"Connection Lost: {is_connection_lost}")
-            print(f"Error Message: {error_details['error_message']}")
-            print("\nFull Traceback:")
-            print(error_details["traceback"])
-            print("=" * 80 + "\n")
-    else:
-        # 生产环境只记录简要信息
-        log_level = logger.warning if is_connection_lost else logger.error
-        log_level(
-            f"Server Error (ID: {error_id}): {error_details['error_type']}: {error_details['error_message']}"
-        )
+    log_level = logger.warning if is_connection_lost else logger.error
+    log_level(
+        f"Server Error (ID: {error_id}): {error_details['error_type']}: {error_details['error_message']}\n{error_details['traceback']}"
+    )
 
     # 在开发环境下，将错误详情添加到data中（自定义异常除外）
     if settings.RUNNING_MODE == ConfigRunningModeEnum.DEV and not is_custom_exception:
@@ -150,6 +131,7 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
             "error_id": error_id,
             "error_type": error_details["error_type"],
             "error_message": error_details["error_message"],
+            "traceback": error_details["traceback"],
             "is_database_error": is_database_error,
             "is_connection_lost": is_connection_lost,
         }
@@ -165,7 +147,7 @@ async def global_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(content=response.model_dump(), status_code=status_code)
 
 
-async def database_connection_handler(_: Request, exc: Exception) -> JSONResponse:
+async def database_connection_handler(_: Request, exc: Exception) -> Response:
     """专门的数据库连接错误处理器"""
     error_id = str(uuid.uuid4())
     is_connection_lost = "Lost connection" in str(

@@ -189,7 +189,7 @@ class SchedulerManager:
 
 
 # 全局调度器实例
-scheduler_manager = SchedulerManager()
+scheduler_manager_ist = SchedulerManager()
 
 
 # 装饰器：定时任务（间隔触发）
@@ -215,7 +215,7 @@ def interval_job(
             return await func(*args, **kwargs)
 
         # 注册任务
-        scheduler_manager.add_interval_job(
+        scheduler_manager_ist.add_interval_job(
             func=wrapper,
             seconds=seconds,
             minutes=minutes,
@@ -247,7 +247,7 @@ def cron_job(cron_expression: str, job_id: str = None):
             return await func(*args, **kwargs)
 
         # 注册任务
-        scheduler_manager.add_cron_job(
+        scheduler_manager_ist.add_cron_job(
             func=wrapper, cron_expression=cron_expression, id=job_id or func.__name__
         )
 

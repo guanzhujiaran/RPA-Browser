@@ -1,14 +1,18 @@
 """
 插件 CRUD 服务
 """
+from app.models.workflow.models import FilterType, SortBy, SortOrder
 from typing import List
 from datetime import datetime
 import uuid
 from sqlmodel import select, update
+from sqlalchemy import true, false
 
 from app.models.database.workflow.models import CompositeActionModel, UserPlugin
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
+from sqlmodel import col
+from typing import Sequence
 
 
 class PluginCrudService:
@@ -30,12 +34,13 @@ class PluginCrudService:
         async with DatabaseSessionManager.async_session() as session:
             valid_hook_types = [hook.value for hook in PluginHookEnum]
             if hook_type not in valid_hook_types:
-                raise ValueError(f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}")
+                raise ValueError(
+                    f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}")
 
             action_result = await session.exec(
                 select(CompositeActionModel).where(
                     (CompositeActionModel.action_id == custom_action_id) &
-                    (CompositeActionModel.is_enabled == True)
+                    (CompositeActionModel.is_enabled == true())
                 )
             )
             action_model = action_result.first()
@@ -76,13 +81,13 @@ class PluginCrudService:
             return result.first()
 
     @staticmethod
-    async def get_plugins_by_hook(hook_type: str) -> List[UserPlugin]:
+    async def get_plugins_by_hook(hook_type: str) -> Sequence[UserPlugin]:
         """根据钩子类型获取启用的插件列表"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(UserPlugin).where(
                     (UserPlugin.hook_type == hook_type) &
-                    (UserPlugin.is_enabled == True)
+                    (UserPlugin.is_enabled == true())
                 )
             )
             return result.all()
@@ -96,33 +101,36 @@ class PluginCrudService:
             return result.first()
 
     @staticmethod
-    async def get_by_ids(ids: List[str]) -> List[UserPlugin]:
+    async def get_by_ids(ids: List[str]) -> Sequence[UserPlugin]:
         if not ids:
             return []
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(UserPlugin)
                 .where(UserPlugin.plugin_id.in_(ids))
-                .where(UserPlugin.is_enabled == True)
+                .where(UserPlugin.is_enabled == true())
             )
             return result.all()
 
     @staticmethod
-    async def count_by_user(mid: int, filter_type: str = "all") -> int:
+    async def count_by_user(mid: int, filter_type: FilterType = FilterType.ALL) -> int:
         from sqlmodel import func
 
         async with DatabaseSessionManager.async_session() as session:
-            query = select(func.count(UserPlugin.id))
-            if filter_type == "private":
-                query = query.where((UserPlugin.mid == mid) & (UserPlugin.is_public == False))
-            elif filter_type == "public":
-                query = query.where((UserPlugin.mid == mid) & (UserPlugin.is_public == True))
-            elif filter_type == "community":
-                query = query.where((UserPlugin.mid != mid) & (UserPlugin.is_public == True))
-            elif filter_type == "verified":
-                query = query.where(UserPlugin.is_verified == True)
+            query = select(func.count(1))
+            if filter_type == FilterType.PRIVATE:
+                query = query.where((UserPlugin.mid == str(mid))
+                                    & (UserPlugin.is_public == false()))
+            elif filter_type == FilterType.PUBLIC:
+                query = query.where(UserPlugin.is_public == true())
+            elif filter_type == FilterType.COMMUNITY:
+                query = query.where((UserPlugin.mid != str(mid))
+                                    & (UserPlugin.is_public == true()))
+            elif filter_type == FilterType.VERIFIED:
+                query = query.where(UserPlugin.is_verified == true())
             else:
-                query = query.where((UserPlugin.mid == mid) | (UserPlugin.is_public == True))
+                query = query.where((UserPlugin.mid == str(mid))
+                                    | (UserPlugin.is_public == true()))
 
             result = await session.exec(query)
             return result.one()
@@ -132,27 +140,29 @@ class PluginCrudService:
         mid: int,
         skip: int = 0,
         limit: int = 100,
-        filter_type: str = "all",
-        sort_by: str = "updated_at",
-        sort_order: str = "desc"
-    ) -> List[UserPlugin]:
-        from sqlmodel import col
-
+        filter_type: FilterType = FilterType.ALL,
+        sort_by: SortBy = SortBy.UPDATED_AT,
+        sort_order: SortOrder = SortOrder.DESC
+    ) -> Sequence[UserPlugin]:
         async with DatabaseSessionManager.async_session() as session:
             query = select(UserPlugin)
-            if filter_type == "private":
-                query = query.where((UserPlugin.mid == mid) & (UserPlugin.is_public == False))
-            elif filter_type == "public":
-                query = query.where((UserPlugin.mid == mid) & (UserPlugin.is_public == True))
-            elif filter_type == "community":
-                query = query.where((UserPlugin.mid != mid) & (UserPlugin.is_public == True))
-            elif filter_type == "verified":
-                query = query.where(UserPlugin.is_verified == True)
+            if filter_type == FilterType.PRIVATE:
+                query = query.where((UserPlugin.mid == str(mid))
+                                    & (UserPlugin.is_public == false()))
+            elif filter_type == FilterType.PUBLIC:
+                query = query.where(UserPlugin.is_public == true())
+            elif filter_type == FilterType.COMMUNITY:
+                query = query.where((UserPlugin.mid != str(mid))
+                                    & (UserPlugin.is_public == true()))
+            elif filter_type == FilterType.VERIFIED:
+                query = query.where(UserPlugin.is_verified == true())
             else:
-                query = query.where((UserPlugin.mid == mid) | (UserPlugin.is_public == True))
+                query = query.where((UserPlugin.mid == str(mid))
+                                    | (UserPlugin.is_public == true()))
 
-            sort_field = getattr(UserPlugin, sort_by, UserPlugin.updated_at)
-            if sort_order == "asc":
+            sort_field = getattr(UserPlugin, sort_by.value,
+                                 UserPlugin.updated_at)
+            if sort_order == SortOrder.ASC:
                 query = query.order_by(col(sort_field).asc())
             else:
                 query = query.order_by(col(sort_field).desc())
@@ -181,14 +191,15 @@ class PluginCrudService:
             if hook_type is not None and hook_type != model.hook_type:
                 valid_hook_types = [hook.value for hook in PluginHookEnum]
                 if hook_type not in valid_hook_types:
-                    raise ValueError(f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}")
+                    raise ValueError(
+                        f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}")
                 model.hook_type = hook_type
 
             if custom_action_id is not None and custom_action_id != model.custom_action_id:
                 action_result = await session.exec(
                     select(CompositeActionModel).where(
                         (CompositeActionModel.action_id == custom_action_id) &
-                        (CompositeActionModel.is_enabled == True)
+                        (CompositeActionModel.is_enabled == true())
                     )
                 )
                 action_model = action_result.first()
@@ -231,14 +242,12 @@ class PluginCrudService:
             model = result.first()
             if not model:
                 return False
-
             if model.forked_from_id:
                 await session.exec(
                     update(UserPlugin)
                     .where(UserPlugin.id == model.forked_from_id)
                     .values(forks_count=UserPlugin.forks_count - 1)
                 )
-
             await session.delete(model)
             await session.commit()
             return True
@@ -247,7 +256,8 @@ class PluginCrudService:
     async def enable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(is_enabled=True, updated_at=datetime.now())
+                update(UserPlugin).where(UserPlugin.id == id).values(
+                    is_enabled=true(), updated_at=datetime.now())
             )
             await session.commit()
             return True
@@ -256,7 +266,8 @@ class PluginCrudService:
     async def disable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(is_enabled=False, updated_at=datetime.now())
+                update(UserPlugin).where(UserPlugin.id == id).values(
+                    is_enabled=False, updated_at=datetime.now())
             )
             await session.commit()
             return True
@@ -265,7 +276,8 @@ class PluginCrudService:
     async def increment_likes(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(likes_count=UserPlugin.likes_count + 1)
+                update(UserPlugin).where(UserPlugin.id == id).values(
+                    likes_count=UserPlugin.likes_count + 1)
             )
             await session.commit()
             return True
@@ -274,7 +286,8 @@ class PluginCrudService:
     async def increment_reports(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(reports_count=UserPlugin.reports_count + 1)
+                update(UserPlugin).where(UserPlugin.id == id).values(
+                    reports_count=UserPlugin.reports_count + 1)
             )
             await session.commit()
             return True
@@ -308,7 +321,8 @@ class PluginCrudService:
 
             existing = await session.exec(
                 select(UserPlugin).where(
-                    (UserPlugin.mid == target_mid) & (UserPlugin.name == new_name)
+                    (UserPlugin.mid == target_mid) & (
+                        UserPlugin.name == new_name)
                 )
             )
             if existing.first():
@@ -339,4 +353,4 @@ class PluginCrudService:
             return new_model
 
 
-plugin_crud = PluginCrudService()
+plugin_crud_svr = PluginCrudService()

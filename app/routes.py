@@ -21,7 +21,7 @@ def setup_routes(app: FastAPI):
     # 1. 配置管理层
     app.include_router(browser.router)
 
-    # 2. 运行时管理层
+    # # 2. 运行时管理层
     app.include_router(browser_control.router)
 
     # 3. 系统管理层
@@ -29,7 +29,8 @@ def setup_routes(app: FastAPI):
 
     # 注册异常处理器
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(RequestValidationError,
+                              validation_exception_handler)
     app.add_exception_handler(CustomBaseException, custom_exception_handler)
     app.add_exception_handler(OperationalError, database_connection_handler)
     app.add_exception_handler(DisconnectionError, database_connection_handler)

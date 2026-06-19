@@ -74,18 +74,18 @@ async def open_page(
     try:
         # 获取会话
         session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService.browser_sessions:
+        if session_key not in LiveService._browser_sessions:
             return error_response(404, "会话不存在")
         
-        entry = LiveService.browser_sessions[session_key]
+        entry = LiveService._browser_sessions[session_key]
         
         # 如果 page_index 为 -1，新建页面
         if request.page_index < 0:
-            page = await entry.plugined_session.browser.new_page()
-            page_index = len(entry.plugined_session.browser.pages) - 1
+            page = await entry.browser_session.browser.new_page()
+            page_index = len(entry.browser_session.browser.pages) - 1
         else:
             # 获取指定页面
-            pages = entry.plugined_session.browser.pages
+            pages = entry.browser_session.browser.pages
             if request.page_index >= len(pages):
                 return error_response(400, "页面索引超出范围")
             page = pages[request.page_index]
@@ -116,11 +116,11 @@ async def close_page(
     
     try:
         session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService.browser_sessions:
+        if session_key not in LiveService._browser_sessions:
             return error_response(404, "会话不存在")
         
-        entry = LiveService.browser_sessions[session_key]
-        pages = entry.plugined_session.browser.pages
+        entry = LiveService._browser_sessions[session_key]
+        pages = entry.browser_session.browser.pages
         
         if request.page_index >= len(pages):
             return error_response(400, "页面索引超出范围")
@@ -149,11 +149,11 @@ async def switch_page(
     
     try:
         session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService.browser_sessions:
+        if session_key not in LiveService._browser_sessions:
             return error_response(404, "会话不存在")
         
-        entry = LiveService.browser_sessions[session_key]
-        pages = entry.plugined_session.browser.pages
+        entry = LiveService._browser_sessions[session_key]
+        pages = entry.browser_session.browser.pages
         
         if request.page_index >= len(pages):
             return error_response(400, "页面索引超出范围")
@@ -169,39 +169,6 @@ async def switch_page(
         logger.error(f"切换页面失败: {e}")
         return error_response(500, str(e))
 
-
-@router.post("/operation/execute_js", summary="执行JavaScript")
-async def execute_js(
-    request: ExecuteJSRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
-) -> StandardResponse[dict]:
-    """在指定页面执行JavaScript代码"""
-    mid = browser_req.auth_info.mid
-    browser_id = browser_req.browser_id
-    
-    try:
-        session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService.browser_sessions:
-            return error_response(404, "会话不存在")
-        
-        entry = LiveService.browser_sessions[session_key]
-        pages = entry.plugined_session.browser.pages
-        
-        if request.page_index >= len(pages):
-            return error_response(400, "页面索引超出范围")
-        
-        result = await pages[request.page_index].evaluate(request.script)
-        
-        return success_response({
-            "result": result,
-            "message": "JavaScript执行成功"
-        })
-        
-    except Exception as e:
-        logger.error(f"执行JavaScript失败: {e}")
-        return error_response(500, str(e))
-
-
 @router.post("/operation/get_page_info", summary="获取页面信息")
 async def get_page_info(
     request: GetPageInfoRequest,
@@ -211,33 +178,29 @@ async def get_page_info(
     mid = browser_req.auth_info.mid
     browser_id = browser_req.browser_id
     
-    try:
-        session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService.browser_sessions:
-            return error_response(404, "会话不存在")
-        
-        entry = LiveService.browser_sessions[session_key]
-        pages = entry.plugined_session.browser.pages
-        
-        if request.page_index >= len(pages):
-            return error_response(400, "页面索引超出范围")
-        
-        page = pages[request.page_index]
-        url = await page.evaluate("document.URL")
-        title = await page.title()
-        cookies = await page.cookies()
-        
-        return success_response({
-            "page_index": request.page_index,
-            "url": url,
-            "title": title,
-            "cookies_count": len(cookies),
-            "message": "获取页面信息成功"
-        })
-        
-    except Exception as e:
-        logger.error(f"获取页面信息失败: {e}")
-        return error_response(500, str(e))
+    session_key = LiveService._get_session_key(mid, browser_id)
+    if session_key not in LiveService._browser_sessions:
+        return error_response(404, "会话不存在")
+    
+    entry = LiveService._browser_sessions[session_key]
+    pages = entry.browser_session.all_pages
+    if request.page_index >= len(pages):
+        return error_response(400, "页面索引超出范围")
+    
+    page = pages[request.page_index]
+    url = await page.evaluate("document.URL")
+    title = await page.title()
+    cookies = await page.context.cookies()
+    
+    return success_response({
+        "page_index": request.page_index,
+        "url": url,
+        "title": title,
+        "cookies_count": len(cookies),
+        "message": "获取页面信息成功"
+    })
+    
+
 
 
 # ============ browser/info API ============
@@ -253,11 +216,11 @@ async def get_browser_info(
     
     try:
         session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService.browser_sessions:
+        if session_key not in LiveService._browser_sessions:
             return error_response(404, "会话不存在")
         
-        entry = LiveService.browser_sessions[session_key]
-        browser = entry.plugined_session.browser
+        entry = LiveService._browser_sessions[session_key]
+        browser = entry.browser_session.browser
         
         # 获取浏览器版本信息
         version_info = await browser.version()

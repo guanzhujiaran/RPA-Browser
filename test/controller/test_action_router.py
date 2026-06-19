@@ -1,5 +1,7 @@
 """
 测试 Action 管理接口 - 使用真实数据库操作
+使用 httpx.AsyncClient 进行异步测试
+参考: https://fastapi.org.cn/advanced/async-tests/
 """
 import pytest
 
@@ -8,10 +10,11 @@ from app.models.response_code import ResponseCode
 PREFIX = "/api/v1/rpa/browser/control"
 
 
+@pytest.mark.anyio
 class TestListRegisteredActions:
 
-    def test_list_registered_actions_success(self, client):
-        response = client.post(f"{PREFIX}/actions/registered")
+    async def test_list_registered_actions_success(self, client):
+        response = await client.post(f"{PREFIX}/actions/registered")
 
         assert response.status_code == 200
         data = response.json()
@@ -19,9 +22,10 @@ class TestListRegisteredActions:
         assert len(data["data"]) > 0
 
 
+@pytest.mark.anyio
 class TestCreateCompositeAction:
 
-    def test_create_custom_action_success(self, client):
+    async def test_create_custom_action_success(self, client):
         request_data = {
             "name": "测试操作",
             "description": "这是一个测试操作",
@@ -35,7 +39,7 @@ class TestCreateCompositeAction:
             "retry_delay": 2.0,
         }
 
-        response = client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        response = await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -47,10 +51,10 @@ class TestCreateCompositeAction:
         assert data["data"]["retry_times"] == 3
         assert data["data"]["retry_delay"] == 2.0
 
-    def test_create_custom_action_minimal(self, client):
+    async def test_create_custom_action_minimal(self, client):
         request_data = {"name": "最小化操作"}
 
-        response = client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        response = await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -58,12 +62,13 @@ class TestCreateCompositeAction:
         assert data["data"]["name"] == "最小化操作"
 
 
+@pytest.mark.anyio
 class TestListCompositeActions:
 
-    def test_list_custom_actions_after_create(self, client):
-        self._create_action(client)
+    async def test_list_custom_actions_after_create(self, client):
+        await self._create_action(client)
 
-        response = client.post(f"{PREFIX}/custom-actions/list", json={"page": 1, "per_page": 10})
+        response = await client.post(f"{PREFIX}/custom-actions/list", json={"page": 1, "per_page": 10})
 
         assert response.status_code == 200
         data = response.json()
@@ -73,22 +78,23 @@ class TestListCompositeActions:
         assert data["data"]["items"][0]["name"] == "列表测试操作"
 
     @staticmethod
-    def _create_action(client):
+    async def _create_action(client):
         request_data = {
             "name": "列表测试操作",
             "description": "用于列表测试",
             "steps": [{"action_id": "click", "params": {}}],
         }
-        return client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        return await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
 
 
+@pytest.mark.anyio
 class TestGetCompositeAction:
 
-    def test_get_custom_action_after_create(self, client):
-        create_resp = self._create_action(client)
+    async def test_get_custom_action_after_create(self, client):
+        create_resp = await self._create_action(client)
         action_id = create_resp["data"]["id"]
 
-        response = client.post(f"{PREFIX}/custom-actions/get", json={"id": action_id})
+        response = await client.post(f"{PREFIX}/custom-actions/get", json={"id": action_id})
 
         assert response.status_code == 200
         data = response.json()
@@ -97,28 +103,29 @@ class TestGetCompositeAction:
         assert data["data"]["input_vars"] == []
         assert data["data"]["output_vars"] == []
 
-    def test_get_custom_action_not_found(self, client):
-        response = client.post(f"{PREFIX}/custom-actions/get", json={"id": 999999})
+    async def test_get_custom_action_not_found(self, client):
+        response = await client.post(f"{PREFIX}/custom-actions/get", json={"id": 999999})
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] != ResponseCode.SUCCESS
 
     @staticmethod
-    def _create_action(client):
+    async def _create_action(client):
         request_data = {
             "name": "详情测试操作",
             "description": "用于详情测试",
             "steps": [{"action_id": "click", "params": {}}],
         }
-        resp = client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        resp = await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
         return resp.json()
 
 
+@pytest.mark.anyio
 class TestUpdateCompositeAction:
 
-    def test_update_custom_action_success(self, client):
-        create_resp = self._create_action(client)
+    async def test_update_custom_action_success(self, client):
+        create_resp = await self._create_action(client)
         action_id = create_resp["data"]["id"]
 
         request_data = {
@@ -135,7 +142,7 @@ class TestUpdateCompositeAction:
             "retry_delay": 2.0,
         }
 
-        response = client.post(f"{PREFIX}/custom-actions/update", json=request_data)
+        response = await client.post(f"{PREFIX}/custom-actions/update", json=request_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -146,58 +153,60 @@ class TestUpdateCompositeAction:
         assert data["data"]["retry_times"] == 3
         assert data["data"]["retry_delay"] == 2.0
 
-    def test_update_custom_action_not_found(self, client):
-        response = client.post(f"{PREFIX}/custom-actions/update", json={"id": 999999, "name": "不存在的操作"})
+    async def test_update_custom_action_not_found(self, client):
+        response = await client.post(f"{PREFIX}/custom-actions/update", json={"id": 999999, "name": "不存在的操作"})
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] != ResponseCode.SUCCESS
 
     @staticmethod
-    def _create_action(client):
+    async def _create_action(client):
         request_data = {
             "name": "更新测试操作",
             "steps": [{"action_id": "click", "params": {}}],
         }
-        resp = client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        resp = await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
         return resp.json()
 
 
+@pytest.mark.anyio
 class TestDeleteCompositeAction:
 
-    def test_delete_custom_action_success(self, client):
-        create_resp = self._create_action(client)
+    async def test_delete_custom_action_success(self, client):
+        create_resp = await self._create_action(client)
         action_id = create_resp["data"]["id"]
 
-        response = client.post(f"{PREFIX}/custom-actions/delete", json={"id": action_id})
+        response = await client.post(f"{PREFIX}/custom-actions/delete", json={"id": action_id})
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
 
-    def test_delete_custom_action_not_found(self, client):
-        response = client.post(f"{PREFIX}/custom-actions/delete", json={"id": 999999})
+    async def test_delete_custom_action_not_found(self, client):
+        response = await client.post(f"{PREFIX}/custom-actions/delete", json={"id": 999999})
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] != ResponseCode.SUCCESS
 
     @staticmethod
-    def _create_action(client):
+    async def _create_action(client):
         request_data = {
             "name": "删除测试操作",
             "steps": [{"action_id": "click", "params": {}}],
         }
-        resp = client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        resp = await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
         return resp.json()
 
 
+@pytest.mark.anyio
 class TestForkCompositeAction:
 
-    def test_fork_custom_action_success(self, client):
-        self._create_public_action(client)
+    async def test_fork_custom_action_success(self, client):
+        await self._create_public_action(client)
 
-        list_resp = client.post(f"{PREFIX}/custom-actions/list", json={"page": 1, "per_page": 100})
+        list_resp = await client.post(f"{PREFIX}/custom-actions/list", json={"page": 1, "per_page": 100})
         action_id = None
         for item in list_resp.json()["data"]["items"]:
             if item["name"] == "Fork源操作":
@@ -206,25 +215,25 @@ class TestForkCompositeAction:
 
         assert action_id is not None
 
-        response = client.post(f"{PREFIX}/custom_actions/fork", json={"id": action_id, "new_name": "我的 Fork"})
+        response = await client.post(f"{PREFIX}/custom_actions/fork", json={"id": action_id, "new_name": "我的 Fork"})
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
         assert "Fork" in data["data"]["name"]
 
-    def test_fork_custom_action_not_found(self, client):
-        response = client.post(f"{PREFIX}/custom_actions/fork", json={"id": 999999})
+    async def test_fork_custom_action_not_found(self, client):
+        response = await client.post(f"{PREFIX}/custom_actions/fork", json={"id": 999999})
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] != ResponseCode.SUCCESS
 
     @staticmethod
-    def _create_public_action(client):
+    async def _create_public_action(client):
         request_data = {
             "name": "Fork源操作",
             "steps": [{"action_id": "click", "params": {}}],
             "is_public": True,
         }
-        return client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        return await client.post(f"{PREFIX}/custom-actions/create", json=request_data)

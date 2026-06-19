@@ -51,7 +51,7 @@ class CommunityCrudService:
             # 检查是否已点赞
             like_result = await session.exec(
                 select(ResourceLike).where(
-                    (ResourceLike.mid == mid) &
+                    (ResourceLike.mid == str(mid)) &
                     (ResourceLike.resource_type == resource_type) &
                     (ResourceLike.resource_id == resource_id)
                 )
@@ -82,7 +82,7 @@ class CommunityCrudService:
                 return False
 
             like = ResourceLike(
-                mid=mid,
+                mid=str(mid),
                 resource_type=resource_type,
                 resource_id=resource_id,
             )
@@ -199,6 +199,35 @@ class CommunityCrudService:
             return True
 
     @staticmethod
+    async def update_report(
+        report_id: int,
+        mid: int,
+        reason: int | None = None,
+        description: str | None = None,
+    ) -> bool | None:
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ResourceReport).where(ResourceReport.id == report_id)
+            )
+            report = result.first()
+            if not report:
+                return None
+
+            if str(report.mid) != str(mid):
+                return False
+
+            if not report.is_valid:
+                return False
+
+            if reason is not None:
+                report.reason = reason
+            if description is not None:
+                report.description = description
+
+            await session.commit()
+            return True
+
+    @staticmethod
     async def mark_report_invalid(
         report_id: int, admin_mid: int
     ) -> bool:
@@ -274,4 +303,4 @@ class CommunityCrudService:
             return result.one()
 
 
-community_crud = CommunityCrudService()
+community_crud_svr = CommunityCrudService()

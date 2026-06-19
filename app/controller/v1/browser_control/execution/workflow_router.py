@@ -3,31 +3,51 @@ Workflow 管理路由
 
 提供工作流（Workflow）的 CRUD 和执行 API
 """
+from app.services.execution.engine import ExecutionEngine
 from loguru import logger
 import uuid
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from fastapi import Depends
-from app.services.execution.crud_service import workflow_crud
-from app.services.RPA_browser.rpa_operation_service import RPAOperationService
+from app.services.RPA_browser.live_service import live_service
+from app.services.execution.crud_service import workflow_crud_svr
 from app.models.workflow.models import (
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
     WorkflowListRequest,
-    WorkflowExecuteRequest,
     WorkflowDetailResponse,
     WorkflowListItemResponse,
     WorkflowCreateResponse,
     WorkflowDuplicateResponse,
     WorkflowForkRequest,
     WorkflowForkResponse,
-    WorkflowExecuteResponse,
     WorkflowStepExecuteRequest,
     WorkflowStepExecuteResponse,
 )
 from app.models.base.base_sqlmodel import BasePaginationResp
+from app.models.execution.request_params import (
+    ActionExecutionRequest,
+)
 from ..base import new_workflow_router
+
+execution_engine = ExecutionEngine()
+
+
+async def _resolve_page(mid: int, browser_id: int, page_index: int | None = None):
+    """从 LiveService 解析浏览器页面"""
+    entry = live_service.get_browser_session_entry(mid=mid, browser_id=browser_id)
+    if not entry:
+        raise ValueError("浏览器不存在或未运行")
+    if page_index is not None:
+        all_pages = entry.browser_session.all_pages
+        if not all_pages:
+            raise ValueError(f"浏览器 {browser_id} 没有打开任何页面")
+        if not (0 <= page_index < len(all_pages)):
+            raise ValueError(f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})")
+        return all_pages[page_index]
+    else:
+        return await entry.browser_session.get_current_page()
 
 router = new_workflow_router()
 
@@ -41,13 +61,13 @@ async def create_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowCreateResponse]:
     """创建用户工作流
-    
+
     工作流由多个步骤组成，可以包含操作、插件、控制流等
     """
     # 生成唯一的 workflow_id
     workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
-    
-    model = await workflow_crud.create(
+
+    model = await workflow_crud_svr.create(
         workflow_id=workflow_id,
         name=request.name,
         mid=auth.mid,
@@ -58,7 +78,7 @@ async def create_workflow(
         is_public=request.is_public,
         enabled_plugins=request.enabled_plugins,
     )
-    
+
     return success_response(
         WorkflowCreateResponse(
             id=model.id,
@@ -75,23 +95,23 @@ async def list_workflows(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[BasePaginationResp[WorkflowListItemResponse]]:
     """获取当前用户的工作流列表
-    
+
     支持分页、筛选和排序
     """
     if request is None:
         request = WorkflowListRequest()
-    
+
     # 计算 skip
     skip = (request.page - 1) * request.per_page
-    
+
     # 获取总数
-    total = await workflow_crud.count_by_user(
+    total = await workflow_crud_svr.count_by_user(
         mid=auth.mid,
         filter_type=request.filter_type
     )
-    
+
     # 获取列表数据
-    models = await workflow_crud.list_by_user(
+    models = await workflow_crud_svr.list_by_user(
         mid=auth.mid,
         skip=skip,
         limit=request.per_page,
@@ -99,7 +119,7 @@ async def list_workflows(
         sort_by=request.sort_by,
         sort_order=request.sort_order,
     )
-    
+
     items = []
     for model in models:
         items.append(
@@ -120,7 +140,7 @@ async def list_workflows(
                 updated_at=model.updated_at,
             )
         )
-    
+
     # 构建分页响应
     pagination = BasePaginationResp[WorkflowListItemResponse](
         page=request.page,
@@ -128,7 +148,7 @@ async def list_workflows(
         total=total,
         items=items
     )
-    
+
     return success_response(pagination)
 
 
@@ -138,21 +158,21 @@ async def get_workflow_detail(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDetailResponse]:
     """获取工作流详情
-    
+
     Args:
         request: {"id": <工作流ID>}
     """
     workflow_id = request.get("id")
     if not workflow_id:
         return error_response(400, "缺少工作流ID")
-    
-    model = await workflow_crud.get_by_id(workflow_id)
+
+    model = await workflow_crud_svr.get_by_id(workflow_id)
     if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "工作流不存在")
-    
+
     # 获取关联的插件列表
-    enabled_plugins = await workflow_crud.get_enabled_plugins(model.workflow_id)
-    
+    enabled_plugins = await workflow_crud_svr.get_enabled_plugins(model.workflow_id)
+
     return success_response(
         WorkflowDetailResponse(
             id=model.id,
@@ -182,7 +202,7 @@ async def update_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDetailResponse]:
     """更新工作流"""
-    model = await workflow_crud.update(
+    model = await workflow_crud_svr.update(
         id=request.id,
         name=request.name,
         description=request.description,
@@ -193,13 +213,13 @@ async def update_workflow(
         is_public=request.is_public,
         enabled_plugins=request.enabled_plugins,
     )
-    
+
     if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "工作流不存在或无权限")
-    
+
     # 获取关联的插件列表
-    enabled_plugins = await workflow_crud.get_enabled_plugins(model.workflow_id)
-    
+    enabled_plugins = await workflow_crud_svr.get_enabled_plugins(model.workflow_id)
+
     return success_response(
         WorkflowDetailResponse(
             id=model.id,
@@ -229,19 +249,19 @@ async def delete_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """删除工作流
-    
+
     Args:
         request: {"id": <工作流ID>}
     """
     workflow_id = request.get("id")
     if not workflow_id:
         return error_response(400, "缺少工作流ID")
-    
-    model = await workflow_crud.get_by_id(workflow_id)
+
+    model = await workflow_crud_svr.get_by_id(workflow_id)
     if not model or str(model.mid) != str(auth.mid):
         return error_response(404, "工作流不存在或无权限")
-    
-    success = await workflow_crud.delete(workflow_id)
+
+    success = await workflow_crud_svr.delete(workflow_id)
     if success:
         return success_response({"message": "删除成功"})
     else:
@@ -254,30 +274,30 @@ async def duplicate_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDuplicateResponse]:
     """复制工作流
-    
+
     Args:
         request: {"id": <工作流ID>, "new_name": <新名称>}
     """
     workflow_id = request.get("id")
     new_name = request.get("new_name")
-    
+
     if not workflow_id:
         return error_response(400, "缺少工作流ID")
     if not new_name:
         return error_response(400, "缺少新名称")
-    
+
     # 获取原工作流
-    original = await workflow_crud.get_by_id(workflow_id)
+    original = await workflow_crud_svr.get_by_id(workflow_id)
     if not original or str(original.mid) != str(auth.mid):
         return error_response(404, "工作流不存在或无权限")
-    
+
     # 创建副本
     new_workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
-    
+
     # 复制原工作流的插件关联
-    original_plugins = await workflow_crud.get_enabled_plugins(original.workflow_id)
-    
-    model = await workflow_crud.create(
+    original_plugins = await workflow_crud_svr.get_enabled_plugins(original.workflow_id)
+
+    model = await workflow_crud_svr.create(
         workflow_id=new_workflow_id,
         name=new_name,
         mid=auth.mid,
@@ -288,7 +308,7 @@ async def duplicate_workflow(
         is_public=False,
         enabled_plugins=original_plugins,
     )
-    
+
     return success_response(
         WorkflowDuplicateResponse(
             id=model.id,
@@ -305,33 +325,33 @@ async def fork_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowForkResponse]:
     """Fork 工作流
-    
+
     - 如果是自己的工作流：允许无条件 Fork（类似“创建副本”）
     - 如果是别人的工作流：仅允许 Fork 公开的工作流（类似 GitHub）
-    
+
     Args:
         request: {"id": <工作流ID>, "new_name": <新名称（可选）>}
     """
     # 获取原工作流
-    original = await workflow_crud.get_by_id(request.id)
+    original = await workflow_crud_svr.get_by_id(request.id)
     if not original:
         return error_response(404, "工作流不存在")
-    
+
     # 检查权限：如果是别人的工作流，必须是公开的
     if str(original.mid) != str(auth.mid) and not original.is_public:
         return error_response(403, "只能 Fork 公开的工作流或自己的工作流")
-    
+
     try:
         # 执行 Fork
-        model = await workflow_crud.fork(
+        model = await workflow_crud_svr.fork(
             id=request.id,
             target_mid=auth.mid,
             new_name=request.new_name
         )
-        
+
         if not model:
             return error_response(500, "Fork 失败")
-        
+
         return success_response(
             WorkflowForkResponse(
                 id=model.id,
@@ -353,12 +373,12 @@ async def get_workflow_forks(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[BasePaginationResp[WorkflowListItemResponse]]:
     """获取某工作流的所有 Fork 版本列表"""
-    original = await workflow_crud.get_by_id(id)
+    original = await workflow_crud_svr.get_by_id(id)
     if not original:
         return error_response(404, "工作流不存在")
-    
-    forks = await workflow_crud.list_forks(id, skip, limit)
-    
+
+    forks = await workflow_crud_svr.list_forks(id, skip, limit)
+
     items = [
         WorkflowListItemResponse(
             id=f.id,
@@ -377,36 +397,15 @@ async def get_workflow_forks(
         )
         for f in forks
     ]
-    
+
     pagination = BasePaginationResp[WorkflowListItemResponse](
         page=1,
         per_page=limit,
         total=len(items),
         items=items
     )
-    
+
     return success_response(pagination)
-
-
-@router.post(BrowserControlRouterPath.workflows_execute, summary="执行工作流")
-async def execute_workflow(
-    request: WorkflowExecuteRequest,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[WorkflowExecuteResponse]:
-    """执行工作流
-    
-    在指定浏览器会话中执行工作流
-    """
-    # TODO: 实现工作流执行逻辑
-    # 这里需要集成 execution_engine 来执行工作流
-    
-    return success_response(
-        WorkflowExecuteResponse(
-            execution_id=f"exec_{uuid.uuid4().hex[:12]}",
-            status="started",
-            message="工作流开始执行",
-        )
-    )
 
 
 @router.post(BrowserControlRouterPath.workflows_execute_step, summary="单步执行工作流")
@@ -415,72 +414,56 @@ async def execute_workflow_step(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowStepExecuteResponse]:
     """单步执行工作流
-    
+
     执行工作流中的指定步骤，用于调试和逐步执行
     """
     try:
-        # 验证步骤索引
         if request.step_index < 0 or request.step_index >= len(request.steps):
             return error_response(
                 code=400,
                 msg=f"步骤索引 {request.step_index} 超出范围（总共 {len(request.steps)} 步）"
             )
-        
-        # 获取要执行的步骤
+
         step = request.steps[request.step_index]
-        
-        logger.info(f"[Workflow Step Execute] 执行步骤 {request.step_index + 1}/{len(request.steps)}: {step.action_id}")
-        
-        # 激活页面（如果指定了 page_index）
-        if request.page_index is not None:
-            try:
-                # 获取浏览器会话
-                from app.services.RPA_browser.live_service import LiveService
-                session = await LiveService.get_or_create_browser_session_entry(
-                    auth.mid, request.browser_id, headless=False
-                )
-                
-                # 获取页面列表
-                pages_response = await RPAOperationService.get_pages_list(session)
-                pages = pages_response.pages
-                
-                if request.page_index < len(pages):
-                    page_info = pages[request.page_index]
-                    # 切换到指定页面
-                    result = await RPAOperationService.switch_page(session, request.page_index)
-                    logger.info(f"[Workflow Step Execute] 已激活页面: {page_info.title}")
-            except Exception as e:
-                logger.warning(f"[Workflow Step Execute] 激活页面失败: {e}")
-        
-        # 执行动作
-        start_time = __import__('time').time()
-        service = RPAOperationService()
-        result = await service.execute_action(
-            browser_id=request.browser_id,
+        logger.info(
+            f"[Workflow Step Execute] 执行步骤 {request.step_index + 1}/{len(request.steps)}: {step.action_id}")
+
+        mid = auth.mid
+        bid = int(request.browser_id) if request.browser_id.isdigit() else 0
+        page = await _resolve_page(mid, bid, request.page_index)
+
+        step_req = ActionExecutionRequest(
+            mid=mid,
+            browser_id=bid,
+            variables=request.user_data,
+            page_index=request.page_index,
             action_id=step.action_id,
             params=step.params or {},
-            user_data=request.user_data
         )
-        duration = (__import__('time').time() - start_time) * 1000  # 转换为毫秒
-        
-        logger.info(f"[Workflow Step Execute] 步骤执行完成: success={result.get('success')}, duration={duration:.2f}ms")
-        
+        result = await execution_engine.execute_action(
+            step_req,
+            session_id=str(bid),
+            browser_id=str(bid),
+            page=page,
+        )
+
+        logger.info(
+            f"[Workflow Step Execute] 步骤执行完成: success={result.success}")
+
         return success_response(
             WorkflowStepExecuteResponse(
-                success=result.get('success', False),
+                success=result.success,
                 step_index=request.step_index,
                 action_id=step.action_id,
-                result=result.get('data'),
-                error=result.get('error'),
-                duration=duration,
+                result=result.data,
+                error=result.error,
+                duration=result.execution_time * 1000,
                 current_step=request.step_index,
-                total_steps=len(request.steps)
+                total_steps=len(request.steps),
             )
         )
-    
+    except ValueError as e:
+        return error_response(400, str(e))
     except Exception as e:
         logger.error(f"[Workflow Step Execute] 执行失败: {e}")
-        return error_response(
-            code=500,
-            msg=f"执行步骤失败: {str(e)}"
-        )
+        return error_response(500, f"执行步骤失败: {str(e)}")

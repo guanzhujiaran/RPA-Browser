@@ -73,21 +73,6 @@ class RPANavigateParams(SQLModel):
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
 
 
-class JavaScriptExecuteParams(SQLModel):
-    """JavaScript执行参数"""
-    code: str = Field(..., description="JavaScript代码")
-    timeout: int = Field(default=30000, description="执行超时时间(毫秒)")
-    await_result: bool = Field(default=True, description="是否等待异步结果")
-
-
-class ExecuteJsResponse(SQLModel):
-    """JavaScript执行响应"""
-    success: bool
-    result: Any = Field(description="执行结果")
-    error: str | None = Field(None, description="错误信息")
-    execution_time: int = Field(description="执行时间(毫秒)")
-
-
 class SecurityCheckParams(SQLModel):
     """安全检查参数"""
     code: str = Field(..., description="待检查的JavaScript代码")
@@ -132,8 +117,6 @@ __all__ = [
     "RPAScreenshotParams",
     "RPAWaitParams",
     "RPANavigateParams",
-    "JavaScriptExecuteParams",
-    "ExecuteJsResponse",
     "SecurityCheckParams",
     "SecurityRisk",
     "SecurityCheckResult",

@@ -5,6 +5,12 @@ import pytest
 from playwright.async_api import Page
 
 from app.models.execution.action_params import LoopParams, IfElseParams, create_workflow_step
+from app.models.execution.condition_models import (
+    ConditionRule,
+    ParamsCondition,
+    ConditionValueType,
+    LogicOperator,
+)
 
 
 class TestLoopAction:
@@ -83,7 +89,7 @@ class TestLoopAction:
 
         result = await action.execute()
         assert result.success
-        assert "无子步骤可执行" in result.data.get("message", "")
+        assert "无子步骤可执行" in (result.data.message or "")
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_loop_with_screenshot(self):
@@ -134,9 +140,16 @@ class TestIfElseAction:
         action = IfElseAction.new_action(
             mid=1,
             page=self.page,
-            variables={"test": True},
+            variables={"should_click": True},
             params=IfElseParams(
-                condition="1 == 1",
+                condition=ConditionRule(
+                    logic=LogicOperator.AND,
+                    condition=ParamsCondition(
+                        field="should_click",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    ),
+                ),
                 TrueBranch=[
                     create_workflow_step(action_id="click", params={"selector": "#true_btn"}),
                 ],
@@ -161,9 +174,16 @@ class TestIfElseAction:
         action = IfElseAction.new_action(
             mid=1,
             page=self.page,
-            variables={"test": True},
+            variables={"should_click": False},
             params=IfElseParams(
-                condition="1 == 2",
+                condition=ConditionRule(
+                    logic=LogicOperator.AND,
+                    condition=ParamsCondition(
+                        field="should_click",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    ),
+                ),
                 TrueBranch=[],
                 FalseBranch=[
                     create_workflow_step(action_id="click", params={"selector": "#false_btn"}),
@@ -176,19 +196,28 @@ class TestIfElseAction:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_if_else_missing_condition(self):
-        """测试缺少条件参数"""
+        """测试条件变量不存在时的回退行为"""
         from app.services.execution.actions.control_flow import IfElseAction
 
         action = IfElseAction.new_action(
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=IfElseParams(condition=""),
+            params=IfElseParams(
+                condition=ConditionRule(
+                    logic=LogicOperator.AND,
+                    condition=ParamsCondition(
+                        field="nonexistent_var",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    ),
+                ),
+            ),
         )
 
         result = await action.execute()
         assert result.success
-        # 空 condition 视为 False，走 false 分支（空分支），结果是成功但没有执行任何操作
+        # 变量不存在会导致条件评估失败，走 false 分支（空分支），结果是成功但没有执行任何操作
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_if_else_with_screenshot_branch(self):
@@ -204,9 +233,16 @@ class TestIfElseAction:
         action = IfElseAction.new_action(
             mid=1,
             page=self.page,
-            variables={"test": True},
+            variables={"take_screenshot": True},
             params=IfElseParams(
-                condition="'content' in page.content()",
+                condition=ConditionRule(
+                    logic=LogicOperator.AND,
+                    condition=ParamsCondition(
+                        field="take_screenshot",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    ),
+                ),
                 TrueBranch=[
                     create_workflow_step(action_id="screenshot", params={}),
                 ],

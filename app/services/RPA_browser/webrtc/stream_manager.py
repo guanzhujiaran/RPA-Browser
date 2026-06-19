@@ -1,28 +1,48 @@
 """
-WebRTCStreamManager - WebRTC 流管理器
+WebRTCStreamManager - WebRTC 流管理器（无循环引用 + 高效数据结构）
 
-管理单个浏览器会话（BrowserContext）下的所有 WebRTC 视频流。
-负责流的创建、查询、关闭以及闲置超时的自动清理。
+设计原则：
+1. 使用 weakref 引用 session，避免 session ↔ manager 循环引用
+2. OrderedDict 维护 LRU 淘汰顺序，最近使用的流在末尾
+3. 双向索引：_streams_by_index + _streams_by_key，实现 O(1) 双向查找
+4. 定期清理基于 LRU 顺序，低开销闲置检测
 """
 
-from app import scheduler_manager
 import asyncio
+import weakref
 import time
-from typing import Dict
+from collections import OrderedDict
+from typing import Dict, Optional
 from loguru import logger
 
 from app.config import settings
 from app.models.runtime.webrtc_models import WebRTCSessionConfig
 from .stream_session import WebRTCStreamSession
-from app.scheduler_manager import interval_job
+from app.scheduler_manager import scheduler_manager_ist
 
 
 class WebRTCStreamManager:
     """
     WebRTC 流管理器
 
-    管理一个浏览器会话中的所有视频流，每个页面对应一个独立的流。
-    提供统一的 API 来操作这些流，并定期清理闲置的流以释放资源。
+    作为 WebRTCEnabledSession 的内建能力，始终可用，无需调用 enable_webrtc()。
+
+    数据结构：
+    ┌─────────────────────────────────────────────┐
+    │  _streams_by_index: OrderedDict[int, Session]│  ← LRU 有序主索引
+    │  _streams_by_key:   Dict[str, Session]       │  ← stream_key 辅助索引
+    │  _session_ref:      weakref.ref[Session]     │  ← 弱引用打破循环
+    └─────────────────────────────────────────────┘
+
+    查找算法：
+    - 按 page_index 查找: O(1) 直接哈希
+    - 按 stream_key 查找: O(1) 直接哈希
+    - 闲置淘汰: O(k) 遍历 OrderedDict 前部，k 为超时流数量
+
+    淘汰策略：
+    - 新流插入到 OrderedDict 末尾（最近使用）
+    - 清理时从前端扫描，越靠前越可能闲置超时
+    - 访问时 move_to_end 标记为活跃
     """
 
     def __init__(self, session):
@@ -30,24 +50,40 @@ class WebRTCStreamManager:
         初始化流管理器
 
         Args:
-            session: WebRTCEnabledSession 实例（父会话对象）
+            session: WebRTCEnabledSession 实例（以弱引用持有，打破循环引用）
         """
-        self.session = session
-        self.streams: Dict[int, WebRTCStreamSession] = {}
-        self._cleanup_task: asyncio.Task | None = None
-        self._is_cleanup_running = False
-        scheduler_manager.add_interval_job(
-            func=self._cleanup_loop,
+        self._session_ref = weakref.ref(session)
+
+        # 主索引：OrderedDict 维护 LRU 淘汰顺序（最近活跃的在末尾）
+        self._streams_by_index: OrderedDict[int, WebRTCStreamSession] = OrderedDict()
+        # 辅助索引：stream_key → stream 的 O(1) 映射
+        self._streams_by_key: Dict[str, WebRTCStreamSession] = {}
+
+        # 注册定期清理任务（基于配置的 cleanup_interval）
+        mid = getattr(session.playwright_instance, 'mid', 'unknown')
+        bid = getattr(session.playwright_instance, 'browser_id', 'unknown')
+        scheduler_manager_ist.add_interval_job(
+            func=self._cleanup_idle_streams,
             seconds=0,
             minutes=10,
             hours=0,
-            id="cleanup_loop",
+            id=f"{mid}_{bid}_webrtc_cleanup",
         )
+
+    # ── session 访问（弱引用解引用） ──
+
+    @property
+    def session(self):
+        """获取 session 引用，若 session 已被回收返回 None"""
+        return self._session_ref()
+
+    # ── 核心流操作 ──
+
     async def start_stream(self, page_index: int) -> WebRTCStreamSession:
         """
         启动指定页面的 WebRTC 视频流
 
-        每次调用都会创建全新的流实例，不依赖缓存机制。
+        创建全新的流实例，使用双向索引注册，自动淘汰同页面的旧流。
 
         Args:
             page_index: 页面索引（从 0 开始）
@@ -56,159 +92,202 @@ class WebRTCStreamManager:
             WebRTCStreamSession: 视频流会话实例
 
         Raises:
-            IndexError: 如果页面索引超出范围
-            Exception: 如果启动流失败
+            RuntimeError: session 已被回收
+            IndexError: page_index 越界
         """
-        # 检查页面是否存在
-        pages = await self.session.get_all_pages()
+        session = self.session
+        if session is None:
+            raise RuntimeError("Session 已被回收，无法创建流")
+
+        pages = session.all_pages
         if page_index >= len(pages):
             raise IndexError(
-                f"Page index {page_index} out of range. "
-                f"Available pages: {len(pages)}"
+                f"页面索引 {page_index} 超出范围 (共 {len(pages)} 个页面)"
             )
 
-        # 获取页面对象
         page = pages[page_index]
 
-        # 如果该 page_index 已有活跃的流，先关闭它
-        if page_index in self.streams:
-            logger.info(f"检测到 page_index={page_index} 已有活跃流，先关闭旧流")
-            old_stream = self.streams[page_index]
-            try:
-                await old_stream.close()
-            except Exception as e:
-                logger.warning(f"关闭旧流时出错（继续创建新流）: {e}")
-            finally:
-                del self.streams[page_index]
+        # 如果该 page_index 已有旧流，先淘汰
+        if page_index in self._streams_by_index:
+            old_stream = self._streams_by_index[page_index]
+            logger.info(f"淘汰 page_index={page_index} 的旧流，创建新流")
+            await self._evict_stream(page_index, old_stream)
 
-        # 生成 stream_key（使用 page_index 而非 page_id）
-        mid = self.session.playwright_instance.mid
-        browser_id = self.session.playwright_instance.browser_id
+        # 构造 stream_key
+        mid = session.playwright_instance.mid
+        browser_id = session.playwright_instance.browser_id
         stream_key = f"{mid}:{browser_id}:page_{page_index}"
 
-        # 创建配置
         config = WebRTCSessionConfig(
             quality=80,
-            idle_timeout=settings.browser_webrtc_idle_timeout
+            idle_timeout=settings.browser_webrtc_idle_timeout,
         )
 
         # 创建并启动流
         stream = WebRTCStreamSession(stream_key, page, config, page_index)
         await stream.start()
 
-        # 存储流（使用 page_index 作为 key）
-        self.streams[page_index] = stream
+        # 双向索引注册（新流插入 OrderedDict 末尾 = 最新）
+        self._streams_by_index[page_index] = stream
+        self._streams_by_key[stream_key] = stream
 
-        logger.info(f"WebRTC 流已创建: {stream_key} (page_index={page_index})")
-
+        logger.info(
+            f"WebRTC 流已创建: {stream_key} "
+            f"(page_index={page_index}, 总流数={len(self._streams_by_index)})"
+        )
         return stream
 
-    async def get_stream(self, page) -> WebRTCStreamSession | None:
+    def get_stream(
+        self, *, page_index: int = None, stream_key: str = None
+    ) -> Optional[WebRTCStreamSession]:
         """
-        获取指定页面的视频流
+        O(1) 查找流 —— 支持按 page_index 或 stream_key
 
         Args:
-            page: Playwright Page 对象
+            page_index: 页面索引
+            stream_key: 流唯一键
 
         Returns:
-            WebRTCStreamSession 或 None（如果不存在）
+            WebRTCStreamSession 或 None
         """
-        page_id = page._webrtc_page_id
-        return self.streams.get(page_id)
+        if stream_key is not None:
+            stream = self._streams_by_key.get(stream_key)
+            if stream is not None:
+                self._touch_lru(stream)
+            return stream
+        if page_index is not None:
+            stream = self._streams_by_index.get(page_index)
+            if stream is not None:
+                self._touch_lru(stream)
+            return stream
+        raise ValueError("必须提供 page_index 或 stream_key 之一")
 
-    async def close_stream(self, page_index: int):
+    async def close_stream(
+        self, *, page_index: int = None, stream_key: str = None
+    ):
         """
-        关闭指定页面索引的视频流
+        关闭指定流（O(1) 查找 + 自动清理双索引）
 
         Args:
-            page_index: 页面索引（从 0 开始）
+            page_index: 页面索引
+            stream_key: 流唯一键
         """
-        if page_index not in self.streams:
-            logger.debug(f"尝试关闭不存在的流: page_index={page_index}")
+        stream = None
+        if stream_key:
+            stream = self._streams_by_key.get(stream_key)
+        elif page_index is not None:
+            stream = self._streams_by_index.get(page_index)
+
+        if stream is None:
+            logger.debug(f"尝试关闭不存在的流: page_index={page_index}, stream_key={stream_key}")
             return
 
-        stream = self.streams[page_index]
-        try:
-            await stream.close()
-            logger.info(f"WebRTC 流已关闭: page_index={page_index}")
-        except Exception as e:
-            logger.error(f"关闭 WebRTC 流时出错 page_index={page_index}: {e}")
-        finally:
-            # 从字典中移除
-            if page_index in self.streams:
-                del self.streams[page_index]
+        await self._evict_stream(stream.page_index, stream)
 
     async def close_all_streams(self):
-        """关闭所有视频流"""
-        if not self.streams:
+        """并行关闭所有流，清空双索引"""
+        if not self._streams_by_index:
             return
 
-        logger.info(f"关闭所有 WebRTC 流，共 {len(self.streams)} 个")
+        count = len(self._streams_by_index)
+        logger.info(f"关闭所有 WebRTC 流 ({count} 个)")
 
-        # 并行关闭所有流
-        tasks = []
-        for page_index in list(self.streams.keys()):
-            stream = self.streams[page_index]
-            tasks.append(stream.close())
-
+        tasks = [s.close() for s in list(self._streams_by_index.values())]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 清空字典
-        self.streams.clear()
-
+        self._streams_by_index.clear()
+        self._streams_by_key.clear()
         logger.info("所有 WebRTC 流已关闭")
 
-    async def _cleanup_loop(self):
-        """
-        定期清理闲置的视频流
+    # ── LRU 淘汰算法 ──
 
-        每分钟检查一次，关闭超过闲置超时的流。
+    def _touch_lru(self, stream: WebRTCStreamSession):
         """
+        将流标记为「最近使用」—— 移动到 OrderedDict 末尾
+
+        时间复杂度: O(1)
+        """
+        if stream.page_index in self._streams_by_index:
+            self._streams_by_index.move_to_end(stream.page_index)
+
+    async def _evict_stream(self, page_index: int, stream: WebRTCStreamSession):
+        """
+        淘汰流 —— 关闭并从双索引中移除
+
+        时间复杂度: O(1)
+        """
+        try:
+            await stream.close()
+        except Exception as e:
+            logger.error(f"关闭 WebRTC 流时出错 page_index={page_index}: {e}")
+        finally:
+            self._streams_by_index.pop(page_index, None)
+            self._streams_by_key.pop(stream.stream_key, None)
+
+    async def _cleanup_idle_streams(self):
+        """
+        基于 LRU 顺序的闲置流清理
+
+        算法：
+        - 按 OrderedDict 顺序（从旧到新）扫描流
+        - 闲置超过 idle_timeout 的流被淘汰
+        - 因为越靠前的流越久未被访问，大概率最先超时
+        - 一旦遇到未超时流，后续流理论上也不会超时（LRU 保证）
+        """
+        session = self.session
+        if session is None:
+            # session 已回收，无法访问页面信息，保守清理所有流
+            await self.close_all_streams()
+            return
 
         current_time = time.time()
-        streams_to_close = []
+        to_evict: list[tuple[int, WebRTCStreamSession]] = []
 
-        # 检查每个流的闲置时间
-        for page_index, stream in self.streams.items():
-            idle_time = stream.webrtc_state.idle_duration
-
+        for page_index, stream in self._streams_by_index.items():
+            idle_time = stream.idle_duration
             if idle_time > stream.config.idle_timeout:
-                logger.warning(
-                    f"WebRTC 流因闲置超时而关闭: "
-                    f"page_index={page_index}, "
-                    f"idle_time={idle_time:.0f}s, "
-                    f"timeout={stream.config.idle_timeout}s"
-                )
-                streams_to_close.append(page_index)
+                to_evict.append((page_index, stream))
+            # 注意：不 break，因为可能有多个超时流连续出现在前面
 
-        # 关闭超时的流
-        for page_index in streams_to_close:
-            stream = self.streams[page_index]
-            await stream.close()
-            del self.streams[page_index]
+        for page_index, stream in to_evict:
+            logger.warning(
+                f"WebRTC 流闲置超时淘汰: page_index={page_index}, "
+                f"idle={stream.idle_duration:.0f}s, timeout={stream.config.idle_timeout}s"
+            )
+            await self._evict_stream(page_index, stream)
 
-    async def stop_cleanup(self):
-        """停止清理任务"""
-        self._is_cleanup_running = False
+        # 清理孤儿索引（stream 已关闭但索引残留）
+        orphan_keys = [
+            k for k, v in self._streams_by_key.items()
+            if v.page_index not in self._streams_by_index
+        ]
+        for k in orphan_keys:
+            self._streams_by_key.pop(k, None)
 
-        if self._cleanup_task and not self._cleanup_task.done():
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
+    # ── 查询属性（兼容旧接口） ──
 
     @property
     def active_stream_count(self) -> int:
-        """获取活跃流的数量"""
-        return sum(1 for s in self.streams.values() if s.is_active)
+        """活跃流数量"""
+        return sum(1 for s in self._streams_by_index.values() if s.is_active)
 
     @property
     def total_stream_count(self) -> int:
-        """获取总流数量"""
-        return len(self.streams)
+        """总流数量"""
+        return len(self._streams_by_index)
+
+    @property
+    def streams(self) -> OrderedDict[int, WebRTCStreamSession]:
+        """返回流字典（兼容旧接口，OrderedDict 兼容 dict 所有操作）"""
+        return self._streams_by_index
 
     def get_stream_keys(self) -> list[str]:
-        """获取所有流的 stream_key 列表"""
-        return [s.stream_key for s in self.streams.values()]
+        """所有流的 stream_key 列表"""
+        return list(self._streams_by_key.keys())
+
+    def __len__(self) -> int:
+        return len(self._streams_by_index)
+
+    def __contains__(self, key) -> bool:
+        return key in self._streams_by_index or key in self._streams_by_key

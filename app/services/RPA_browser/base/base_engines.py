@@ -27,7 +27,7 @@ class BaseUndetectedPlaywright:
 
     def __init__(
         self,
-        mid: uuid.UUID,
+        mid: int,
         browser_id: int,
         *,
         headless: bool = False,
@@ -39,7 +39,8 @@ class BaseUndetectedPlaywright:
         self.default_args = []
         self._base_user_data_dir = Path(
             os.path.join(
-                os.path.dirname(__file__), "..", "..", "..", "..", "user_data_dir"
+                os.path.dirname(
+                    __file__), "..", "..", "..", "..", "user_data_dir"
             )
         )
         self.mid = mid
@@ -67,7 +68,7 @@ class BaseUndetectedPlaywright:
         botright_instance: Botright = await Botright(
             headless=self.headless,
             block_images=False,
-            user_action_layer=True, # 操作的时候显示操作的内容
+            user_action_layer=True,  # 操作的时候显示操作的内容
             fingerprint=fingerprint_params.browserforge_fingerprint_object,
             execute_path=browser_exec_info.exec_path,
         )

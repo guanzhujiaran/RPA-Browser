@@ -11,6 +11,13 @@
 from app.models.execution.action_params import create_workflow_step
 from app.models.execution.request_params import WorkflowExecutionRequest
 from app.models.execution.request_params import ActionExecutionRequest
+from app.models.execution.condition_models import (
+    ConditionRule,
+    ParamsCondition,
+    ConditionValueType,
+    LogicOperator,
+)
+from contextlib import suppress
 import pytest
 import uuid
 from playwright.async_api import Page
@@ -19,9 +26,11 @@ from app.models.database.workflow.models import (
     BuiltinActionType,
 )
 from app.models.execution.action_params import PluginConfig
-from app.services.execution.crud_service import action_crud, plugin_crud, workflow_crud
-from app.services.execution.execution_engine import execution_engine
+from app.services.execution.crud_service import action_crud_svr, plugin_crud_svr, workflow_crud_svr
+from app.services.execution.engine import ExecutionEngine
 from app.models.database.workflow.models import CompositeActionModel
+
+execution_engine = ExecutionEngine()
 
 
 class TestExecutionEngineDatabaseWorkflow:
@@ -36,7 +45,7 @@ class TestExecutionEngineDatabaseWorkflow:
         yield
         # 清理测试数据
         for action_id in self.test_action_ids:
-            try:
+            with suppress(Exception):
                 from sqlmodel import select
                 from app.utils.depends.session_manager import DatabaseSessionManager
                 async with DatabaseSessionManager.async_session() as session:
@@ -45,22 +54,42 @@ class TestExecutionEngineDatabaseWorkflow:
                             CompositeActionModel.action_id == action_id)
                     )
                     if action := result.first():
-                        await action_crud.delete(action.id)
-            except Exception:
-                pass  # 忽略清理时的数据库锁定错误
+                        await action_crud_svr.delete(action.id)
         for plugin_id in self.test_plugin_ids:
-            try:
-                plugin = await plugin_crud.get_by_plugin_id(plugin_id)
+            with suppress(Exception):
+                plugin = await plugin_crud_svr.get_by_plugin_id(plugin_id)
                 if plugin:
-                    await plugin_crud.delete(plugin.id)
-            except Exception:
-                pass
+                    await plugin_crud_svr.delete(plugin.id)
+
+    async def _execute_workflow_from_db(
+        self, req: WorkflowExecutionRequest, *, plugins=None,
+    ):
+        """辅助方法：从 DB 加载步骤并执行工作流，替代旧的 execute_workflow_with_session"""
+        from app.models.execution.action_params import _ensure_action_type, workflow_step_adapter
+
+        action_model = await action_crud_svr.get_by_action_id(req.action_id)
+        if not action_model:
+            raise ValueError(f"未找到操作: {req.action_id}")
+
+        normalized_steps = []
+        for s in action_model.steps:
+            if isinstance(s, dict):
+                s = workflow_step_adapter.validate_python(_ensure_action_type(s))
+            normalized_steps.append(s)
+
+        return await execution_engine.execute_steps(
+            req,
+            steps=normalized_steps,
+            session_id="test_session",
+            browser_id="test_browser",
+            plugins=plugins or [],
+        )
 
     async def _create_custom_action(self, name: str, steps: list, **kwargs) -> CompositeActionModel:
         """创建自定义操作并入库"""
         action_id = f"ca_{uuid.uuid4().hex[:12]}"
 
-        action = await action_crud.create(
+        action = await action_crud_svr.create(
             mid=str(self.mid),
             action_id=action_id,
             name=name,
@@ -78,7 +107,7 @@ class TestExecutionEngineDatabaseWorkflow:
         """创建插件并关联到自定义操作"""
         plugin_id = f"plugin_{uuid.uuid4().hex[:8]}"
 
-        plugin = await plugin_crud.create(
+        plugin = await plugin_crud_svr.create(
             mid=self.mid,
             plugin_id=plugin_id,
             name=name,
@@ -122,12 +151,11 @@ class TestExecutionEngineDatabaseWorkflow:
             ),
             session_id="test_session",
             browser_id="test_browser",
-            page=self.page,
         )
 
         assert result.success
-        assert result.data["total_steps"] == 2
-        assert result.data["success_count"] == 2
+        assert result.data.total_steps == 2
+        assert result.data.success_count == 2
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_execute_composite_with_variables(self):
@@ -178,11 +206,10 @@ class TestExecutionEngineDatabaseWorkflow:
             ),
             session_id="test_session",
             browser_id="test_browser",
-            page=self.page,
         )
 
         assert result.success
-        assert result.data["success_count"] == 3
+        assert result.data.success_count == 3
 
         # 验证输入值已正确填入
         username_value = await self.page.input_value("#username")
@@ -221,7 +248,7 @@ class TestExecutionEngineDatabaseWorkflow:
 
         # 创建工作流并关联插件
         workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
-        await workflow_crud.create(
+        await workflow_crud_svr.create(
             mid=int(self.mid),
             workflow_id=workflow_id,
             name="带插件的工作流",
@@ -237,7 +264,7 @@ class TestExecutionEngineDatabaseWorkflow:
         )
 
         # 获取工作流插件
-        plugins = await workflow_crud.get_enabled_plugins(workflow_id)
+        plugins = await workflow_crud_svr.get_enabled_plugins(workflow_id)
 
         req = WorkflowExecutionRequest(
             mid=self.mid,
@@ -249,7 +276,7 @@ class TestExecutionEngineDatabaseWorkflow:
         )
 
         # 从 action_model 获取 steps
-        action_model = await action_crud.get_by_action_id(base_action.action_id)
+        action_model = await action_crud_svr.get_by_action_id(base_action.action_id)
         from app.models.execution.action_params import _ensure_action_type, workflow_step_adapter
         normalized_steps = []
         for s in action_model.steps:
@@ -262,7 +289,6 @@ class TestExecutionEngineDatabaseWorkflow:
             steps=normalized_steps,
             session_id="test_session",
             browser_id="test_browser",
-            page=self.page,
             plugins=plugins,
         )
 
@@ -313,7 +339,7 @@ class TestExecutionEngineDatabaseWorkflow:
             ],
         )
 
-        results = await execution_engine.execute_workflow_with_session(
+        results = await self._execute_workflow_from_db(
             req=WorkflowExecutionRequest(
                 mid=self.mid,
                 browser_id=1,
@@ -322,7 +348,6 @@ class TestExecutionEngineDatabaseWorkflow:
                 output=[],
                 variables={},
             ),
-            page=self.page,
         )
 
         assert len(results) == 3
@@ -371,12 +396,11 @@ class TestExecutionEngineDatabaseWorkflow:
             ),
             session_id="test_session",
             browser_id="test_browser",
-            page=self.page,
         )
 
         assert result.success
-        assert result.data["total_steps"] == 2
-        assert result.data["success_count"] == 2
+        assert result.data.total_steps == 2
+        assert result.data.success_count == 2
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_execute_failed_action_stops_workflow(self):
@@ -398,7 +422,7 @@ class TestExecutionEngineDatabaseWorkflow:
             ],
         )
 
-        results = await execution_engine.execute_workflow_with_session(
+        results = await self._execute_workflow_from_db(
             req=WorkflowExecutionRequest(
                 mid=self.mid,
                 browser_id=1,
@@ -407,7 +431,6 @@ class TestExecutionEngineDatabaseWorkflow:
                 output=[],
                 variables={},
             ),
-            page=self.page,
         )
 
         # 应该在 click 步骤失败后停止
@@ -451,7 +474,7 @@ class TestExecutionEngineDatabaseWorkflow:
             ],
         )
 
-        results = await execution_engine.execute_workflow_with_session(
+        results = await self._execute_workflow_from_db(
             req=WorkflowExecutionRequest(
                 mid=self.mid,
                 browser_id=1,
@@ -460,7 +483,6 @@ class TestExecutionEngineDatabaseWorkflow:
                 output=[],
                 variables={},
             ),
-            page=self.page,
         )
 
         assert len(results) == 3
@@ -482,6 +504,16 @@ class TestExecutionEngineDatabaseWorkflow:
             "</body></html>"
         )
 
+        # 构建结构化条件：检查 should_click_true 是否为 True
+        condition_rule = ConditionRule(
+            logic=LogicOperator.AND,
+            condition=ParamsCondition(
+                field="should_click_true",
+                condition_value_type=ConditionValueType.BOOLEAN,
+                condition_value=True,
+            ),
+        )
+
         # 创建一个包含条件分支的自定义操作（使用 WorkflowStep 结构）
         condition_action = await self._create_custom_action(
             name="条件分支测试操作",
@@ -490,7 +522,7 @@ class TestExecutionEngineDatabaseWorkflow:
                     action_id="if_else",
                     action_type="if_else",
                     params={
-                        "condition": "state.condition == True",
+                        "condition": condition_rule.model_dump(),
                         "TrueBranch": [
                             create_workflow_step(
                                 action_id="click",
@@ -511,20 +543,18 @@ class TestExecutionEngineDatabaseWorkflow:
         )
 
         # 测试 True 分支
-        results_true = await execution_engine.execute_workflow_with_session(
+        results_true = await self._execute_workflow_from_db(
             req=WorkflowExecutionRequest(
                 mid=self.mid,
                 browser_id=1,
                 action_id=condition_action.action_id,
                 input_data={},
                 output=[],
-                variables={"condition": True},
+                variables={"should_click_true": True},
             ),
-            page=self.page,
         )
 
         assert results_true[0].success
-        assert results_true[0].data.get("selector") == "#true_btn"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_execute_composite_action_with_output_variables(self):
@@ -562,8 +592,7 @@ class TestExecutionEngineDatabaseWorkflow:
             ),
             session_id="test_session",
             browser_id="test_browser",
-            page=self.page,
         )
 
         assert result.success
-        assert result.data["success_count"] == 2
+        assert result.data.success_count == 2

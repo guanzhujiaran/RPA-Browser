@@ -17,6 +17,7 @@ class ResponseMsg(StrEnum):
     exception_plugin_id_not_belong_to_user = "插件ID {plugin_id} 不属于当前用户或不存在"
 
     exception_browser_not_started = "浏览器未启动或已停止"
+    exception_browser_page_index_error = "页面索引 {page_index} 无效"
     exception_video_stream_init_failed = "视频流初始化失败: {error}"
 
     exception_get_browser_session_failed = "获取浏览器会话失败: {error}"

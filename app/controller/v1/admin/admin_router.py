@@ -23,7 +23,7 @@ async def get_all_sessions():
         logger.info("👨‍💼 Admin: fetching all sessions")
 
         sessions = []
-        for session_key, session_info in list(LiveService.browser_sessions.items()):
+        for session_key, session_info in list(LiveService._browser_sessions.items()):
             session_data = {
                 "mid": session_info.mid,
                 "browser_id": session_info.browser_id,

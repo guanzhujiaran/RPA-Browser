@@ -1,7 +1,7 @@
 """后台任务注册和配置"""
 
 from loguru import logger
-from app.scheduler_manager import scheduler_manager
+from app.scheduler_manager import scheduler_manager_ist
 from app.services.RPA_browser.background_tasks import BackgroundTasks
 
 
@@ -9,7 +9,7 @@ def register_background_tasks():
     """注册所有后台任务"""
     # 统一清理任务 - 每 5 分钟执行一次
     # 整合了所有清理逻辑：心跳检查、直播流超时、闲置清理、过期清理
-    scheduler_manager.add_interval_job(
+    scheduler_manager_ist.add_interval_job(
         func=BackgroundTasks.cleanup_all_sessions,
         minutes=5,
         id="cleanup_all_sessions",
@@ -19,7 +19,7 @@ def register_background_tasks():
 
     logger.info("✅ All background tasks registered")
     logger.info("📋 Registered tasks:")
-    for job in scheduler_manager.get_jobs():
+    for job in scheduler_manager_ist.get_jobs():
         logger.info(f"  - {job.name} (ID: {job.id})")
 
 
@@ -31,7 +31,7 @@ async def start_background_tasks():
     register_background_tasks()
 
     # 启动调度器
-    scheduler_manager.start()
+    scheduler_manager_ist.start()
 
     logger.info("✅ Background tasks started successfully")
 
@@ -41,6 +41,6 @@ async def stop_background_tasks():
     logger.info("🛑 Stopping background tasks...")
 
     # 关闭调度器
-    scheduler_manager.shutdown(wait=True)
+    scheduler_manager_ist.shutdown(wait=True)
 
     logger.info("✅ Background tasks stopped successfully")

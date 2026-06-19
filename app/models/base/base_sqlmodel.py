@@ -2,14 +2,15 @@ from pydantic import computed_field
 from datetime import datetime
 from typing import Generic
 
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel, Field as SField
+from pydantic import Field
 
 from app.models.common.response import DataT
 
 
 class BaseSQLModel(SQLModel):
-    created_at: datetime = Field(default_factory=datetime.now, nullable=False)
-    updated_at: datetime = Field(
+    created_at: datetime = SField(default_factory=datetime.now, nullable=False)
+    updated_at: datetime = SField(
         default_factory=datetime.now,
         nullable=False,
         sa_column_kwargs={"onupdate": datetime.now},
@@ -17,15 +18,15 @@ class BaseSQLModel(SQLModel):
 
 
 class BasePaginationReq(SQLModel):
-    page: int = Field(default=1, nullable=False)
-    per_page: int = Field(default=10, nullable=False)
+    page: int = Field(default=1)
+    per_page: int = Field(default=10)
 
 
 class BasePaginationResp(SQLModel, Generic[DataT]):
-    page: int = Field(default=1, nullable=False)
-    per_page: int = Field(default=10, nullable=False)
-    total: int = Field(default=0, nullable=False)
-    items: list[DataT] = Field(default=[], nullable=False)
+    page: int = Field(default=1)
+    per_page: int = Field(default=10)
+    total: int = Field(default=0)
+    items: list[DataT] = Field(default_factory=list)
 
     @computed_field
     @property

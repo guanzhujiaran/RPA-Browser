@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from datetime import datetime
 import uuid
 from sqlmodel import select, update
+from sqlalchemy import true, false
 
 from app.models.database.workflow.models import UserWorkflow, WorkflowPluginRelation, CompositeActionModel, UserPlugin
 from app.models.execution.action_params import PluginConfig
@@ -23,7 +24,7 @@ class WorkflowCrudService:
         custom_action_id: str,
         description: str = "",
         trigger_type: str = "manual",
-        trigger_config: Dict[str, Any] | None = None,
+        trigger_config: Dict | None = None,
         is_public: bool = False,
         enabled_plugins: List[PluginConfig] | None = None,
     ) -> UserWorkflow:
@@ -109,15 +110,15 @@ class WorkflowCrudService:
         async with DatabaseSessionManager.async_session() as session:
             query = select(func.count(UserWorkflow.id))
             if filter_type == "private":
-                query = query.where((UserWorkflow.mid == mid) & (UserWorkflow.is_public == False))
+                query = query.where((UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false()))
             elif filter_type == "public":
-                query = query.where((UserWorkflow.mid == mid) & (UserWorkflow.is_public == True))
+                query = query.where(UserWorkflow.is_public == true())
             elif filter_type == "community":
-                query = query.where((UserWorkflow.mid != mid) & (UserWorkflow.is_public == True))
+                query = query.where((UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true()))
             elif filter_type == "verified":
-                query = query.where(UserWorkflow.is_verified == True)
+                query = query.where(UserWorkflow.is_verified == true())
             else:
-                query = query.where((UserWorkflow.mid == mid) | (UserWorkflow.is_public == True))
+                query = query.where((UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true()))
 
             result = await session.exec(query)
             return result.one()
@@ -136,15 +137,15 @@ class WorkflowCrudService:
         async with DatabaseSessionManager.async_session() as session:
             query = select(UserWorkflow)
             if filter_type == "private":
-                query = query.where((UserWorkflow.mid == mid) & (UserWorkflow.is_public == False))
+                query = query.where((UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false()))
             elif filter_type == "public":
-                query = query.where((UserWorkflow.mid == mid) & (UserWorkflow.is_public == True))
+                query = query.where(UserWorkflow.is_public == true())
             elif filter_type == "community":
-                query = query.where((UserWorkflow.mid != mid) & (UserWorkflow.is_public == True))
+                query = query.where((UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true()))
             elif filter_type == "verified":
-                query = query.where(UserWorkflow.is_verified == True)
+                query = query.where(UserWorkflow.is_verified == true())
             else:
-                query = query.where((UserWorkflow.mid == mid) | (UserWorkflow.is_public == True))
+                query = query.where((UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true()))
 
             sort_field = getattr(UserWorkflow, sort_by, UserWorkflow.updated_at)
             if sort_order == "asc":
@@ -163,7 +164,7 @@ class WorkflowCrudService:
         description: str | None = None,
         custom_action_id: str | None = None,
         trigger_type: str | None = None,
-        trigger_config: Dict[str, Any] | None = None,
+        trigger_config: Dict | None = None,
         is_enabled: bool | None = None,
         is_public: bool | None = None,
         enabled_plugins: List[PluginConfig] | None = None,
@@ -366,4 +367,4 @@ class WorkflowCrudService:
             return result.all()
 
 
-workflow_crud = WorkflowCrudService()
+workflow_crud_svr = WorkflowCrudService()
