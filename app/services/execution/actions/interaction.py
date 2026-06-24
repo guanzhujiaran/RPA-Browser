@@ -4,14 +4,15 @@
 from typing import Dict, Any, List
 
 from app.models.execution.action_params import (
-    WaitParams, HoverParams, ClickParams, InputParams, ScrollParams, GetTextParams,
-    ClickResult, InputResult, ScrollResult, WaitResult, HoverResult, GetTextResult,
+    WaitParams, HoverParams, ClickParams, InputParams, ScrollParams, GetTextParams, GetWindowParams,
+    ClickResult, InputResult, ScrollResult, WaitResult, HoverResult, GetTextResult, GetWindowResult
 )
 import asyncio
 import time
 from loguru import logger
 from app.services.execution.actions.base import BaseAction, ActionResult
 from app.models.database.workflow.models import BuiltinActionType
+from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
 
 
 class ClickAction(BaseAction[ClickParams]):
@@ -62,7 +63,7 @@ class ClickAction(BaseAction[ClickParams]):
 
         try:
             # 构建 click 参数字典（符合 Playwright API）
-            click_kwargs:dict[str,Any] = {"button": button}
+            click_kwargs: dict[str, Any] = {"button": button}
 
             if click_count != 1:
                 click_kwargs["click_count"] = click_count
@@ -153,7 +154,7 @@ class InputAction(BaseAction[InputParams]):
 
         valid, error_msg, validated_params = self.validate_params_with_model(
             self.params)
-        if not valid:
+        if not valid or validated_params is None:
             return ActionResult(
                 success=False, error=error_msg, execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
@@ -329,7 +330,7 @@ class WaitAction(BaseAction[WaitParams]):
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
 
-        except TimeoutError:
+        except (TimeoutError, PlaywrightTimeoutError):
             element_found = False
             logger.warning(f"[WaitAction] 等待超时，未找到元素: {selector}")
             return ActionResult(
@@ -471,7 +472,6 @@ class GetTextAction(BaseAction[GetTextParams]):
             )
 
         selector = validated_params.selector
-        timeout = validated_params.timeout
 
         try:
             if not selector:
@@ -480,8 +480,8 @@ class GetTextAction(BaseAction[GetTextParams]):
             locator = self.page.locator(selector)
             logger.info(f"[GetTextAction] 获取元素文本: {selector}")
 
-            # 优先使用 visible text, 否则用 text_content
-            text = await locator.inner_text(timeout=timeout if timeout != 30000 else None)
+            texts = await locator.all_text_contents()
+            text = validated_params.separator.join(texts)
 
             return ActionResult(
                 success=True, data=GetTextResult(text=text),
@@ -495,3 +495,102 @@ class GetTextAction(BaseAction[GetTextParams]):
                 success=False, error=str(e), execution_time=time.time() - start_time,
                 action_id=self.metadata.id, action_name=self.metadata.name,
             )
+
+
+class GetWindowAction(BaseAction[GetWindowParams]):
+    """获取 window 对象属性（安全模式，禁止函数调用）"""
+
+    action_id: BuiltinActionType = BuiltinActionType.GET_WINDOW
+    action_type: BuiltinActionType = BuiltinActionType.GET_WINDOW
+    params: GetWindowParams
+
+    @classmethod
+    def new_action(cls, *, mid: int, page, variables: Dict, params: GetWindowParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            'action_id': cls.action_id,
+            'action_type': cls.action_type,
+            'mid': mid,
+            'page': page,
+            'params': safe_params,
+            'timeout': timeout,
+            'input_vars': input_vars or {},
+            'output_vars': output_vars or [],
+            'variables': variables or {},
+        }
+        if action_name is not None:
+            kwargs['_action_name'] = action_name
+        return cls(**kwargs)
+
+    async def _execute(self) -> ActionResult[GetWindowResult]:
+        start_time = time.time()
+
+        valid, error_msg, validated_params = self.validate_params_with_model(
+            self.params)
+        if not valid or not validated_params:
+            return ActionResult(
+                success=False, error=error_msg, execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+        try:
+            if validated_params.object_name is not None:
+                # object_name 模式：获取 window 对象，遍历所有字段，返回非 null 非 undefined 的值
+                js_expr = (
+                    "(() => {"
+                    f"  const obj = window.{validated_params.object_name};"
+                    "  if (obj == null) return {};"
+                    "  const result = {};"
+                    "  for (const key of Object.keys(obj)) {"
+                    "    const val = obj[key];"
+                    "    if (val !== null && val !== undefined) {"
+                    "      result[key] = String(val);"
+                    "    }"
+                    "  }"
+                    "  return result;"
+                    "})()"
+                )
+                result = await self.page.evaluate(js_expr)
+                # result 此时是一个 dict[str, str]
+                values_dict: dict[str, str] = result if isinstance(result, dict) else {}
+
+                logger.info(
+                    f"[GetWindowAction] window.{validated_params.object_name} 遍历字段: "
+                    f"{len(values_dict)} 个非空值"
+                )
+
+                return ActionResult(
+                    success=True,
+                    data=GetWindowResult(values=values_dict),
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id, action_name=self.metadata.name,
+                )
+
+            # property_path 模式：获取单个属性值
+            property_path = validated_params.property_path
+            js_expr = f"window.{property_path}"
+            result = await self.page.evaluate(js_expr)
+
+            # 将结果转为字符串（兼容各种类型）
+            if result is None:
+                value_str = ""
+            elif isinstance(result, str):
+                value_str = result
+            else:
+                value_str = str(result)
+
+            logger.info(f"[GetWindowAction] window.{property_path} = {value_str}")
+
+            return ActionResult(
+                success=True, data=GetWindowResult(value=value_str),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+
+        except Exception as e:
+            logger.warning(f"[GetWindowAction] 获取 window 属性异常: {e}")
+            return ActionResult(
+                success=False, error=str(e), execution_time=time.time() - start_time,
+                action_id=self.metadata.id, action_name=self.metadata.name,
+            )
+

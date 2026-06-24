@@ -256,7 +256,7 @@ class CompositeActionCreateRequest(SQLModel):
 
 class CompositeActionUpdateRequest(SQLModel):
     """更新复合操作请求"""
-    id: int = Field(description="操作数据库ID")
+    action_id: str = Field(description="操作的 action_id（如 ca_xxx）")
     name: str | None = Field(default=None, description="新名称")
     description: str | None = Field(default=None, description="新描述")
     parameters_schema: List[Dict] | None = Field(
@@ -284,7 +284,6 @@ class CompositeActionListRequest(BasePaginationReq):
 
 class CompositeActionDetailResponse(SQLModel):
     """复合操作详情响应"""
-    id: int
     action_id: str
     name: str
     version: str
@@ -313,12 +312,12 @@ class CompositeActionDetailResponse(SQLModel):
 
 class CompositeActionListItemResponse(SQLModel):
     """复合操作列表项响应"""
-    id: int
     action_id: str
     name: str
     action_type: str
     description: str
     steps_count: int
+    tags: List[str] = Field(default_factory=list)
     is_enabled: bool
     is_public: bool = False
     likes_count: int = 0
@@ -337,16 +336,25 @@ class CompositeActionCreateResponse(SQLModel):
     name: str
 
 
+class CompositeActionGetRequest(SQLModel):
+    """获取自定义操作详情请求"""
+    action_id: str = Field(description="操作的 action_id（如 ca_xxx）")
+
+
+class CompositeActionDeleteRequest(SQLModel):
+    """删除自定义操作请求"""
+    action_id: str = Field(description="操作的 action_id（如 ca_xxx）")
+
+
 class ActionForkRequest(SQLModel):
     """Fork 自定义操作请求"""
-    id: int = Field(description="原操作ID")
+    action_id: str = Field(description="原操作的 action_id")
     new_name: str | None = Field(
         default=None, description="新名称，如果不提供则使用原名称 + ' (Fork)'")
 
 
 class ActionForkResponse(SQLModel):
     """Fork 自定义操作响应"""
-    id: int
     action_id: str
     name: str
     forked_from: str = Field(description="Fork 自哪个操作")
@@ -611,6 +619,8 @@ __all__ = [
     "CompositeActionDetailResponse",
     "CompositeActionListItemResponse",
     "CompositeActionCreateResponse",
+    "CompositeActionGetRequest",
+    "CompositeActionDeleteRequest",
     "ActionForkRequest",
     "ActionForkResponse",
     # 操作执行

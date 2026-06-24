@@ -169,9 +169,9 @@ class ExecutionEngine:
 
         action_class = await action_registry.get_action_class_for_user(action_id)
         if not action_class:
-            return self._fail(f"未找到操作: {action_id}", action_id, start)
+            return self._fail(f"未找到操作: {action_id}", action_id, start, replaced_params=dict(params))
 
-        merged = dict(params)
+        merged = scope.resolve_params(dict(params))
         if issubclass(action_class, CompositeActionClass):
             db_steps = await action_registry.get_custom_action_steps(action_id)
             if db_steps and not merged.get("steps"):
@@ -187,14 +187,14 @@ class ExecutionEngine:
 
         ok, err = action.validate_params(merged)
         if not ok:
-            return self._fail(err or "参数验证失败", action_id, start, action.action_name)
+            return self._fail(err or "参数验证失败", action_id, start, action.action_name, replaced_params=merged)
 
         plugins = plugins or []
 
         try:
             # ── before_action 插件（失败中断） ──
             if fail := await self._run_hooks("before_action", plugins, session_id, browser_id, page, scope, mid):
-                return self._fail(f"前置插件失败: {fail}", action_id, start, action.action_name)
+                return self._fail(f"前置插件失败: {fail}", action_id, start, action.action_name, replaced_params=merged)
 
             logger.info(f"▶ 执行: {action.action_name} ({action_id})")
             result = await action.execute()
@@ -224,12 +224,12 @@ class ExecutionEngine:
 
         except asyncio.TimeoutError:
             await self._run_hooks("on_timeout", plugins, session_id, browser_id, page, scope, mid)
-            return self._fail("操作超时", action_id, start, action.action_name)
+            return self._fail("操作超时", action_id, start, action.action_name, replaced_params=merged)
 
         except Exception as e:
             logger.error(f"操作失败: {action_id} - {e}")
             await self._run_hooks("on_error", plugins, session_id, browser_id, page, scope, mid)
-            return self._fail(str(e), action_id, start, action.action_name)
+            return self._fail(str(e), action_id, start, action.action_name, replaced_params=merged)
 
     # ═══════════════ 插件系统 ─────────────────────────────────
 
@@ -316,11 +316,12 @@ class ExecutionEngine:
     # ═══════════════ 工具方法 ─────────────────────────────────
 
     @staticmethod
-    def _fail(error: str, action_id: str, start: float, action_name: str = "") -> ActionResult[Any]:
+    def _fail(error: str, action_id: str, start: float, action_name: str = "", replaced_params: dict | None = None) -> ActionResult[Any]:
         return ActionResult(
             success=False, error=error,
             execution_time=time.time() - start,
             action_id=action_id, action_name=action_name,
+            replaced_params=replaced_params or {},
         )
 
     @staticmethod

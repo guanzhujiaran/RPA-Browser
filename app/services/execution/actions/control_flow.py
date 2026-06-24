@@ -298,6 +298,7 @@ class AtomicStrategy(ExecutionStrategy):
 
             # 执行（使用 execute() 而非 _execute()，确保 _merge_output_vars 被调用）
             result = await action.execute()
+            result.replaced_params = params if isinstance(params, dict) else getattr(params, 'model_dump', lambda: {})()
 
             # 更新变量
             if result.success:
@@ -319,6 +320,7 @@ class AtomicStrategy(ExecutionStrategy):
                 error=str(e),
                 action_id=action_id,
                 action_name=action_id,
+                replaced_params=params if isinstance(params, dict) else getattr(params, 'model_dump', lambda: {})() or {},
             )
             await self._log_execution_complete(action_id, ExecutionStatus.FAILED, error_result)
             return error_result
@@ -411,6 +413,64 @@ class AtomicStrategy(ExecutionStrategy):
 class LoopStrategy(ExecutionStrategy):
     """循环执行策略（迭代器模式）"""
 
+    @staticmethod
+    def _extract_field(obj: Any, path: str) -> Any:
+        """安全获取嵌套字段值，支持点分隔路径如 'loop_item.user.name'"""
+        parts = path.split(".")
+        current = obj
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif hasattr(current, part):
+                current = getattr(current, part)
+            else:
+                return None
+        return current
+
+    def _resolve_param_mapping(
+        self, params: LoopParams | Dict, loop_item_var: str, loop_index_var: str,
+    ) -> dict[str, Any]:
+        """解析参数映射，将循环项字段映射为目标参数值"""
+        mapping = getattr(params, 'param_mapping', None) or (params.get("param_mapping") if isinstance(params, dict) else None)  # type: ignore[union-attr]
+        if not mapping:
+            return {}
+
+        resolved: dict[str, Any] = {}
+        for target_key, source_path in mapping.items():
+            # 解析源路径：支持 loop_item.field 和 loop_index
+            source_path_str = str(source_path)
+            if source_path_str.startswith(f"{loop_item_var}."):
+                field_path = source_path_str[len(loop_item_var) + 1:]
+                item = self.context.variables.get(loop_item_var)
+                resolved[target_key] = self._extract_field(item, field_path)
+            elif source_path_str == loop_item_var:
+                resolved[target_key] = self.context.variables.get(loop_item_var)
+            elif source_path_str == loop_index_var:
+                resolved[target_key] = self.context.variables.get(loop_index_var)
+            else:
+                # 直接按路径从 variables 中解析
+                resolved[target_key] = self._extract_field(self.context.variables, source_path_str)
+
+        return resolved
+
+    def _apply_mapped_params(self, step: WorkflowStep, mapped: dict[str, Any]) -> WorkflowStep:
+        """将映射后的参数注入到步骤参数中（浅拷贝步骤）"""
+        if not mapped:
+            return step
+
+        # 获取现有 params
+        raw_params = step.params or {}
+        if not isinstance(raw_params, dict):
+            if hasattr(raw_params, 'model_dump'):
+                raw_params = raw_params.model_dump()
+            else:
+                raw_params = {}
+
+        # 合并映射参数（映射参数优先级高于原始参数）
+        merged = {**raw_params, **mapped}
+        step.params = merged
+        return step
+
     async def execute(self, step: WorkflowStep, step_index: int = 0) -> ActionResult:
         """执行循环操作"""
         params = step.params or {}
@@ -428,6 +488,10 @@ class LoopStrategy(ExecutionStrategy):
                 error="循环体为空",
                 action_id=BuiltinActionType.LOOP,
             )
+
+        # 获取变量名配置
+        loop_item_var = getattr(params, 'loop_item_var', None) or params.get("loop_item_var") or "loop_item"  # type: ignore[union-attr]
+        loop_index_var = getattr(params, 'loop_index_var', None) or params.get("loop_index_var") or "loop_index"  # type: ignore[union-attr]
 
         # 获取 break/continue 条件
         break_cond = getattr(params, 'break_condition', None) or params.get("break_condition")  # type: ignore[union-attr]
@@ -456,13 +520,24 @@ class LoopStrategy(ExecutionStrategy):
         try:
             for index, item in loop_iterator:
                 iteration += 1
-                self.context.variables["loop_index"] = index
-                self.context.variables["loop_item"] = item
+                self.context.variables[loop_index_var] = index
+                self.context.variables[loop_item_var] = item
                 self.context.variables["loop_total"] = loop_iterator.total
+
+                # 解析参数映射
+                mapped_params = self._resolve_param_mapping(params, loop_item_var, loop_index_var)
+
+                # 对子步骤应用参数映射
+                mapped_children = [
+                    self._apply_mapped_params(child, mapped_params)
+                    if isinstance(child, dict) or hasattr(child, 'params')
+                    else child
+                    for child in children
+                ]
 
                 # 执行子步骤（带 break/continue 条件判断）
                 child_results, should_break, should_continue = await self._execute_children(
-                    children, iteration, break_condition=break_cond, continue_condition=continue_cond,
+                    mapped_children, iteration, break_condition=break_cond, continue_condition=continue_cond,
                 )
                 results.extend(child_results)
 
@@ -494,10 +569,42 @@ class LoopStrategy(ExecutionStrategy):
 
     def _create_loop_iterator(self, params: Dict) -> 'LoopIterator':
         """创建循环迭代器"""
+        # 新版 loop_source 模式
+        loop_source = params.get("loop_source", "fixed_count")
+        loop_items_var = params.get("loop_items_var")
+        loop_items_expr = params.get("loop_items_expr")
+
+        if loop_source == "variable" and loop_items_var:
+            # 从变量中解析 items 列表
+            items = self._extract_field(self.context.variables, loop_items_var)
+            if isinstance(items, list):
+                return ListIterator(items)
+            logger.warning(f"loop_items_var '{loop_items_var}' 解析结果不是列表: {type(items)}")
+            return ListIterator([])
+
+        if loop_source == "expression" and loop_items_expr:
+            # 安全评估表达式获取 items
+            try:
+                import ast as _ast
+                tree = _ast.parse(loop_items_expr.strip(), mode='eval')
+                items = _eval_ast_node(tree.body, self.context.variables)
+                if isinstance(items, list):
+                    return ListIterator(items)
+                logger.warning(f"loop_items_expr 解析结果不是列表: {type(items)}")
+                return ListIterator([])
+            except Exception as e:
+                logger.warning(f"loop_items_expr 评估失败: {e}")
+                return ListIterator([])
+
+        if loop_source == "fixed_count":
+            count = params.get("count", 1)
+            return CountIterator(count)
+
+        # 向后兼容旧字段
+        items = params.get("items")
         loop_count = params.get("loop_count")
         loop_while = params.get("loop_while")
         loop_until = params.get("loop_until")
-        items = params.get("items")
 
         if items:
             return ListIterator(items)
@@ -743,7 +850,7 @@ class LoopAction(BaseAction[LoopParams]):
                     self.variables[var_name] = data_values[i]
 
     async def _execute(self) -> ActionResult[LoopResult]:
-        """执行循环 - 支持 loop_count / loop_while / loop_until"""
+        """执行循环 - 支持 loop_source (fixed_count/variable/expression) + param_mapping"""
         start_time = time.time()
 
         # 参数验证
@@ -761,23 +868,80 @@ class LoopAction(BaseAction[LoopParams]):
         if not children:
             return ActionResult(success=True, data=LoopResult(message="无子步骤可执行"), action_id=self.action_id, action_name=self.action_name)
 
+        # 获取变量名配置
+        loop_item_var = getattr(self.params, 'loop_item_var', 'loop_item') or 'loop_item'
+        loop_index_var = getattr(self.params, 'loop_index_var', 'loop_index') or 'loop_index'
+
         # 创建执行上下文和执行器
         context = ExecutionContext(self.variables)
         executor = StepExecutor(context, self.page, self.mid)
 
+        # 解析 param_mapping
+        param_mapping: dict[str, str] = getattr(self.params, 'param_mapping', None) or {}
+
         # 获取循环参数
-        loop_count = self.params.loop_count or self.params.count
-        loop_while = self.params.loop_while
+        loop_source = getattr(self.params, 'loop_source', 'fixed_count') or 'fixed_count'
+        count = getattr(self.params, 'count', 1) or 1
+        loop_items_var = getattr(self.params, 'loop_items_var', None)
+        loop_items_expr = getattr(self.params, 'loop_items_expr', None)
+
+        # 向后兼容旧参数
+        loop_count = getattr(self.params, 'loop_count', None)
+        loop_while = getattr(self.params, 'loop_while', None)
         loop_until_val = getattr(self.params, 'loop_until', None)
 
         results: list[dict] = []
 
-        if loop_count is not None and loop_count > 0:
+        if loop_source == "variable" and loop_items_var:
+            # 从变量获取 items 列表
+            items = self._resolve_items_from_variable(context, loop_items_var)
+            for i, item_value in enumerate(items):
+                context.variables[loop_index_var] = i
+                context.variables[loop_item_var] = item_value
+                mapped = self._resolve_param_mapping_static(param_mapping, item_value, context.variables, loop_item_var, loop_index_var)
+                mapped_children = self._inject_params_to_children(children, mapped)
+                child_results = await self._execute_steps_with_context(executor, mapped_children)
+                results.extend(child_results)
+                if child_results and not child_results[-1].get("success"):
+                    break
+
+        elif loop_source == "expression" and loop_items_expr:
+            # 表达式计算 items
+            items = self._resolve_items_from_expr(context, loop_items_expr)
+            for i, item_value in enumerate(items):
+                context.variables[loop_index_var] = i
+                context.variables[loop_item_var] = item_value
+                mapped = self._resolve_param_mapping_static(param_mapping, item_value, context.variables, loop_item_var, loop_index_var)
+                mapped_children = self._inject_params_to_children(children, mapped)
+                child_results = await self._execute_steps_with_context(executor, mapped_children)
+                results.extend(child_results)
+                if child_results and not child_results[-1].get("success"):
+                    break
+
+        elif loop_count is not None and loop_count > 0:
             # 固定次数循环
             for i in range(loop_count):
-                context.variables["loop_index"] = i
+                context.variables[loop_index_var] = i
+                context.variables[loop_item_var] = None
+                mapped = self._resolve_param_mapping_static(param_mapping, None, context.variables, loop_item_var, loop_index_var)
+                mapped_children = self._inject_params_to_children(children, mapped)
                 child_results = await self._execute_children_with_condition(
-                    executor, children, context,
+                    executor, mapped_children, context,
+                    loop_while=loop_while, loop_until=loop_until_val,
+                )
+                results.extend(child_results)
+                if child_results and not child_results[-1].get("success"):
+                    break
+
+        elif count > 0:
+            # 新版固定次数
+            for i in range(count):
+                context.variables[loop_index_var] = i
+                context.variables[loop_item_var] = None
+                mapped = self._resolve_param_mapping_static(param_mapping, None, context.variables, loop_item_var, loop_index_var)
+                mapped_children = self._inject_params_to_children(children, mapped)
+                child_results = await self._execute_children_with_condition(
+                    executor, mapped_children, context,
                     loop_while=loop_while, loop_until=loop_until_val,
                 )
                 results.extend(child_results)
@@ -785,10 +949,11 @@ class LoopAction(BaseAction[LoopParams]):
                     break
 
         elif loop_while:
-            # while 条件循环：每次迭代和每个步骤执行前检查条件
-            loop_index = 0
+            # while 条件循环
+            loop_i = 0
             while safe_evaluate_condition(loop_while, context.variables):
-                context.variables["loop_index"] = loop_index
+                context.variables[loop_index_var] = loop_i
+                context.variables[loop_item_var] = None
                 child_results = await self._execute_children_with_condition(
                     executor, children, context,
                     loop_while=loop_while, loop_until=loop_until_val,
@@ -798,13 +963,14 @@ class LoopAction(BaseAction[LoopParams]):
                     break
                 if not safe_evaluate_condition(loop_while, context.variables):
                     break
-                loop_index += 1
+                loop_i += 1
 
         elif loop_until_val:
-            # until 条件循环：循环直到条件满足，每个步骤执行前后检查
-            loop_index = 0
+            # until 条件循环
+            loop_i = 0
             while True:
-                context.variables["loop_index"] = loop_index
+                context.variables[loop_index_var] = loop_i
+                context.variables[loop_item_var] = None
                 child_results = await self._execute_children_with_condition(
                     executor, children, context,
                     loop_while=loop_while, loop_until=loop_until_val,
@@ -814,13 +980,13 @@ class LoopAction(BaseAction[LoopParams]):
                     break
                 if safe_evaluate_condition(loop_until_val, context.variables):
                     break
-                loop_index += 1
+                loop_i += 1
 
         else:
             # 默认：执行一次
             results = await self._execute_steps_with_context(executor, children)
 
-        # 将子步骤产生的变量（last_output、output_vars 映射等）回写到 self.variables
+        # 将子步骤产生的变量回写到 self.variables
         self.variables.update(context.variables)
 
         # 将最后一个有数据的子步骤的 raw 返回值设为 last_output
@@ -841,6 +1007,85 @@ class LoopAction(BaseAction[LoopParams]):
             execution_time=time.time() - start_time,
             action_id=self.action_id, action_name=self.action_name,
         )
+
+    @staticmethod
+    def _extract_field(obj: Any, path: str) -> Any:
+        """安全获取嵌套字段值，支持点分隔路径"""
+        parts = path.split(".")
+        current = obj
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif hasattr(current, part):
+                current = getattr(current, part)
+            else:
+                return None
+        return current
+
+    @staticmethod
+    def _resolve_param_mapping_static(
+        mapping: dict[str, str] | None,
+        item_value: Any,
+        variables: dict,
+        loop_item_var: str = "loop_item",
+        loop_index_var: str = "loop_index",
+    ) -> dict[str, Any]:
+        """解析参数映射（静态方法，供 LoopAction 使用）"""
+        if not mapping:
+            return {}
+        resolved: dict[str, Any] = {}
+        for target_key, source_path in mapping.items():
+            source_path_str = str(source_path)
+            if source_path_str.startswith(f"{loop_item_var}."):
+                field_path = source_path_str[len(loop_item_var) + 1:]
+                resolved[target_key] = LoopAction._extract_field(item_value, field_path)
+            elif source_path_str == loop_item_var:
+                resolved[target_key] = item_value
+            elif source_path_str == loop_index_var:
+                resolved[target_key] = variables.get(loop_index_var)
+            else:
+                resolved[target_key] = LoopAction._extract_field(variables, source_path_str)
+        return resolved
+
+    @staticmethod
+    def _inject_params_to_children(
+        children: list[WorkflowStep], mapped: dict[str, Any],
+    ) -> list[WorkflowStep]:
+        """将映射参数注入到子步骤中"""
+        if not mapped or not children:
+            return children
+        new_children = []
+        for child in children:
+            raw = child.params or {}
+            if hasattr(raw, 'model_dump'):
+                raw = raw.model_dump()
+            elif not isinstance(raw, dict):
+                raw = {}
+            merged = {**raw, **mapped}
+            child.params = merged
+            new_children.append(child)
+        return new_children
+
+    def _resolve_items_from_variable(self, context: ExecutionContext, var_ref: str) -> list:
+        """从变量中解析 items 列表"""
+        items = self._extract_field(context.variables, var_ref)
+        if isinstance(items, list):
+            return items
+        logger.warning(f"loop_items_var '{var_ref}' 解析结果不是列表: {type(items)}")
+        return []
+
+    def _resolve_items_from_expr(self, context: ExecutionContext, expr: str) -> list:
+        """从表达式安全解析 items 列表"""
+        try:
+            import ast as _ast
+            tree = _ast.parse(expr.strip(), mode='eval')
+            items = _eval_ast_node(tree.body, context.variables)
+            if isinstance(items, list):
+                return items
+            logger.warning(f"loop_items_expr 解析结果不是列表: {type(items)}")
+        except Exception as e:
+            logger.warning(f"loop_items_expr 评估失败: {e}")
+        return []
 
     async def _execute_children_with_condition(
         self,

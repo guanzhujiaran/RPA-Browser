@@ -7,9 +7,9 @@ import base64
 import time
 from loguru import logger
 
-from app.services.execution.actions.base import BaseAction
+from app.services.execution.actions.base import BaseAction, ActionResult
 from app.models.execution.action_params import ScreenshotParams, ScreenshotResult
-from app.models.database.workflow.models import BuiltinActionType, ActionResult
+from app.models.database.workflow.models import BuiltinActionType
 
 
 class ScreenshotAction(BaseAction[ScreenshotParams]):

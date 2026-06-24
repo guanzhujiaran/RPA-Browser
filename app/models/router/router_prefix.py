@@ -54,6 +54,7 @@ class BrowserControlRouterPath(StrEnum):
     custom_actions_create = "/custom-actions/create"
     custom_actions_update = "/custom-actions/update"
     custom_actions_delete = "/custom-actions/delete"
+    custom_actions_tags = "/custom-actions/tags"
 
     # === 工作流管理 ===
     workflows_list = "/workflows/list"

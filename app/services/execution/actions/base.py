@@ -198,7 +198,7 @@ class BaseAction(ABC, Generic[ParamsT]):
     def clear_logs(self):
         self._logs.clear()
 
-    def validate_params_with_model(self, params: ParamsT) -> tuple[bool, str, ParamsT | None]:
+    def validate_params_with_model(self, params: ParamsT) -> tuple[bool, str, ParamsT]:
         """使用模型验证参数"""
         target = params if params is not None else self.params
         if not self.params_model:
@@ -207,7 +207,7 @@ class BaseAction(ABC, Generic[ParamsT]):
             validated = self.params_model.model_validate(target)
             return True, "", validated
         except Exception as e:
-            return False, str(e), None
+            raise ValueError(f"Invalid params: {e}") from e
 
     def validate_params(self, params: Dict | None = None) -> tuple[bool, str | None]:
         """验证参数（execution_engine 调用接口）"""
@@ -234,7 +234,8 @@ class BaseAction(ABC, Generic[ParamsT]):
         """执行动作"""
         action_result = await self._execute()
         self._merge_output_vars(action_result)
-        action_result.variables = {k: v for k, v in self.variables.items() if not callable(v)}
+        action_result.variables = {
+            k: v for k, v in self.variables.items() if not callable(v)}
         return action_result
 
     def preview(self) -> dict:

@@ -29,6 +29,7 @@ class BuiltinActionDesc(StrEnum):
     HOVER = "悬停在元素上"
     NEW_PAGE = "打开新页面"
     GET_TEXT = "获取元素文本"
+    GET_WINDOW = "获取窗口属性"
 
     IF_ELSE = "根据条件执行 true/false 分支"
     LOOP = "循环执行操作"
@@ -50,6 +51,7 @@ class BuiltinActionName(StrEnum):
     HOVER = "悬停"
     NEW_PAGE = "新页面"
     GET_TEXT = "获取文本"
+    GET_WINDOW = "获取窗口"
 
 
 class BuiltinActionType(StrEnum):
@@ -64,6 +66,7 @@ class BuiltinActionType(StrEnum):
     HOVER = "hover"
     NEW_PAGE = "new_page"
     GET_TEXT = "get_text"
+    GET_WINDOW = "get_window"
 
     LOOP = "loop"
     COMPOSITE = "composite"  # 复合操作 需要拆分开开单独执行
@@ -240,8 +243,49 @@ class HoverParams(MouseActionParams):
 
 
 class GetTextParams(SelectorActionParams):
-    """获取元素文本参数 - 对应 locator.inner_text()"""
-    pass
+    """获取元素文本参数 - 对应 locator.all_inner_texts()"""
+    separator: str = Field(
+        default="\n",
+        max_length=50,
+        description="多个匹配元素文本之间的分隔符，默认为换行符")
+
+
+class GetWindowParams(BaseActionParams):
+    """获取 window 属性参数 - 通过 page.evaluate 安全获取 window 对象属性"""
+    property_path: str | None = Field(
+        default=None,
+        max_length=200,
+        description="window 对象的属性路径，如 'location.href'、'document.title'、'innerWidth'。仅支持点分隔的标识符，不允许函数调用或运算符。与 object_name 二选一",
+    )
+    object_name: str | None = Field(
+        default=None,
+        max_length=200,
+        description="window 对象名称，如 'location'、'navigator'。获取该对象后遍历所有字段，返回所有非 null 非 undefined 的值。与 property_path 二选一",
+    )
+
+    @field_validator("property_path")
+    @classmethod
+    def validate_property_path(cls, v: str | None) -> str | None:
+        """安全校验：仅允许点分隔标识符和数字索引方括号，禁止函数调用"""
+        import re
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("property_path 不能为空")
+        # 允许：标识符 . 标识符 [数字] 的任意组合，禁止函数调用 () 及其他运算符
+        if not re.fullmatch(r'[a-zA-Z_$][\w$]*((\.[a-zA-Z_$][\w$]*)|(\[\d+\]))*', v):
+            raise ValueError(
+                f"property_path 格式不合法: '{v}'。仅支持点分隔的属性路径和数字索引，如 'location.href'、'modules[0].name'，不允许函数调用、运算符或变量索引"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def check_one_of(self) -> "GetWindowParams":
+        """确保 property_path 和 object_name 至少提供一个"""
+        if self.property_path is None and self.object_name is None:
+            raise ValueError("property_path 和 object_name 至少需要提供一个")
+        return self
 
 
 class ScreenshotParams(SelectorActionParams):
@@ -274,18 +318,70 @@ class LLMParams(BaseActionParams):
 
 
 class LoopParams(BaseActionParams):
-    """循环控制流操作参数"""
-    items: list[Any] | None = Field(default=None, description="要遍历的列表")
-    count: int = Field(default=1, ge=1, le=10000, description="固定循环次数")
-    loop_count: int | None = Field(default=None, description="循环次数")
-    loop_while: str | None = Field(default=None, description="循环条件")
-    loop_var: str | None = Field(default=None, description="循环变量")
+    """循环控制流操作参数
+
+    循环来源 (loop_source)：
+        - fixed_count: 固定次数循环，使用 count 字段
+        - variable: 从变量获取 items 列表，使用 loop_items_var 字段
+        - expression: 通过表达式计算 items，使用 loop_items_expr 字段
+
+    参数映射 (param_mapping)：
+        将循环项的字段映射到循环体内步骤的参数。
+        例如 { "selector": "loop_item.name", "url": "loop_item.link" }
+        表示将当前循环项的 name 字段值注入到子步骤的 selector 参数，
+        link 字段值注入到 url 参数。
+
+        映射源路径支持点分隔嵌套访问，如 "loop_item.user.profile.id"。
+        也支持引用循环索引 "loop_index"。
+    """
+    # ── 循环来源配置 ──
+    loop_source: Literal["fixed_count", "variable", "expression"] = Field(
+        default="fixed_count",
+        description="循环来源: fixed_count=固定次数, variable=从变量获取items, expression=表达式",
+    )
+    count: int = Field(default=1, ge=1, le=10000, description="固定循环次数（loop_source=fixed_count 时使用）")
+    loop_items_var: str | None = Field(
+        default=None, max_length=200,
+        description="循环项变量引用（loop_source=variable 时使用），如 'previous_output.items'",
+    )
+    loop_items_expr: str | None = Field(
+        default=None, max_length=500,
+        description="循环项表达式（loop_source=expression 时使用）",
+    )
+
+    # ── 循环变量命名 ──
+    loop_item_var: str = Field(
+        default="loop_item", max_length=50,
+        description="当前循环项在作用域中的变量名",
+    )
+    loop_index_var: str = Field(
+        default="loop_index", max_length=50,
+        description="当前循环索引在作用域中的变量名",
+    )
+
+    # ── 参数映射（可选）──
+    param_mapping: dict[str, str] | None = Field(
+        default=None,
+        description="参数映射: { 目标参数名: 源字段路径 }。源路径基于循环项，支持点分隔嵌套访问",
+    )
+
+    # ── 循环体 ──
     loopBranch: list['WorkflowStep'] | None = Field(
         default=None, description="循环分支步骤")
+
+    # ── 控制条件 ──
     break_condition: str | None = Field(
-        default=None, max_length=500, description="break 条件表达式，每步执行后评估，为真时跳出整个循环")
+        default=None, max_length=500,
+        description="break 条件表达式，每步执行后评估，为真时跳出整个循环")
     continue_condition: str | None = Field(
-        default=None, max_length=500, description="continue 条件表达式，每步执行后评估，为真时跳过当前迭代剩余步骤")
+        default=None, max_length=500,
+        description="continue 条件表达式，每步执行后评估，为真时跳过当前迭代剩余步骤")
+
+    # 向后兼容旧字段
+    loop_count: int | None = Field(default=None, exclude=True, description="[已废弃] 使用 count + loop_source")
+    loop_while: str | None = Field(default=None, exclude=True, description="[已废弃] 使用 break_condition")
+    items: list[Any] | None = Field(default=None, exclude=True, description="[已废弃] 使用 loop_items_var")
+    loop_var: str | None = Field(default=None, exclude=True, description="[已废弃] 使用 loop_item_var")
 
 
 class IfElseParams(BaseActionParams):
@@ -303,7 +399,7 @@ class CompositeParams(BaseActionParams):
         default_factory=list, description="复合操作步骤")
 
 
-AllActionParams = ClickParams | InputParams | NavigateParams | NewPageParams | ScrollParams | WaitParams | HoverParams | GetTextParams | ScreenshotParams | LLMParams | LoopParams | IfElseParams | CompositeParams
+AllActionParams = ClickParams | InputParams | NavigateParams | NewPageParams | ScrollParams | WaitParams | HoverParams | GetTextParams | GetWindowParams | ScreenshotParams | LLMParams | LoopParams | IfElseParams | CompositeParams
 
 # endregion
 
@@ -338,6 +434,13 @@ class HoverResult(SQLModel):
 class GetTextResult(SQLModel):
     """获取元素文本结果"""
     text: str = Field(default="", description="元素的文本内容")
+
+
+class GetWindowResult(SQLModel):
+    """获取 window 属性结果"""
+    value: str = Field(default="", description="属性的字符串值（property_path 模式）")
+    values: dict[str, str] = Field(default_factory=dict, description="对象所有字段的非空值（object_name 模式）")
+
 
 
 class NavigateResult(SQLModel):
@@ -375,8 +478,10 @@ class LoopResult(SQLModel):
     details: list[Dict] = Field(default_factory=list, description="详细结果")
     results: list[Dict] = Field(default_factory=list, description="结果列表")
     message: str | None = Field(default=None, description="提示消息")
-    was_broken: bool = Field(default=False, description="是否由 break_condition 触发中断")
-    was_continued: bool = Field(default=False, description="是否由 continue_condition 触发跳过")
+    was_broken: bool = Field(
+        default=False, description="是否由 break_condition 触发中断")
+    was_continued: bool = Field(
+        default=False, description="是否由 continue_condition 触发跳过")
 
 
 class IfElseResult(SQLModel):
@@ -395,7 +500,7 @@ class CompositeResult(SQLModel):
     results: list[Dict] = Field(default_factory=list, description="各步骤结果")
 
 
-AllActionResult = ClickResult | InputResult | ScrollResult | WaitResult | HoverResult | GetTextResult | NavigateResult | NewPageResult | ScreenshotResult | LLMResult | LoopResult | IfElseResult | CompositeResult
+AllActionResult = ClickResult | InputResult | ScrollResult | WaitResult | HoverResult | GetTextResult | GetWindowResult | NavigateResult | NewPageResult | ScreenshotResult | LLMResult | LoopResult | IfElseResult | CompositeResult
 
 BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
     BuiltinActionType.CLICK: ClickResult,
@@ -404,6 +509,7 @@ BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
     BuiltinActionType.WAIT: WaitResult,
     BuiltinActionType.HOVER: HoverResult,
     BuiltinActionType.GET_TEXT: GetTextResult,
+    BuiltinActionType.GET_WINDOW: GetWindowResult,
     BuiltinActionType.NAVIGATE: NavigateResult,
     BuiltinActionType.NEW_PAGE: NewPageResult,
     BuiltinActionType.SCREENSHOT: ScreenshotResult,
@@ -433,6 +539,7 @@ BUILTIN_ACTION_PARAMS_MAP: Dict[str, Type[AllActionParams]] = {
     BuiltinActionType.WAIT: WaitParams,
     BuiltinActionType.HOVER: HoverParams,
     BuiltinActionType.GET_TEXT: GetTextParams,
+    BuiltinActionType.GET_WINDOW: GetWindowParams,
     BuiltinActionType.NAVIGATE: NavigateParams,
     BuiltinActionType.NEW_PAGE: NewPageParams,
     BuiltinActionType.SCREENSHOT: ScreenshotParams,
@@ -523,6 +630,11 @@ class GetTextWorkflowStep(BaseWorkflowStep[GetTextParams]):
     action_type: Literal[BuiltinActionType.GET_TEXT] = BuiltinActionType.GET_TEXT  # type: ignore[assignment]
 
 
+class GetWindowWorkflowStep(BaseWorkflowStep[GetWindowParams]):
+    """获取窗口属性步骤"""
+    action_type: Literal[BuiltinActionType.GET_WINDOW] = BuiltinActionType.GET_WINDOW  # type: ignore[assignment]
+
+
 class ScreenshotWorkflowStep(BaseWorkflowStep[ScreenshotParams]):
     """截图步骤"""
     action_type: Literal[BuiltinActionType.SCREENSHOT] = BuiltinActionType.SCREENSHOT  # type: ignore[assignment]
@@ -574,6 +686,7 @@ WorkflowStep = ClickWorkflowStep\
     | WaitWorkflowStep\
     | HoverWorkflowStep\
     | GetTextWorkflowStep\
+    | GetWindowWorkflowStep\
     | ScreenshotWorkflowStep\
     | LLMWorkflowStep\
     | LoopWorkflowStep\
@@ -593,6 +706,7 @@ _WORKFLOW_STEP_CLASS_MAP: dict[BuiltinActionType, type[BaseWorkflowStep[Any]]] =
     BuiltinActionType.WAIT: WaitWorkflowStep,
     BuiltinActionType.HOVER: HoverWorkflowStep,
     BuiltinActionType.GET_TEXT: GetTextWorkflowStep,
+    BuiltinActionType.GET_WINDOW: GetWindowWorkflowStep,
     BuiltinActionType.SCREENSHOT: ScreenshotWorkflowStep,
     BuiltinActionType.LLM: LLMWorkflowStep,
     BuiltinActionType.LOOP: LoopWorkflowStep,

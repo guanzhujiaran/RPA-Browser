@@ -14,6 +14,8 @@ from app.models.workflow.models import (
     CompositeActionCreateRequest,
     CompositeActionUpdateRequest,
     CompositeActionListRequest,
+    CompositeActionGetRequest,
+    CompositeActionDeleteRequest,
     CompositeActionDetailResponse,
     CompositeActionListItemResponse,
     ActionForkRequest,
@@ -30,6 +32,36 @@ router = new_action_router()
 def _convert_steps(steps: list) -> list[Dict]:
     """将 WorkflowStep 列表转换为 dict 列表"""
     return [step.model_dump() if hasattr(step, "model_dump") else step for step in steps]
+
+
+def _collect_composite_action_ids(steps: list[Dict]) -> list[str]:
+    """递归收集 steps 中所有 ca_ 开头的 action_id"""
+    ids: list[str] = []
+    for step in steps:
+        action_id = step.get("action_id", "")
+        if isinstance(action_id, str) and action_id.startswith("ca_"):
+            ids.append(action_id)
+        params = step.get("params")
+        if isinstance(params, dict):
+            for key in ("TrueBranch", "FalseBranch", "loopBranch"):
+                branch = params.get(key)
+                if isinstance(branch, list):
+                    ids.extend(_collect_composite_action_ids(branch))
+    return ids
+
+
+def _annotate_step_names(steps: list[Dict], name_map: Dict[str, str]) -> None:
+    """递归为 steps 中 ca_ 开头的 action_id 补充 name 字段"""
+    for step in steps:
+        action_id = step.get("action_id", "")
+        if isinstance(action_id, str) and action_id.startswith("ca_"):
+            step["name"] = name_map.get(action_id, action_id)
+        params = step.get("params")
+        if isinstance(params, dict):
+            for key in ("TrueBranch", "FalseBranch", "loopBranch"):
+                branch = params.get(key)
+                if isinstance(branch, list):
+                    _annotate_step_names(branch, name_map)
 
 
 # ============ 系统预注册操作（只读，全 POST） ============
@@ -100,7 +132,6 @@ async def create_custom_action(
 
     return success_response(
         CompositeActionDetailResponse(
-            id=model.id or 0,
             action_id=model.action_id,
             name=model.name,
             version=model.version,
@@ -159,12 +190,12 @@ async def list_custom_actions(
 
     items = [
         CompositeActionListItemResponse(
-            id=model.id or 0,
             action_id=model.action_id,
             name=model.name,
             action_type=model.action_type,
             description=model.description,
             steps_count=len(model.steps) if model.steps else 0,
+            tags=model.tags or [],
             is_enabled=model.is_enabled,
             is_public=model.is_public,
             likes_count=model.likes_count,
@@ -191,23 +222,15 @@ async def list_custom_actions(
 
 @router.post(BrowserControlRouterPath.custom_actions_get, summary="获取自定义操作详情")
 async def get_custom_action(
-    request: dict,
+    request: CompositeActionGetRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[CompositeActionDetailResponse]:
-    """获取自定义操作详情
+    """获取自定义操作详情"""
+    action_id = request.action_id
+    if not action_id:
+        return error_response(400, "缺少操作action_id")
 
-    Args:
-        request: {"id": <操作ID>} 支持整数（数据库 ID）或字符串（action_id）
-    """
-    raw_id = request.get("id")
-    if not raw_id:
-        return error_response(400, "缺少操作ID")
-
-    # 兼容整数 id 和字符串 action_id
-    if isinstance(raw_id, int) or (isinstance(raw_id, str) and raw_id.isdigit()):
-        model = await action_crud_svr.get_by_id(int(raw_id))
-    else:
-        model = await action_crud_svr.get_by_action_id(str(raw_id))
+    model = await action_crud_svr.get_by_action_id(str(action_id))
     # 代码里面判断是不是符合要求
     if not model:
         return error_response(404, "操作不存在")
@@ -221,9 +244,15 @@ async def get_custom_action(
         for var in (model.input_vars or [])
     ]
 
+    # 解析 steps 中复合动作的名称
+    steps_data = _convert_steps(model.steps)
+    ca_ids = _collect_composite_action_ids(steps_data)
+    if ca_ids:
+        name_map = await action_crud_svr.get_name_map_by_action_ids(ca_ids)
+        _annotate_step_names(steps_data, name_map)
+
     return success_response(
         CompositeActionDetailResponse(
-            id=model.id or 0,
             action_id=model.action_id,
             name=model.name,
             version=model.version,
@@ -231,7 +260,7 @@ async def get_custom_action(
             description=model.description,
             mid=model.mid,
             parameters_schema=model.parameters_schema,
-            steps=_convert_steps(model.steps),
+            steps=steps_data,
             tags=model.tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,
@@ -259,7 +288,7 @@ async def update_custom_action(
 ) -> StandardResponse[CompositeActionDetailResponse]:
     """更新自定义操作"""
     # 先校验所有权，防止越权修改他人数据
-    existing = await action_crud_svr.get_by_id(request.id)
+    existing = await action_crud_svr.get_by_action_id(request.action_id)
     if not existing or existing.mid != str(auth.mid):
         return error_response(404, "操作不存在或无权限")
 
@@ -272,7 +301,7 @@ async def update_custom_action(
         ]
 
     model = await action_crud_svr.update(
-        id=request.id,
+        id=existing.id,
         name=request.name,
         description=request.description,
         steps=request.steps,
@@ -296,7 +325,6 @@ async def update_custom_action(
 
     return success_response(
         CompositeActionDetailResponse(
-            id=model.id or 0,
             action_id=model.action_id,
             name=model.name,
             version=model.version,
@@ -327,27 +355,32 @@ async def update_custom_action(
 
 @router.post(BrowserControlRouterPath.custom_actions_delete, summary="删除自定义操作")
 async def delete_custom_action(
-    request: dict,
+    request: CompositeActionDeleteRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
-    """删除自定义操作
-
-    Args:
-        request: {"id": <操作ID>}
-    """
-    action_id = request.get("id")
+    """删除自定义操作"""
+    action_id = request.action_id
     if not action_id:
-        return error_response(400, "缺少操作ID")
+        return error_response(400, "缺少操作 action_id")
 
-    model = await action_crud_svr.get_by_id(action_id)
+    model = await action_crud_svr.get_by_action_id(str(action_id))
     if not model or model.mid != str(auth.mid):
         return error_response(404, "操作不存在或无权限")
 
-    success = await action_crud_svr.delete(action_id)
+    success = await action_crud_svr.delete(model.id)
     if success:
         return success_response({"message": "删除成功"})
     else:
         return error_response(500, "删除失败")
+
+
+@router.post(BrowserControlRouterPath.custom_actions_tags, summary="获取用户所有去重标签")
+async def list_custom_action_tags(
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[List[str]]:
+    """获取当前用户所有自定义操作的去重标签列表"""
+    tags = await action_crud_svr.list_tags_by_user(auth.mid)
+    return success_response(tags)
 
 
 @router.post("/custom_actions/fork", summary="Fork 自定义操作（类似 GitHub）", response_model=StandardResponse[ActionForkResponse])
@@ -360,10 +393,10 @@ async def fork_custom_action(
     类似 GitHub 的 Fork 功能，允许用户复制公开的社区操作到自己的空间，并可以选择重命名。
 
     Args:
-        request: {"id": <操作ID>, "new_name": <新名称（可选）>}
+        request: {"action_id": <操作action_id>, "new_name": <新名称（可选）>}
     """
     # 获取原操作
-    original = await action_crud_svr.get_by_id(request.id)
+    original = await action_crud_svr.get_by_action_id(request.action_id)
     if not original:
         return error_response(404, "操作不存在")
 
@@ -374,7 +407,7 @@ async def fork_custom_action(
     try:
         # 执行 Fork
         model = await action_crud_svr.fork(
-            id=request.id,
+            id=original.id,
             target_mid=auth.mid,
             new_name=request.new_name
         )
@@ -384,7 +417,6 @@ async def fork_custom_action(
 
         return success_response(
             ActionForkResponse(
-                id=model.id or 0,
                 action_id=model.action_id,
                 name=model.name,
                 forked_from=original.name,
@@ -410,7 +442,6 @@ async def get_action_forks(
 
     items = [
         CompositeActionListItemResponse(
-            id=f.id or 0,
             action_id=f.action_id,
             name=f.name,
             action_type=f.action_type,

@@ -5,9 +5,8 @@ Core 模块 - 工作流数据库模型
 """
 from app.models.execution.action_params import WorkflowStep
 from app.models.execution.action_params import BuiltinActionType
-from typing import Any, Dict, List, Generic
+from typing import Any, Dict, List
 from datetime import datetime
-from pydantic.types import T
 from pydantic import field_validator
 from sqlalchemy import Column, JSON, Index
 from sqlmodel import SQLModel, Field
@@ -53,20 +52,16 @@ class ReportReason(IntEnum):
     OTHER = 5
 
 
-# region ============ 执行相关模型 ============
+class ExecutionStatus(StrEnum):
+    """执行状态"""
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
 
 
-class ActionResult(SQLModel, Generic[T]):
-    """操作执行结果"""
-    success: bool = Field(description="是否成功")
-    data: T = Field(default=None, description="返回数据")
-    error: str | None = Field(default=None, description="错误信息")
-    execution_time: float = Field(default=0.0, description="执行时间(秒)")
-    action_id: str = Field(default="", description="操作ID")
-    action_name: str = Field(default="", description="操作名称")
-    logs: List[str] = Field(default_factory=list, description="日志记录")
-
-# endregion
 # region ============ 社区资源基类 ============
 
 
@@ -104,33 +99,6 @@ class CommunityResourceBase(SQLModel):
         return validated
 
 
-class ExecutionStatus(StrEnum):
-    """执行状态"""
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCESS = "success"
-    FAILED = "failed"
-    TIMEOUT = "timeout"
-    CANCELLED = "cancelled"
-
-
-class ExecutionTask(SQLModel):
-    """执行任务"""
-    id: str
-    session_id: str
-    browser_id: str
-    status: ExecutionStatus
-    actions: List[Dict]
-    current_index: int = 0
-    results: List[ActionResult] = Field(default_factory=list)
-    created_at: float = Field(
-        default_factory=lambda: __import__("time").time())
-    started_at: float | None = None
-    finished_at: float | None = None
-    total_time: float = 0.0
-    error: str | None = None
-
-# endregion
 # region ============ 数据库模型 ============
 
 

@@ -106,6 +106,18 @@ class ActionCrudService:
             return result.first()
 
     @staticmethod
+    async def get_name_map_by_action_ids(action_ids: List[str]) -> Dict[str, str]:
+        """批量获取 action_id → name 的映射"""
+        if not action_ids:
+            return {}
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(CompositeActionModel.action_id, CompositeActionModel.name)
+                .where(CompositeActionModel.action_id.in_(action_ids))
+            )
+            return {row[0]: row[1] for row in result.all()}
+
+    @staticmethod
     async def count_by_user(mid: int, filter_type: str = "all") -> int:
         from sqlmodel import func
 
@@ -355,6 +367,26 @@ class ActionCrudService:
             await session.commit()
             await session.refresh(new_model)
             return new_model
+
+    @staticmethod
+    async def list_tags_by_user(mid: int) -> List[str]:
+        """获取用户所有自定义操作的去重标签列表"""
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(CompositeActionModel.tags)
+                .where(CompositeActionModel.mid == str(mid))
+            )
+            tag_lists = result.all()
+            unique_tags: list[str] = []
+            seen: set[str] = set()
+            for tags in tag_lists:
+                if not tags:
+                    continue
+                for tag in tags:
+                    if tag and tag not in seen:
+                        seen.add(tag)
+                        unique_tags.append(tag)
+            return unique_tags
 
 
 action_crud_svr = ActionCrudService()

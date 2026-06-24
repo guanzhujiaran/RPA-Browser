@@ -123,19 +123,88 @@ class LoopStep(StepNode):
     """循环步骤 — 重复执行子管道。
 
     字段:
-        body:     Pipeline — 循环体
-        count:    固定次数（与 condition 互斥）
-        condition: 条件表达式字符串（while/until 逻辑由外部计算）
+        body:            Pipeline — 循环体
+        count:           固定次数
+        loop_condition:  while 条件表达式字符串
+        loop_until:      until 条件表达式字符串
+        loop_items:      要遍历的 items 列表（variable/expression 模式）
+        loop_items_var:  从 scope 变量中获取 items 的引用路径
+        loop_item_var:   循环项作用域名（默认 "loop_item"）
+        loop_index_var:  循环索引作用域名（默认 "loop_index"）
+        param_mapping:   参数映射 {目标参数名: 源字段路径}
     """
     body: Pipeline = field(default_factory=lambda: Pipeline([]))
     count: int | None = None
-    loop_condition: str | None = None       # while 条件
-    loop_until: str | None = None           # until 条件
+    loop_condition: str | None = None
+    loop_until: str | None = None
+    loop_items: list[Any] | None = None
+    loop_items_var: str | None = None
+    loop_item_var: str = "loop_item"
+    loop_index_var: str = "loop_index"
+    param_mapping: dict[str, str] | None = None
+
+    def _resolve_loop_items(self, scope: Scope) -> list[Any]:
+        """运行时解析 loop_items（从 scope 变量中获取）"""
+        if self.loop_items and any(item is not None for item in self.loop_items):
+            return self.loop_items  # 已有静态列表
+        if self.loop_items_var:
+            value = self._extract_field(scope.snapshot(), self.loop_items_var)
+            if isinstance(value, list):
+                return value
+        return []
+
+    @staticmethod
+    def _extract_field(obj: Any, path: str) -> Any:
+        """安全获取嵌套字段值，支持点分隔路径"""
+        parts = path.split(".")
+        current = obj
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif hasattr(current, part):
+                current = getattr(current, part)
+            else:
+                return None
+        return current
+
+    def _resolve_param_mapping(self, scope: Scope) -> dict[str, Any]:
+        """解析参数映射为实际值"""
+        if not self.param_mapping:
+            return {}
+        resolved: dict[str, Any] = {}
+        item = scope.get(self.loop_item_var)
+        index = scope.get(self.loop_index_var)
+        for target_key, source_path in self.param_mapping.items():
+            source_str = str(source_path)
+            if source_str.startswith(f"{self.loop_item_var}."):
+                field_path = source_str[len(self.loop_item_var) + 1:]
+                resolved[target_key] = self._extract_field(item, field_path)
+            elif source_str == self.loop_item_var:
+                resolved[target_key] = item
+            elif source_str == self.loop_index_var:
+                resolved[target_key] = index
+            else:
+                resolved[target_key] = self._extract_field(scope.snapshot(), source_str)
+        return resolved
+
+    def _inject_mapped_params(self, pipeline: Pipeline, mapped: dict[str, Any]) -> Pipeline:
+        """将映射参数注入 Pipeline 中每个 AtomicStep 的 params"""
+        if not mapped:
+            return pipeline
+        for step in pipeline.steps:
+            if isinstance(step, AtomicStep):
+                step.params = {**step.params, **mapped}
+        return pipeline
 
     async def execute(self, scope: Scope, executor: ActionExecutor) -> ActionResult:
         results: list[ActionResult] = []
 
-        if self.count is not None:
+        # 运行时解析 loop_items
+        resolved_items = self._resolve_loop_items(scope)
+
+        if resolved_items:
+            results = await self._loop_by_items(scope, executor, resolved_items)
+        elif self.count is not None:
             results = await self._loop_by_count(scope, executor)
         elif self.loop_condition:
             results = await self._loop_by_while(scope, executor)
@@ -149,10 +218,24 @@ class LoopStep(StepNode):
             action_name="loop",
         )
 
+    async def _loop_by_items(self, scope: Scope, executor: ActionExecutor, items: list[Any]) -> list[ActionResult]:
+        """遍历 items 列表执行循环体"""
+        results = []
+        for i, item_value in enumerate(items):
+            scope.set(self.loop_index_var, i)
+            scope.set(self.loop_item_var, item_value)
+            mapped = self._resolve_param_mapping(scope)
+            body = self._inject_mapped_params(self.body, mapped)
+            ir = await body.execute(scope, executor)
+            results.extend(ir)
+            if ir and not ir[-1].success:
+                break
+        return results
+
     async def _loop_by_count(self, scope: Scope, executor: ActionExecutor) -> list[ActionResult]:
         results = []
         for i in range(self.count):
-            scope.set("loop_index", i)
+            scope.set(self.loop_index_var, i)
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
@@ -165,7 +248,7 @@ class LoopStep(StepNode):
         results = []
         i = 0
         while safe_evaluate_condition(self.loop_condition, scope.snapshot()):
-            scope.set("loop_index", i)
+            scope.set(self.loop_index_var, i)
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
@@ -179,7 +262,7 @@ class LoopStep(StepNode):
         results = []
         i = 0
         while True:
-            scope.set("loop_index", i)
+            scope.set(self.loop_index_var, i)
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
@@ -301,6 +384,13 @@ class PipelineBuilder:
     """
 
     @staticmethod
+    def _get_attr(obj, key: str, default=None):
+        """安全获取属性（兼容 dict 和对象）。"""
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    @staticmethod
     def build(
         steps: list,
         *,
@@ -315,18 +405,32 @@ class PipelineBuilder:
         """
         nodes: list[StepNode] = []
         for s in steps:
-            action_id = s.action_id if hasattr(s, "action_id") else s.get("action_id", "")
-            action_type = getattr(s, "action_type", None) or getattr(s, "action_id", "")
-            condition = getattr(s, "condition", None)
+            action_id = PipelineBuilder._get_attr(s, "action_id", "")
+            action_type = PipelineBuilder._get_attr(s, "action_type") or PipelineBuilder._get_attr(s, "action_id", "")
+            condition = PipelineBuilder._get_attr(s, "condition")
 
             # LOOP
             if action_type == BuiltinActionType.LOOP:
                 children = PipelineBuilder._get_children(s)
-                count = getattr(s, "loop_count", None)
+                count = getattr(s, "count", None) or PipelineBuilder._get_param(s, "count")
                 loop_while = getattr(s, "loop_while", None) or PipelineBuilder._get_param(s, "loop_while")
                 loop_until = getattr(s, "loop_until", None) or PipelineBuilder._get_param(s, "loop_until")
-                if count is None:
-                    count = PipelineBuilder._get_param(s, "count")
+                loop_source = PipelineBuilder._get_param(s, "loop_source") or "fixed_count"
+                loop_items_var = PipelineBuilder._get_param(s, "loop_items_var")
+                loop_item_var = PipelineBuilder._get_param(s, "loop_item_var") or "loop_item"
+                loop_index_var = PipelineBuilder._get_param(s, "loop_index_var") or "loop_index"
+                param_mapping = PipelineBuilder._get_param(s, "param_mapping")
+
+                # 确定迭代次数
+                if loop_source == "fixed_count":
+                    count = count or 1
+                else:
+                    count = None  # variable/expression 模式不设 count
+
+                # 向后兼容旧字段
+                old_loop_count = getattr(s, "loop_count", None) or PipelineBuilder._get_param(s, "loop_count")
+                if count is None and old_loop_count is not None:
+                    count = old_loop_count
 
                 nodes.append(LoopStep(
                     action_id=action_id,
@@ -335,6 +439,10 @@ class PipelineBuilder:
                     count=count,
                     loop_condition=loop_while,
                     loop_until=loop_until,
+                    loop_items_var=loop_items_var if loop_source != "fixed_count" else None,
+                    loop_item_var=loop_item_var,
+                    loop_index_var=loop_index_var,
+                    param_mapping=param_mapping,
                 ))
 
             # IF_ELSE
@@ -354,10 +462,10 @@ class PipelineBuilder:
 
             # Atomic / Composite (default)
             else:
-                params = getattr(s, "params", {}) or {}
-                input_vars = getattr(s, "input_vars", None) or {}
-                output_vars = getattr(s, "output_vars", None) or []
-                retry = getattr(s, "retry", 0) or 0
+                params = PipelineBuilder._get_attr(s, "params", {}) or {}
+                input_vars = PipelineBuilder._get_attr(s, "input_vars", None) or {}
+                output_vars = PipelineBuilder._get_attr(s, "output_vars", None) or []
+                retry = PipelineBuilder._get_attr(s, "retry", 0) or 0
                 nodes.append(AtomicStep(
                     action_id=action_id,
                     condition=condition,
@@ -372,7 +480,7 @@ class PipelineBuilder:
     @staticmethod
     def _get_children(step) -> list:
         """获取步骤的子步骤列表（兼容 children 和 params.steps）。"""
-        children = getattr(step, "children", None)
+        children = PipelineBuilder._get_attr(step, "children")
         if children:
             return children
         if branch := PipelineBuilder._get_param(step, "loopBranch"):

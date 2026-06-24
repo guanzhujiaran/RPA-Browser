@@ -10,9 +10,8 @@ import ipaddress
 from urllib.parse import urlparse
 import time
 from loguru import logger
-from app.services.execution.actions.base import BaseAction
+from app.services.execution.actions.base import BaseAction, ActionResult
 from app.models.execution.action_params import NavigateParams, NewPageParams, NavigateResult, NewPageResult
-from app.models.database.workflow.models import ActionResult
 from app.models.core.browser.security import SecurityCheckResult
 from app.config import settings
 from app.models.database.workflow.models import BuiltinActionType

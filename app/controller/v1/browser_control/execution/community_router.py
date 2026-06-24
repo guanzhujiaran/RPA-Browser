@@ -68,7 +68,6 @@ async def list_community_actions(
     for model in models:
         items.append(
             CompositeActionListItemResponse(
-                id=model.id,
                 action_id=model.action_id,
                 name=model.name,
                 action_type=model.action_type,

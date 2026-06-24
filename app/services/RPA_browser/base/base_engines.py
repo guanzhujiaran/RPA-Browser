@@ -78,6 +78,7 @@ class BaseUndetectedPlaywright:
             user_data_dir=self._user_data_dir,
             viewport=fingerprint_params.viewport,
             screen=fingerprint_params.screen,
+            accept_downloads=False
         )
         await browser.new_page()  # 使用新的mock好的页面,直接调用new_page就行了,botright会自动处理关闭初始页面
         yield browser
