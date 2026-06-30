@@ -64,6 +64,7 @@ class BaseAction(ABC, Generic[ParamsT]):
     input_vars: Dict = field(default_factory=dict)
     output_vars: List[str] = field(default_factory=list)
     variables: Dict = field(default_factory=dict)
+    auth_headers: Dict[str, str] = field(default_factory=dict)
     _logs: List[str] = field(default_factory=list, repr=False)
     _phase: ExecutionPhase = field(
         default=ExecutionPhase.VALIDATION, repr=False)

@@ -13,8 +13,20 @@ from app.models.execution.enums import (
     ElementStateEnum,
     ScreenshotTypeEnum,
     KeyboardModifierEnum,
+    HttpMethodEnum,
+    HttpBodyTypeEnum,
 )
 from app.models.execution.condition_models import ConditionRule
+from app.models.execution.system_services import RpcMethodName
+from app.models.execution.rpc_method_params import (
+    GetReserveLotteryRpcParams,
+    GetOfficialLotteryRpcParams,
+    GetChargeLotteryRpcParams,
+    GetTopicLotteryRpcParams,
+    GetAllLotteryRpcParams,
+    GetOthersLotDynListRpcParams,
+    RPC_METHOD_PARAMS_FIELD_MAP,
+)
 
 
 class BuiltinActionDesc(StrEnum):
@@ -30,9 +42,11 @@ class BuiltinActionDesc(StrEnum):
     NEW_PAGE = "打开新页面"
     GET_TEXT = "获取元素文本"
     GET_WINDOW = "获取窗口属性"
+    FETCH_EXTERNAL_DATA = "获取外部数据"
+    PRINT = "打印变量替换后的参数（仅调试用，不执行实际操作）"
 
     IF_ELSE = "根据条件执行 true/false 分支"
-    LOOP = "循环执行操作"
+    LOOP = "循环执行"
     COMPOSITE = "执行复合操作"
 
 
@@ -52,6 +66,8 @@ class BuiltinActionName(StrEnum):
     NEW_PAGE = "新页面"
     GET_TEXT = "获取文本"
     GET_WINDOW = "获取窗口"
+    FETCH_EXTERNAL_DATA = "获取外部数据"
+    PRINT = "打印参数"
 
 
 class BuiltinActionType(StrEnum):
@@ -67,6 +83,8 @@ class BuiltinActionType(StrEnum):
     NEW_PAGE = "new_page"
     GET_TEXT = "get_text"
     GET_WINDOW = "get_window"
+    FETCH_EXTERNAL_DATA = "fetch_external_data"
+    PRINT = "print"
 
     LOOP = "loop"
     COMPOSITE = "composite"  # 复合操作 需要拆分开开单独执行
@@ -317,6 +335,84 @@ class LLMParams(BaseActionParams):
                            le=600000, description="请求超时时间(毫秒)")
 
 
+class FetchExternalDataParams(BaseActionParams):
+    """获取外部数据操作参数 - RPC 模式（method_name）和 HTTP 模式（url）二选一，互斥
+
+    HTTP 模式与 RPC 模式参数完全分离：
+    - HTTP 模式：使用 url/method/headers/params/body_* 等 HTTP 专属字段
+    - RPC 模式：每个 method_name 对应一个独立的强类型 SQLModel 参数字段
+      （如 get_reserve_lottery_params），与 HTTP 的 params 字段互不影响，前端分开展示
+    """
+    method_name: RpcMethodName | None = Field(
+        default=None,
+        title="RPC 方法",
+        description="RPC 方法名（StrEnum，从预设白名单中选择）。提供时走 RPC 模式。设为空值或 None 则走 HTTP 模式",
+    )
+    url: str | None = Field(
+        default=None, max_length=4096,
+        description="HTTP/HTTPS 请求地址（method_name 为空时必填，仅 HTTP 模式生效）",
+    )
+    method: HttpMethodEnum = Field(
+        default=HttpMethodEnum.GET,
+        description="HTTP 方法（仅 HTTP 模式生效）")
+    headers: Dict[str, str] | None = Field(
+        default=None, description="HTTP 附加请求头（仅 HTTP 模式生效）")
+    params: Dict[str, str] | None = Field(
+        default=None, description="HTTP URL 查询参数（仅 HTTP 模式生效）")
+    body_type: HttpBodyTypeEnum = Field(
+        default=HttpBodyTypeEnum.NONE,
+        description="HTTP 请求体类型: none=无, json=JSON, form=表单, raw=原始文本（仅 HTTP 模式生效）")
+    body_json: Any | None = Field(
+        default=None, description="HTTP JSON 请求体（body_type=json 时生效，仅 HTTP 模式生效）")
+    body_form: Dict[str, str] | None = Field(
+        default=None, description="HTTP 表单请求体（body_type=form 时生效，仅 HTTP 模式生效）")
+    body_raw: str | None = Field(
+        default=None, max_length=1000000, description="HTTP 原始文本请求体（body_type=raw 时生效，仅 HTTP 模式生效）")
+    raw_content_type: str | None = Field(
+        default=None, max_length=200,
+        description="HTTP 原始文本请求体的 Content-Type（body_type=raw 时生效，仅 HTTP 模式生效）")
+    follow_redirects: bool = Field(
+        default=True, description="是否自动跟随重定向（仅 HTTP 模式生效）")
+    proxy: str | None = Field(
+        default=None, max_length=500,
+        description="HTTP/HTTPS/SOCKS 代理地址（仅 HTTP 模式生效）")
+    timeout: float = Field(default=30000, ge=1000, le=300000,
+                           description="请求超时时间（毫秒）")
+    # RPC 模式专用：每个 method_name 对应独立的强类型 SQLModel 参数字段，与 HTTP params 完全分离
+    # 前端根据当前选中的 method_name 仅展示对应字段的表单，各方法参数相互独立
+    get_reserve_lottery_params: GetReserveLotteryRpcParams | None = Field(
+        default=None, description="get_reserve_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+    get_official_lottery_params: GetOfficialLotteryRpcParams | None = Field(
+        default=None, description="get_official_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+    get_charge_lottery_params: GetChargeLotteryRpcParams | None = Field(
+        default=None, description="get_charge_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+    get_topic_lottery_params: GetTopicLotteryRpcParams | None = Field(
+        default=None, description="get_topic_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+    get_all_lottery_params: GetAllLotteryRpcParams | None = Field(
+        default=None, description="get_all_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+    get_others_lot_dyn_list_params: GetOthersLotDynListRpcParams | None = Field(
+        default=None, description="get_others_lot_dyn_list 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+
+    @model_validator(mode="after")
+    def check_mode_exclusive(self) -> "FetchExternalDataParams":
+        """确保 method_name 和 url 至少提供一个，且两者互斥
+
+        RpcMethodName.NONE（空值）等价于 None，表示不使用 RPC、走 HTTP 模式。
+        """
+        is_rpc = self.method_name is not None and self.method_name != RpcMethodName.NONE
+        if not is_rpc and not self.url:
+            raise ValueError("必须提供 method_name（RPC 模式）或 url（HTTP 模式）中的一个")
+        if is_rpc and self.url:
+            raise ValueError("method_name 和 url 互斥，不可同时提供")
+        return self
+
+
+class PrintParams(BaseActionParams):
+    """打印参数操作参数 - 调试用，打印变量替换后的内容，不执行任何实际操作"""
+    message: str = Field(default="", max_length=10000,
+                         description="要打印的内容（支持 {{var}} 变量替换），执行时仅打印不执行其他操作")
+
+
 class LoopParams(BaseActionParams):
     """循环控制流操作参数
 
@@ -335,9 +431,9 @@ class LoopParams(BaseActionParams):
         也支持引用循环索引 "loop_index"。
     """
     # ── 循环来源配置 ──
-    loop_source: Literal["fixed_count", "variable", "expression"] = Field(
+    loop_source: Literal["fixed_count", "variable", "expression", "json_list"] = Field(
         default="fixed_count",
-        description="循环来源: fixed_count=固定次数, variable=从变量获取items, expression=表达式",
+        description="循环来源: fixed_count=固定次数, variable=从变量获取items, expression=表达式, json_list=直接传入JSON列表",
     )
     count: int = Field(default=1, ge=1, le=10000, description="固定循环次数（loop_source=fixed_count 时使用）")
     loop_items_var: str | None = Field(
@@ -347,6 +443,10 @@ class LoopParams(BaseActionParams):
     loop_items_expr: str | None = Field(
         default=None, max_length=500,
         description="循环项表达式（loop_source=expression 时使用）",
+    )
+    loop_items_json: list[Any] | None = Field(
+        default=None,
+        description="直接传入的 JSON 列表（loop_source=json_list 时使用），支持任意嵌套结构",
     )
 
     # ── 循环变量命名 ──
@@ -370,12 +470,12 @@ class LoopParams(BaseActionParams):
         default=None, description="循环分支步骤")
 
     # ── 控制条件 ──
-    break_condition: str | None = Field(
-        default=None, max_length=500,
-        description="break 条件表达式，每步执行后评估，为真时跳出整个循环")
-    continue_condition: str | None = Field(
-        default=None, max_length=500,
-        description="continue 条件表达式，每步执行后评估，为真时跳过当前迭代剩余步骤")
+    break_condition: ConditionRule | None = Field(
+        default=None,
+        description="break 条件规则（结构化条件），每次迭代开始前评估，为真时跳出整个循环")
+    continue_condition: ConditionRule | None = Field(
+        default=None,
+        description="continue 条件规则（结构化条件），每次迭代开始前评估，为真时跳过当前迭代")
 
     # 向后兼容旧字段
     loop_count: int | None = Field(default=None, exclude=True, description="[已废弃] 使用 count + loop_source")
@@ -399,7 +499,7 @@ class CompositeParams(BaseActionParams):
         default_factory=list, description="复合操作步骤")
 
 
-AllActionParams = ClickParams | InputParams | NavigateParams | NewPageParams | ScrollParams | WaitParams | HoverParams | GetTextParams | GetWindowParams | ScreenshotParams | LLMParams | LoopParams | IfElseParams | CompositeParams
+AllActionParams = ClickParams | InputParams | NavigateParams | NewPageParams | ScrollParams | WaitParams | HoverParams | GetTextParams | GetWindowParams | ScreenshotParams | LLMParams | FetchExternalDataParams | PrintParams | LoopParams | IfElseParams | CompositeParams
 
 # endregion
 
@@ -471,6 +571,25 @@ class LLMResult(SQLModel):
     raw_response: AIMessage = Field(description="原始响应")
 
 
+class FetchExternalDataResult(SQLModel):
+    """获取外部数据操作结果"""
+    status_code: int = Field(default=0, description="HTTP 状态码")
+    data: Any | None = Field(
+        default=None, description="响应数据（JSON 解析后的字典/列表，无法解析时为 None）")
+    text: str = Field(default="", description="响应文本（原始字符串）")
+    headers: Dict[str, str] = Field(
+        default_factory=dict, description="响应头（键值对）")
+    url: str = Field(default="", description="最终请求 URL（可能经过重定向）")
+    elapsed: float = Field(default=0.0, description="请求耗时（秒）")
+    is_json: bool = Field(
+        default=False, description="响应体是否为 JSON 格式")
+
+
+class PrintResult(SQLModel):
+    """打印操作结果"""
+    message: str = Field(default="", description="打印的内容")
+
+
 class LoopResult(SQLModel):
     """循环操作结果"""
     iterations: int = Field(default=0, description="迭代次数")
@@ -500,7 +619,7 @@ class CompositeResult(SQLModel):
     results: list[Dict] = Field(default_factory=list, description="各步骤结果")
 
 
-AllActionResult = ClickResult | InputResult | ScrollResult | WaitResult | HoverResult | GetTextResult | GetWindowResult | NavigateResult | NewPageResult | ScreenshotResult | LLMResult | LoopResult | IfElseResult | CompositeResult
+AllActionResult = ClickResult | InputResult | ScrollResult | WaitResult | HoverResult | GetTextResult | GetWindowResult | NavigateResult | NewPageResult | ScreenshotResult | LLMResult | FetchExternalDataResult | PrintResult | LoopResult | IfElseResult | CompositeResult
 
 BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
     BuiltinActionType.CLICK: ClickResult,
@@ -514,6 +633,8 @@ BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
     BuiltinActionType.NEW_PAGE: NewPageResult,
     BuiltinActionType.SCREENSHOT: ScreenshotResult,
     BuiltinActionType.LLM: LLMResult,
+    BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataResult,
+    BuiltinActionType.PRINT: PrintResult,
     BuiltinActionType.LOOP: LoopResult,
     BuiltinActionType.IF_ELSE: IfElseResult,
     BuiltinActionType.COMPOSITE: CompositeResult,
@@ -544,6 +665,8 @@ BUILTIN_ACTION_PARAMS_MAP: Dict[str, Type[AllActionParams]] = {
     BuiltinActionType.NEW_PAGE: NewPageParams,
     BuiltinActionType.SCREENSHOT: ScreenshotParams,
     BuiltinActionType.LLM: LLMParams,
+    BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataParams,
+    BuiltinActionType.PRINT: PrintParams,
     BuiltinActionType.LOOP: LoopParams,
     BuiltinActionType.IF_ELSE: IfElseParams,
     BuiltinActionType.COMPOSITE: CompositeParams,
@@ -645,6 +768,16 @@ class LLMWorkflowStep(BaseWorkflowStep[LLMParams]):
     action_type: Literal[BuiltinActionType.LLM] = BuiltinActionType.LLM  # type: ignore[assignment]
 
 
+class FetchExternalDataWorkflowStep(BaseWorkflowStep[FetchExternalDataParams]):
+    """获取外部数据步骤"""
+    action_type: Literal[BuiltinActionType.FETCH_EXTERNAL_DATA] = BuiltinActionType.FETCH_EXTERNAL_DATA  # type: ignore[assignment]
+
+
+class PrintWorkflowStep(BaseWorkflowStep[PrintParams]):
+    """打印参数步骤"""
+    action_type: Literal[BuiltinActionType.PRINT] = BuiltinActionType.PRINT  # type: ignore[assignment]
+
+
 class LoopWorkflowStep(BaseWorkflowStep[LoopParams]):
     """循环步骤"""
     action_type: Literal[BuiltinActionType.LOOP] = BuiltinActionType.LOOP  # type: ignore[assignment]
@@ -689,6 +822,8 @@ WorkflowStep = ClickWorkflowStep\
     | GetWindowWorkflowStep\
     | ScreenshotWorkflowStep\
     | LLMWorkflowStep\
+    | FetchExternalDataWorkflowStep\
+    | PrintWorkflowStep\
     | LoopWorkflowStep\
     | IfElseWorkflowStep\
     | CompositeWorkflowStep
@@ -709,6 +844,8 @@ _WORKFLOW_STEP_CLASS_MAP: dict[BuiltinActionType, type[BaseWorkflowStep[Any]]] =
     BuiltinActionType.GET_WINDOW: GetWindowWorkflowStep,
     BuiltinActionType.SCREENSHOT: ScreenshotWorkflowStep,
     BuiltinActionType.LLM: LLMWorkflowStep,
+    BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataWorkflowStep,
+    BuiltinActionType.PRINT: PrintWorkflowStep,
     BuiltinActionType.LOOP: LoopWorkflowStep,
     BuiltinActionType.IF_ELSE: IfElseWorkflowStep,
     BuiltinActionType.COMPOSITE: CompositeWorkflowStep,

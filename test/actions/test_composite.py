@@ -117,6 +117,9 @@ class TestCompositeActionWorkflow:
 
         assert result.success
         assert result.data.success_count == 3
+        # 验证变量注入后输入框的值
+        assert await self.page.input_value("#username") == "test_user_123"
+        assert await self.page.input_value("#email") == "test@example.com"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_input_and_verify(self):
@@ -217,6 +220,10 @@ class TestCompositeActionWorkflow:
         assert result.success
         assert result.data.total_steps == 5
         assert result.data.success_count == 5
+        # 验证多输入框的值
+        assert await self.page.input_value("#name") == "张三"
+        assert await self.page.input_value("#age") == "25"
+        assert await self.page.input_value("#city") == "北京"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_composite_hover_and_click(self):
@@ -284,7 +291,7 @@ class TestCompositeActionWorkflow:
         """测试：模拟完整登录流程"""
         from app.services.execution.actions.control_flow import CompositeAction
         logger.info("开始测试：模拟完整登录流程")
-        
+
         # 步骤 1: 导航到登录页
         await self.page.set_content(
             "<html><body>"
@@ -306,8 +313,8 @@ class TestCompositeActionWorkflow:
                 "login_pass": "password123",
             },
             params=CompositeParams(steps=[
-                create_workflow_step(action_id="input", params={"selector": "#username", "value": "{login_user}"}),
-                create_workflow_step(action_id="input", params={"selector": "#password", "value": "{login_pass}"}),
+                create_workflow_step(action_id="input", params={"selector": "#username", "value": "{{login_user}}"}),
+                create_workflow_step(action_id="input", params={"selector": "#password", "value": "{{login_pass}}"}),
                 create_workflow_step(action_id="click", params={"selector": "#login_btn"}),
                 create_workflow_step(action_id="screenshot", params={}),
             ]),
@@ -318,3 +325,9 @@ class TestCompositeActionWorkflow:
 
         assert result.success
         assert result.data.success_count == 4
+
+        # 验证输入值已正确填入，防止变量替换失效的假阳性
+        username_value = await self.page.input_value("#username")
+        assert username_value == "admin", f"Expected 'admin', got '{username_value}'"
+        password_value = await self.page.input_value("#password")
+        assert password_value == "password123", f"Expected 'password123', got '{password_value}'"

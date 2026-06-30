@@ -35,7 +35,7 @@ from loguru import logger
 
 from app.models.database.workflow.models import WorkflowStep
 from app.services.execution.crud_service import action_crud_svr, plugin_crud_svr, workflow_crud_svr
-from app.models.execution.action_params import ActionMetadata, PluginConfig, BaseWorkflowStep
+from app.models.execution.action_params import ActionMetadata, PluginConfig, BaseWorkflowStep, BuiltinActionType
 from app.models.execution.condition_models import ConditionRule
 from app.services.execution.actions.control_flow import CompositeAction as CompositeActionClass
 from app.services.execution.action_registry import action_registry
@@ -85,6 +85,7 @@ class ExecutionEngine:
             page=page,
             plugins=plugins or [],
             mid=req.mid,
+            auth_headers=getattr(req, 'auth_headers', {}) or {},
         )
 
     async def execute_steps(
@@ -111,6 +112,7 @@ class ExecutionEngine:
         """
         scope = Scope(req.variables)
         scope.set("execute_steps_func", self.execute_steps)
+        req_auth_headers = getattr(req, 'auth_headers', {}) or {}
 
         pipeline = PipelineBuilder.build(steps)
 
@@ -130,6 +132,7 @@ class ExecutionEngine:
                 page=page,
                 plugins=plugins or [],
                 mid=req.variables.get("mid", req.mid),
+                auth_headers=req_auth_headers,
             )
 
         return await pipeline.execute(scope, executor)
@@ -148,6 +151,7 @@ class ExecutionEngine:
         page: Page,
         plugins: List[PluginConfig],
         mid: int | str = 0,
+        auth_headers: dict[str, str] | None = None,
     ) -> ActionResult[Any]:
         """执行单个 action 的核心方法。
 
@@ -171,11 +175,22 @@ class ExecutionEngine:
         if not action_class:
             return self._fail(f"未找到操作: {action_id}", action_id, start, replaced_params=dict(params))
 
-        merged = scope.resolve_params(dict(params))
+        # InputAction 的变量缺失或为 None 时替换为空字符串
+        resolve_default = "" if action_id == BuiltinActionType.INPUT else None
+        merged = scope.resolve_params(dict(params), default=resolve_default)
         if issubclass(action_class, CompositeActionClass):
+            # 校验用户是否有权执行此复合操作（自身或公开）
+            ca_model = await action_crud_svr.get_by_action_id(action_id)
+            if ca_model and ca_model.mid != str(mid) and not ca_model.is_public:
+                return self._fail(f"无权访问操作: {action_id}", action_id, start, replaced_params=merged)
+
             db_steps = await action_registry.get_custom_action_steps(action_id)
             if db_steps and not merged.get("steps"):
                 merged["steps"] = db_steps
+            # 校验 steps 中引用的所有 ca_ 操作是否可访问，防止越权执行
+            steps_to_validate = merged.get("steps", [])
+            if steps_to_validate:
+                await action_crud_svr.validate_steps_referenced_actions(steps_to_validate, mid)
 
         action: BaseAction = action_class.new_action(
             mid=mid,
@@ -184,6 +199,8 @@ class ExecutionEngine:
             params=merged,
             output_vars=output_vars,
         )
+        # 透传本系统认证请求头，供 HTTP 请求类操作按需附带
+        action.auth_headers = auth_headers or {}
 
         ok, err = action.validate_params(merged)
         if not ok:

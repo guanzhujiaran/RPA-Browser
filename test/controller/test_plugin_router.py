@@ -8,15 +8,14 @@ import pytest
 
 from app.models.response_code import ResponseCode
 
-PREFIX = "/api/v1/rpa/browser/control"
+# 复用 conftest 中的 PREFIX
+from test.controller.conftest import PREFIX
 
 
 @pytest.mark.anyio
 class TestListPlugins:
 
-    async def test_list_plugins_success(self, client):
-        await self._create_plugin(client)
-
+    async def test_list_plugins_success(self, client, created_plugin):
         response = await client.post(f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 10})
 
         assert response.status_code == 200
@@ -24,38 +23,14 @@ class TestListPlugins:
         assert data["code"] == ResponseCode.SUCCESS
         assert data["data"]["total"] >= 1
         assert len(data["data"]["items"]) >= 1
-        assert data["data"]["items"][0]["name"] == "测试插件"
-
-    @staticmethod
-    async def _create_plugin(client):
-        action_data = {
-            "name": "插件测试动作",
-            "steps": [{"action_id": "click", "params": {}}],
-        }
-        action_resp = await client.post(f"{PREFIX}/custom-actions/create", json=action_data)
-        action_id = action_resp.json()["data"]["action_id"]
-
-        request_data = {
-            "name": "测试插件",
-            "hook_type": "before_action",
-            "custom_action_id": action_id,
-            "description": "这是一个测试插件",
-            "priority": 100,
-            "is_public": False,
-        }
-        return await client.post(f"{PREFIX}/plugins/create", json=request_data)
+        assert data["data"]["items"][0]["name"] == "fixture_plugin"
 
 
 @pytest.mark.anyio
 class TestCreatePlugin:
 
-    async def test_create_plugin_success(self, client):
-        action_data = {
-            "name": "插件测试动作",
-            "steps": [{"action_id": "click", "params": {}}],
-        }
-        action_resp = await client.post(f"{PREFIX}/custom-actions/create", json=action_data)
-        action_id = action_resp.json()["data"]["action_id"]
+    async def test_create_plugin_success(self, client, created_action):
+        _, action_id = created_action
 
         request_data = {
             "name": "测试插件",
@@ -78,12 +53,11 @@ class TestCreatePlugin:
 @pytest.mark.anyio
 class TestUpdatePlugin:
 
-    async def test_update_plugin_success(self, client):
-        create_resp = await self._create_plugin(client)
-        plugin_id = create_resp.json()["data"]["id"]
+    async def test_update_plugin_success(self, client, created_plugin):
+        db_id, plugin_id = created_plugin
 
         request_data = {
-            "id": plugin_id,
+            "id": db_id,
             "name": "更新后的插件",
             "description": "更新后的描述",
             "hook_type": "after_action",
@@ -102,53 +76,34 @@ class TestUpdatePlugin:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] != ResponseCode.SUCCESS
+        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
 
-    async def test_update_plugin_enable(self, client):
-        create_resp = await self._create_plugin(client)
-        plugin_id = create_resp.json()["data"]["id"]
+    async def test_update_plugin_enable(self, client, created_plugin):
+        db_id, plugin_id = created_plugin
 
-        response = await client.post(f"{PREFIX}/plugins/update", json={"id": plugin_id, "is_enabled": True})
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == ResponseCode.SUCCESS
-
-    async def test_update_plugin_disable(self, client):
-        create_resp = await self._create_plugin(client)
-        plugin_id = create_resp.json()["data"]["id"]
-
-        response = await client.post(f"{PREFIX}/plugins/update", json={"id": plugin_id, "is_enabled": False})
+        response = await client.post(f"{PREFIX}/plugins/update", json={"id": db_id, "is_enabled": True})
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
 
-    @staticmethod
-    async def _create_plugin(client):
-        action_data = {
-            "name": "插件测试动作",
-            "steps": [{"action_id": "click", "params": {}}],
-        }
-        action_resp = await client.post(f"{PREFIX}/custom-actions/create", json=action_data)
-        action_id = action_resp.json()["data"]["action_id"]
+    async def test_update_plugin_disable(self, client, created_plugin):
+        db_id, plugin_id = created_plugin
 
-        request_data = {
-            "name": "更新测试插件",
-            "hook_type": "before_action",
-            "custom_action_id": action_id,
-        }
-        return await client.post(f"{PREFIX}/plugins/create", json=request_data)
+        response = await client.post(f"{PREFIX}/plugins/update", json={"id": db_id, "is_enabled": False})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS
 
 
 @pytest.mark.anyio
 class TestDeletePlugin:
 
-    async def test_delete_plugin_success(self, client):
-        create_resp = await self._create_plugin(client)
-        plugin_id = create_resp.json()["data"]["id"]
+    async def test_delete_plugin_success(self, client, created_plugin):
+        db_id, plugin_id = created_plugin
 
-        response = await client.post(f"{PREFIX}/plugins/delete", params={"id": plugin_id})
+        response = await client.post(f"{PREFIX}/plugins/delete", params={"id": db_id})
 
         assert response.status_code == 200
         data = response.json()
@@ -159,48 +114,36 @@ class TestDeletePlugin:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] != ResponseCode.SUCCESS
+        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
 
     async def test_delete_plugin_no_permission(self, client):
+        """测试删除不存在的插件（权限检查前先返回 NOT_FOUND）"""
         response = await client.post(f"{PREFIX}/plugins/delete", params={"id": 999})
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] != ResponseCode.SUCCESS
-
-    @staticmethod
-    async def _create_plugin(client):
-        action_data = {
-            "name": "插件测试动作",
-            "steps": [{"action_id": "click", "params": {}}],
-        }
-        action_resp = await client.post(f"{PREFIX}/custom-actions/create", json=action_data)
-        action_id = action_resp.json()["data"]["action_id"]
-
-        request_data = {
-            "name": "删除测试插件",
-            "hook_type": "before_action",
-            "custom_action_id": action_id,
-        }
-        return await client.post(f"{PREFIX}/plugins/create", json=request_data)
+        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
 
 
 @pytest.mark.anyio
 class TestForkPlugin:
 
-    async def test_fork_plugin_success(self, client):
-        await self._create_public_plugin(client)
+    async def test_fork_plugin_success(self, client, created_plugin):
+        db_id, plugin_id = created_plugin
+
+        # 先将插件设为公开
+        await client.post(f"{PREFIX}/plugins/update", json={"id": db_id, "is_public": True})
 
         list_resp = await client.post(f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 100})
-        plugin_id = None
+        found_id = None
         for item in list_resp.json()["data"]["items"]:
-            if item["name"] == "Fork源插件":
-                plugin_id = item["id"]
+            if item["plugin_id"] == plugin_id:
+                found_id = item["id"]
                 break
 
-        assert plugin_id is not None
+        assert found_id is not None
 
-        response = await client.post(f"{PREFIX}/plugins/fork", json={"id": plugin_id, "new_name": "我的 Fork"})
+        response = await client.post(f"{PREFIX}/plugins/fork", json={"id": found_id, "new_name": "我的 Fork"})
 
         assert response.status_code == 200
         data = response.json()
@@ -212,77 +155,35 @@ class TestForkPlugin:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] != ResponseCode.SUCCESS
+        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
 
-    async def test_fork_plugin_not_public(self, client):
-        await self._create_private_plugin(client)
+    async def test_fork_plugin_not_public(self, client, created_plugin):
+        db_id, plugin_id = created_plugin
+        # created_plugin 默认 is_public=False
 
         list_resp = await client.post(f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 100})
-        plugin_id = None
+        found_id = None
         for item in list_resp.json()["data"]["items"]:
-            if item["name"] == "私有插件":
-                plugin_id = item["id"]
+            if item["plugin_id"] == plugin_id:
+                found_id = item["id"]
                 break
 
-        assert plugin_id is not None
+        assert found_id is not None
 
-        response = await client.post(f"{PREFIX}/plugins/fork", json={"id": plugin_id})
+        response = await client.post(f"{PREFIX}/plugins/fork", json={"id": found_id})
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] != ResponseCode.SUCCESS
-
-    @staticmethod
-    async def _create_public_plugin(client):
-        action_data = {
-            "name": "插件测试动作",
-            "steps": [{"action_id": "click", "params": {}}],
-        }
-        action_resp = await client.post(f"{PREFIX}/custom-actions/create", json=action_data)
-        action_id = action_resp.json()["data"]["action_id"]
-
-        request_data = {
-            "name": "Fork源插件",
-            "hook_type": "before_action",
-            "custom_action_id": action_id,
-            "is_public": True,
-        }
-        return await client.post(f"{PREFIX}/plugins/create", json=request_data)
-
-    @staticmethod
-    async def _create_private_plugin(client):
-        action_data = {
-            "name": "插件测试动作",
-            "steps": [{"action_id": "click", "params": {}}],
-        }
-        action_resp = await client.post(f"{PREFIX}/custom-actions/create", json=action_data)
-        action_id = action_resp.json()["data"]["action_id"]
-
-        request_data = {
-            "name": "私有插件",
-            "hook_type": "before_action",
-            "custom_action_id": action_id,
-            "is_public": False,
-        }
-        return await client.post(f"{PREFIX}/plugins/create", json=request_data)
+        assert data["code"] == ResponseCode.FORBIDDEN, f"Expected FORBIDDEN, got {data['code']}: {data.get('message')}"
 
 
 @pytest.mark.anyio
 class TestGetPluginForks:
 
-    async def test_get_plugin_forks_success(self, client):
-        await self._create_plugin(client)
+    async def test_get_plugin_forks_success(self, client, created_plugin):
+        db_id, plugin_id = created_plugin
 
-        list_resp = await client.post(f"{PREFIX}", json={"page": 1, "per_page": 100})
-        plugin_id = None
-        for item in list_resp.json()["data"]["items"]:
-            if item["name"] == "Fork源插件":
-                plugin_id = item["id"]
-                break
-
-        assert plugin_id is not None
-
-        response = await client.get(f"{PREFIX}/plugins/{plugin_id}/forks")
+        response = await client.get(f"{PREFIX}/plugins/{db_id}/forks")
 
         assert response.status_code == 200
         data = response.json()
@@ -293,21 +194,4 @@ class TestGetPluginForks:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] != ResponseCode.SUCCESS
-
-    @staticmethod
-    async def _create_plugin(client):
-        action_data = {
-            "name": "插件测试动作",
-            "steps": [{"action_id": "click", "params": {}}],
-        }
-        action_resp = await client.post(f"{PREFIX}/custom-actions/create", json=action_data)
-        action_id = action_resp.json()["data"]["action_id"]
-
-        request_data = {
-            "name": "Fork源插件",
-            "hook_type": "before_action",
-            "custom_action_id": action_id,
-            "is_public": True,
-        }
-        return await client.post(f"{PREFIX}/plugins/create", json=request_data)
+        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"

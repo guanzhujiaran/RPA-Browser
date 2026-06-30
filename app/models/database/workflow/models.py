@@ -139,9 +139,6 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     )
     is_composite: bool = Field(default=True, description="是否为组合动作")
     description: str = Field(default="", max_length=500, description="动作描述")
-    author: str = Field(default="", max_length=100)
-    tags: List[str] = Field(default_factory=list,
-                            sa_column=Column(JSON), description="标签")
     input_vars: List[Dict] = Field(
         default_factory=list,
         sa_column=Column(JSON),
@@ -161,6 +158,18 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     retry_on_error: bool = Field(default=False)
     retry_times: int = Field(default=0)
     retry_delay: float = Field(default=1.0)
+
+
+class TagModel(SQLModel, table=True):
+    """标签表（多对多）"""
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, max_length=100, index=True)
+
+
+class CompositeActionTagLink(SQLModel, table=True):
+    """复合操作-标签多对多关联表"""
+    composite_action_id: int = Field(foreign_key="compositeactionmodel.id", primary_key=True)
+    tag_id: int = Field(foreign_key="tagmodel.id", primary_key=True)
 
 
 class WorkflowPluginRelation(SQLModel, table=True):

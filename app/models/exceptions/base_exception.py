@@ -117,3 +117,21 @@ class NameAlreadyExistsException(BaseException):
 
     def __init__(self, name: str, name_type: str = "项目"):
         self.msg = self.msg.format(name=name, name_type=name_type)
+
+
+class ActionNotAccessibleException(BaseException):
+    """无权访问自定义操作异常"""
+    code = ResponseCode.FORBIDDEN
+    msg = "无权访问操作: {action_id}"
+
+    def __init__(self, action_id: str):
+        self.msg = self.msg.format(action_id=action_id)
+
+
+class ActionNotFoundException(BaseException):
+    """引用的自定义操作不存在异常"""
+    code = ResponseCode.NOT_FOUND
+    msg = "引用的操作不存在: {action_id}"
+
+    def __init__(self, action_id: str):
+        self.msg = self.msg.format(action_id=action_id)

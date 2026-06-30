@@ -281,6 +281,12 @@ class AtomicStrategy(ExecutionStrategy):
                                     params = {}
                             if not params.get("steps"):
                                 params["steps"] = db_steps
+                            # 校验 steps 中引用的所有 ca_ 操作是否可访问，防止越权执行
+                            from app.services.execution.crud_service import action_crud_svr
+                            await action_crud_svr.validate_steps_referenced_actions(
+                                params["steps"] if isinstance(params, dict) else params.steps,
+                                self.mid,
+                            )
 
             if not action_class:
                 raise ValueError(f"未找到操作: {action_id}")
@@ -493,9 +499,14 @@ class LoopStrategy(ExecutionStrategy):
         loop_item_var = getattr(params, 'loop_item_var', None) or params.get("loop_item_var") or "loop_item"  # type: ignore[union-attr]
         loop_index_var = getattr(params, 'loop_index_var', None) or params.get("loop_index_var") or "loop_index"  # type: ignore[union-attr]
 
-        # 获取 break/continue 条件
+        # 获取 break/continue 条件（支持 dict 或 ConditionRule）
         break_cond = getattr(params, 'break_condition', None) or params.get("break_condition")  # type: ignore[union-attr]
         continue_cond = getattr(params, 'continue_condition', None) or params.get("continue_condition")  # type: ignore[union-attr]
+        # dict 反序列化为 ConditionRule（JSON 从前端传来时是 dict）
+        if isinstance(break_cond, dict):
+            break_cond = ConditionRule.model_validate(break_cond)
+        if isinstance(continue_cond, dict):
+            continue_cond = ConditionRule.model_validate(continue_cond)
 
         # 创建循环迭代器
         loop_iterator = self._create_loop_iterator(params)
@@ -523,6 +534,16 @@ class LoopStrategy(ExecutionStrategy):
                 self.context.variables[loop_index_var] = index
                 self.context.variables[loop_item_var] = item
                 self.context.variables["loop_total"] = loop_iterator.total
+
+                # 每次迭代开始前评估 break 条件
+                if break_cond and self._evaluate_condition(break_cond):
+                    was_broken = True
+                    break
+
+                # 每次迭代开始前评估 continue 条件
+                if continue_cond and self._evaluate_condition(continue_cond):
+                    was_continued = True
+                    continue
 
                 # 解析参数映射
                 mapped_params = self._resolve_param_mapping(params, loop_item_var, loop_index_var)
@@ -573,6 +594,14 @@ class LoopStrategy(ExecutionStrategy):
         loop_source = params.get("loop_source", "fixed_count")
         loop_items_var = params.get("loop_items_var")
         loop_items_expr = params.get("loop_items_expr")
+        loop_items_json = params.get("loop_items_json")
+
+        if loop_source == "json_list" and loop_items_json:
+            # 直接使用传入的 JSON 列表
+            if isinstance(loop_items_json, list):
+                return ListIterator(loop_items_json)
+            logger.warning(f"loop_items_json 不是列表类型: {type(loop_items_json)}")
+            return ListIterator([])
 
         if loop_source == "variable" and loop_items_var:
             # 从变量中解析 items 列表
@@ -884,6 +913,16 @@ class LoopAction(BaseAction[LoopParams]):
         count = getattr(self.params, 'count', 1) or 1
         loop_items_var = getattr(self.params, 'loop_items_var', None)
         loop_items_expr = getattr(self.params, 'loop_items_expr', None)
+        loop_items_json = getattr(self.params, 'loop_items_json', None)
+
+        # 获取 break/continue 条件（支持 dict 或 ConditionRule）
+        break_cond_raw = getattr(self.params, 'break_condition', None)
+        continue_cond_raw = getattr(self.params, 'continue_condition', None)
+        # dict 反序列化为 ConditionRule（JSON 从前端传来时是 dict）
+        if isinstance(break_cond_raw, dict):
+            break_cond_raw = ConditionRule.model_validate(break_cond_raw)
+        if isinstance(continue_cond_raw, dict):
+            continue_cond_raw = ConditionRule.model_validate(continue_cond_raw)
 
         # 向后兼容旧参数
         loop_count = getattr(self.params, 'loop_count', None)
@@ -892,12 +931,37 @@ class LoopAction(BaseAction[LoopParams]):
 
         results: list[dict] = []
 
-        if loop_source == "variable" and loop_items_var:
+        if loop_source == "json_list" and loop_items_json:
+            # 直接使用传入的 JSON 列表
+            items = loop_items_json if isinstance(loop_items_json, list) else []
+            for i, item_value in enumerate(items):
+                context.variables[loop_index_var] = i
+                context.variables[loop_item_var] = item_value
+                # 每次迭代开始前评估 break 条件
+                if break_cond_raw and evaluate_rule(break_cond_raw, context.variables):
+                    break
+                # 每次迭代开始前评估 continue 条件
+                if continue_cond_raw and evaluate_rule(continue_cond_raw, context.variables):
+                    continue
+                mapped = self._resolve_param_mapping_static(param_mapping, item_value, context.variables, loop_item_var, loop_index_var)
+                mapped_children = self._inject_params_to_children(children, mapped)
+                child_results = await self._execute_steps_with_context(executor, mapped_children)
+                results.extend(child_results)
+                if child_results and not child_results[-1].get("success"):
+                    break
+
+        elif loop_source == "variable" and loop_items_var:
             # 从变量获取 items 列表
             items = self._resolve_items_from_variable(context, loop_items_var)
             for i, item_value in enumerate(items):
                 context.variables[loop_index_var] = i
                 context.variables[loop_item_var] = item_value
+                # 每次迭代开始前评估 break 条件
+                if break_cond_raw and evaluate_rule(break_cond_raw, context.variables):
+                    break
+                # 每次迭代开始前评估 continue 条件
+                if continue_cond_raw and evaluate_rule(continue_cond_raw, context.variables):
+                    continue
                 mapped = self._resolve_param_mapping_static(param_mapping, item_value, context.variables, loop_item_var, loop_index_var)
                 mapped_children = self._inject_params_to_children(children, mapped)
                 child_results = await self._execute_steps_with_context(executor, mapped_children)
@@ -911,6 +975,12 @@ class LoopAction(BaseAction[LoopParams]):
             for i, item_value in enumerate(items):
                 context.variables[loop_index_var] = i
                 context.variables[loop_item_var] = item_value
+                # 每次迭代开始前评估 break 条件
+                if break_cond_raw and evaluate_rule(break_cond_raw, context.variables):
+                    break
+                # 每次迭代开始前评估 continue 条件
+                if continue_cond_raw and evaluate_rule(continue_cond_raw, context.variables):
+                    continue
                 mapped = self._resolve_param_mapping_static(param_mapping, item_value, context.variables, loop_item_var, loop_index_var)
                 mapped_children = self._inject_params_to_children(children, mapped)
                 child_results = await self._execute_steps_with_context(executor, mapped_children)
@@ -923,6 +993,12 @@ class LoopAction(BaseAction[LoopParams]):
             for i in range(loop_count):
                 context.variables[loop_index_var] = i
                 context.variables[loop_item_var] = None
+                # 每次迭代开始前评估 break 条件
+                if break_cond_raw and evaluate_rule(break_cond_raw, context.variables):
+                    break
+                # 每次迭代开始前评估 continue 条件
+                if continue_cond_raw and evaluate_rule(continue_cond_raw, context.variables):
+                    continue
                 mapped = self._resolve_param_mapping_static(param_mapping, None, context.variables, loop_item_var, loop_index_var)
                 mapped_children = self._inject_params_to_children(children, mapped)
                 child_results = await self._execute_children_with_condition(
@@ -938,6 +1014,12 @@ class LoopAction(BaseAction[LoopParams]):
             for i in range(count):
                 context.variables[loop_index_var] = i
                 context.variables[loop_item_var] = None
+                # 每次迭代开始前评估 break 条件
+                if break_cond_raw and evaluate_rule(break_cond_raw, context.variables):
+                    break
+                # 每次迭代开始前评估 continue 条件
+                if continue_cond_raw and evaluate_rule(continue_cond_raw, context.variables):
+                    continue
                 mapped = self._resolve_param_mapping_static(param_mapping, None, context.variables, loop_item_var, loop_index_var)
                 mapped_children = self._inject_params_to_children(children, mapped)
                 child_results = await self._execute_children_with_condition(

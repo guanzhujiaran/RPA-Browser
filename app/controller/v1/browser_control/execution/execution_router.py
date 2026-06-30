@@ -34,6 +34,7 @@ from app.models.workflow.models import (
     ExecuteStepResponse,
 )
 from app.services.execution.crud_service import workflow_crud_svr
+from app.models.execution.system_services import build_method_responses, RpcMethodInfoResponse
 from ..base import new_execution_router
 
 router = new_execution_router()
@@ -81,6 +82,14 @@ def _build_steps(step_reqs):
     return steps
 
 
+def _build_auth_headers(auth_info) -> dict[str, str]:
+    """从认证信息构建本系统认证请求头，供 HTTP 请求类操作按需透传"""
+    return {
+        "x-bili-mid": str(auth_info.mid),
+        "x-bili-level": f"level{auth_info.level}",
+    }
+
+
 # ============ 操作执行 API ============
 
 
@@ -100,6 +109,7 @@ async def execute_action(
         input_data=merged_vars,
         output_vars=request.output_vars,
         page_index=request.page_index,
+        auth_headers=_build_auth_headers(browser_info.auth_info),
     )
     page = await _resolve_page(browser_info.auth_info.mid, browser_info.browser_id, request.page_index)
     result = await execution_engine.execute_action(
@@ -147,6 +157,7 @@ async def execute_workflow(
         input_data=request.input_data,
         output_vars=request.output_vars,
         page_index=request.page_index,
+        auth_headers=_build_auth_headers(browser_info.auth_info),
     )
 
     page = await _resolve_page(mid, bid, request.page_index)
@@ -298,6 +309,7 @@ async def execute_action_step(
         mid = browser_info.auth_info.mid
         bid = browser_info.browser_id
         page = await _resolve_page(mid, bid, request.page_index)
+        auth_headers = _build_auth_headers(browser_info.auth_info)
 
         action_class = await action_registry.get_action_class_for_user(request.action_id)
         if not action_class:
@@ -313,6 +325,7 @@ async def execute_action_step(
             page_index=request.page_index,
             action_id=request.action_id,
             params=request.params,
+            auth_headers=auth_headers,
         )
 
         if issubclass(action_class, CompositeActionClass):
@@ -332,6 +345,7 @@ async def execute_action_step(
                 page_index=request.page_index,
                 action_id=step["action_id"],
                 params=step_params,
+                auth_headers=auth_headers,
             )
             result = await execution_engine.execute_action(
                 step_req,
@@ -368,3 +382,22 @@ async def execute_action_step(
         )
     except ValueError as e:
         return error_response(ResponseCode.BUSINESS_ERROR, str(e))
+
+
+# ============ 系统 RPC 方法查询 API ============
+
+
+@router.get(
+    BrowserControlRouterPath.system_services_list,
+    summary="获取可用的系统 RPC 方法列表",
+)
+async def list_system_services() -> StandardResponse[list[RpcMethodInfoResponse]]:
+    """获取获取外部数据 Action 可选的 RPC 业务方法列表
+
+    前端在配置获取外部数据 Action 时，应从该接口获取可选方法列表作为可选项展示，
+    不允许用户随意输入外部方法名。每个方法对应一个独立的 RabbitMQ routing_key，
+    由 FastapiApp 侧 RPC 服务端处理。
+    """
+    return success_response(
+        build_method_responses()
+    )

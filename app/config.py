@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     proxy_server_url: str = "http://127.0.0.1:10809"  # 可以访问外网的代理地址
     github_proxy_url: str = "https://gh-proxy.com/"
 
+    # RabbitMQ 连接地址，用于 HTTP 请求 Action 通过 RPC 调用 FastapiApp 内部业务方法
+    # 后端定时执行工作流时通过 RabbitMQ RPC 调用系统接口，不经过网关、不依赖 JWT
+    # heartbeat=180：与服务端保持一致，避免 handler 执行时间较长时 heartbeat 超时导致连接关闭
+    rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/?heartbeat=180"
+
     admin_base_path: str = "/admin_api"
 
     model_config = SettingsConfigDict(

@@ -39,3 +39,22 @@ class KeyboardModifierEnum(StrEnum):
     CONTROL = "Control"
     META = "Meta"
     SHIFT = "Shift"
+
+
+class HttpMethodEnum(StrEnum):
+    """HTTP 请求方法枚举"""
+    GET = "GET"
+    POST = "POST"
+    PUT = "PUT"
+    DELETE = "DELETE"
+    PATCH = "PATCH"
+    HEAD = "HEAD"
+    OPTIONS = "OPTIONS"
+
+
+class HttpBodyTypeEnum(StrEnum):
+    """HTTP 请求体类型枚举"""
+    NONE = "none"
+    JSON = "json"
+    FORM = "form"
+    RAW = "raw"

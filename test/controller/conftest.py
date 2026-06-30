@@ -15,8 +15,9 @@ from app.controller.v1.browser_control.execution.plugin_router import router as 
 from app.controller.v1.browser_control.execution.execution_router import router as execution_router
 from app.utils.depends.mid_depends import get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
+from app.models.response_code import ResponseCode
 
-
+PREFIX = "/api/v1/rpa/browser/control"
 TEST_MID = 12345678
 
 
@@ -65,17 +66,80 @@ async def client(mock_auth):
 
 @pytest.fixture(autouse=True)
 async def _cleanup_db():
-    """每个测试前后清理数据库，避免跨测试数据污染"""
+    """每个测试前后清理数据库，按外键依赖倒序删除避免约束冲突"""
     yield
-    # 测试后清理所有表
-    from sqlmodel import select
+    from sqlmodel import delete
     from app.models.database.workflow.models import (
-        UserWorkflow, CompositeActionModel, UserPlugin,
+        ResourceReport, ResourceLike,
+        UserPlugin, UserWorkflow, CompositeActionModel,
     )
 
     async with DatabaseSessionManager.async_session() as session:
-        for model in [UserPlugin, UserWorkflow, CompositeActionModel]:
-            result = await session.exec(select(model))
-            for obj in result.all():
-                await session.delete(obj)
+        # 按外键依赖倒序删除：先删子表（引用表），再删父表（被引用表）
+        for model in [
+            ResourceReport,          # 引用 ResourceLike 以外的各资源
+            ResourceLike,            # 引用各资源
+            UserPlugin,              # 引用 CompositeActionModel
+            UserWorkflow,            # 引用 CompositeActionModel
+            CompositeActionModel,    # 主表，被其他表引用
+        ]:
+            await session.exec(delete(model))
         await session.commit()
+
+
+# ═══════════════ 通用 Fixtures：消除各测试文件中的重复代码 ═══════════════
+
+@pytest.fixture
+async def created_action(client) -> tuple[int, str]:
+    """创建测试用自定义操作，返回 (db_id, action_id)"""
+    resp = await client.post(f"{PREFIX}/custom-actions/create", json={
+        "name": "fixture_action",
+        "steps": [{"action_id": "click", "params": {}}],
+    })
+    data = resp.json()
+    assert data["code"] == ResponseCode.SUCCESS
+    return data["data"]["id"], data["data"]["action_id"]
+
+
+@pytest.fixture
+async def created_public_action(client) -> tuple[int, str]:
+    """创建公开的自定义操作，返回 (db_id, action_id)"""
+    resp = await client.post(f"{PREFIX}/custom-actions/create", json={
+        "name": "public_fixture_action",
+        "steps": [{"action_id": "click", "params": {}}],
+        "is_public": True,
+    })
+    data = resp.json()
+    assert data["code"] == ResponseCode.SUCCESS
+    return data["data"]["id"], data["data"]["action_id"]
+
+
+@pytest.fixture
+async def created_workflow(client) -> tuple[int, str]:
+    """创建测试用工作流，返回 (db_id, workflow_id)"""
+    resp = await client.post(f"{PREFIX}/workflows/create", json={
+        "name": "fixture_workflow",
+    })
+    data = resp.json()
+    assert data["code"] == ResponseCode.SUCCESS
+    return data["data"]["id"], data["data"]["workflow_id"]
+
+
+@pytest.fixture
+async def created_plugin(client) -> tuple[int, str]:
+    """创建测试用插件，返回 (db_id, plugin_id)"""
+    # 先创建一个 action 作为插件的关联操作
+    action_resp = await client.post(f"{PREFIX}/custom-actions/create", json={
+        "name": "plugin_fixture_action",
+        "steps": [{"action_id": "click", "params": {}}],
+    })
+    action_id = action_resp.json()["data"]["action_id"]
+
+    resp = await client.post(f"{PREFIX}/plugins/create", json={
+        "name": "fixture_plugin",
+        "hook_type": "before_action",
+        "custom_action_id": action_id,
+    })
+    data = resp.json()
+    assert data["code"] == ResponseCode.SUCCESS
+    return data["data"]["id"], data["data"]["plugin_id"]

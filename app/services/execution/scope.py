@@ -82,16 +82,26 @@ class Scope:
 
     _TEMPLATE_RE = re.compile(r"\{\{([\w.]+)\}\}")
 
-    def resolve_text(self, text: str) -> str:
-        """替换字符串中的 {{var}} 模板。"""
+    def resolve_text(self, text: str, default: str | None = None) -> str:
+        """替换字符串中的 {{var}} 模板。
+
+        Args:
+            default: 缺失或值为 None 时的默认返回值。None 表示保留原行为
+                     （缺失变量保留 {{var}} 字面量，None 值转为 "None" 字符串）。
+        """
         if "{{" not in text:
             return text
-        return self._TEMPLATE_RE.sub(
-            lambda m: str(self.get(m.group(1), m.group(0))),
-            text,
-        )
 
-    def resolve_params(self, params: Any) -> Any:
+        def _replace(m):
+            if default is not None:
+                val = self.get(m.group(1))
+                return default if val is None else str(val)
+            # 向后兼容：缺失变量保留字面量，None 值转为 "None" 字符串
+            return str(self.get(m.group(1), m.group(0)))
+
+        return self._TEMPLATE_RE.sub(_replace, text)
+
+    def resolve_params(self, params: Any, default: str | None = None) -> Any:
         """递归替换参数树中的模板变量。
 
         算法：深度优先遍历 dict/list/str 结构。
@@ -100,19 +110,22 @@ class Scope:
             - list: 递归处理 elements
             - 其他: 原样返回
 
+        Args:
+            default: 缺失或值为 None 时的默认返回值。None 表示保留原行为。
+
         时间复杂度：O(N)，N 为参数树中所有字符串总长度。
         """
         if params is None:
             return params
         if isinstance(params, str):
-            return self.resolve_text(params)
+            return self.resolve_text(params, default)
         if isinstance(params, dict):
-            return {k: self.resolve_params(v) for k, v in params.items()}
+            return {k: self.resolve_params(v, default) for k, v in params.items()}
         if isinstance(params, list):
-            return [self.resolve_params(v) for v in params]
+            return [self.resolve_params(v, default) for v in params]
         # Pydantic 模型
         if hasattr(params, "model_dump"):
-            return self.resolve_params(params.model_dump())
+            return self.resolve_params(params.model_dump(), default)
         return params
 
     # ─── 快照 ───────────────────────────────────────────

@@ -284,11 +284,12 @@ class TestExecutionEngineDatabaseWorkflow:
                 s = workflow_step_adapter.validate_python(_ensure_action_type(s))
             normalized_steps.append(s)
 
-        result = await execution_engine._execute_steps(
+        result = await execution_engine.execute_steps(
             req,
             steps=normalized_steps,
             session_id="test_session",
             browser_id="test_browser",
+            page=self.page,
             plugins=plugins,
         )
 

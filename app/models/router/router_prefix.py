@@ -55,6 +55,8 @@ class BrowserControlRouterPath(StrEnum):
     custom_actions_update = "/custom-actions/update"
     custom_actions_delete = "/custom-actions/delete"
     custom_actions_tags = "/custom-actions/tags"
+    custom_actions_tags_search = "/custom-actions/tags/search"
+    custom_actions_names_search = "/custom-actions/names/search"
 
     # === 工作流管理 ===
     workflows_list = "/workflows/list"
@@ -70,6 +72,9 @@ class BrowserControlRouterPath(StrEnum):
     community_actions_list = "/community/actions/list"
     community_workflows_list = "/community/workflows/list"
     community_plugins_list = "/community/plugins/list"
+
+    # === 系统微服务 ===
+    system_services_list = "/system-services/list"
 
     # === WebRTC 视频流 ===
     webrtc_offer = "/webrtc/offer"

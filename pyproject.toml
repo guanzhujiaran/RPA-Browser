@@ -41,6 +41,7 @@ dependencies = [
     "aiounittest>=1.5.0",
     "httpx2>=2.3.0",
     "langchain-openai>=0.3.0",
+    "faststream[rabbit]>=0.6.7",
 ]
 [tool.uv]
 python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"

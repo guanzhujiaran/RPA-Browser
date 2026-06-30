@@ -109,7 +109,9 @@ class AtomicStep(StepNode):
         # 将 input_vars 合并到当前作用域，使后续模板 {{key}} 可解析到值
         if self.input_vars:
             scope.update(self.input_vars)
-        replaced = scope.resolve_params(self.params)
+        # InputAction 的变量缺失或为 None 时替换为空字符串
+        default = "" if self.action_id == BuiltinActionType.INPUT else None
+        replaced = scope.resolve_params(self.params, default=default)
         return await executor(
             action_id=self.action_id,
             params=replaced,

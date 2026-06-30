@@ -10,6 +10,7 @@ from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from fastapi import Depends
 from app.services.execution.crud_service import action_crud_svr
+from app.services.execution.crud_service.action_crud import ActionCrudService
 from app.models.workflow.models import (
     CompositeActionCreateRequest,
     CompositeActionUpdateRequest,
@@ -21,6 +22,9 @@ from app.models.workflow.models import (
     ActionForkRequest,
     ActionForkResponse,
     InputVarDefinition,
+    TagSearchRequest,
+    TagWithCount,
+    NameSearchRequest,
 )
 from app.models.execution.action_params import ActionMetadataResponse
 from app.models.base.base_sqlmodel import BasePaginationResp
@@ -32,36 +36,6 @@ router = new_action_router()
 def _convert_steps(steps: list) -> list[Dict]:
     """将 WorkflowStep 列表转换为 dict 列表"""
     return [step.model_dump() if hasattr(step, "model_dump") else step for step in steps]
-
-
-def _collect_composite_action_ids(steps: list[Dict]) -> list[str]:
-    """递归收集 steps 中所有 ca_ 开头的 action_id"""
-    ids: list[str] = []
-    for step in steps:
-        action_id = step.get("action_id", "")
-        if isinstance(action_id, str) and action_id.startswith("ca_"):
-            ids.append(action_id)
-        params = step.get("params")
-        if isinstance(params, dict):
-            for key in ("TrueBranch", "FalseBranch", "loopBranch"):
-                branch = params.get(key)
-                if isinstance(branch, list):
-                    ids.extend(_collect_composite_action_ids(branch))
-    return ids
-
-
-def _annotate_step_names(steps: list[Dict], name_map: Dict[str, str]) -> None:
-    """递归为 steps 中 ca_ 开头的 action_id 补充 name 字段"""
-    for step in steps:
-        action_id = step.get("action_id", "")
-        if isinstance(action_id, str) and action_id.startswith("ca_"):
-            step["name"] = name_map.get(action_id, action_id)
-        params = step.get("params")
-        if isinstance(params, dict):
-            for key in ("TrueBranch", "FalseBranch", "loopBranch"):
-                branch = params.get(key)
-                if isinstance(branch, list):
-                    _annotate_step_names(branch, name_map)
 
 
 # ============ 系统预注册操作（只读，全 POST） ============
@@ -130,6 +104,9 @@ async def create_custom_action(
         for var in (model.input_vars or [])
     ]
 
+    # 从多对多关联表加载标签
+    tags = await action_crud_svr.get_tags_for_action(model.id)
+
     return success_response(
         CompositeActionDetailResponse(
             action_id=model.action_id,
@@ -140,7 +117,7 @@ async def create_custom_action(
             mid=model.mid,
             parameters_schema=model.parameters_schema,
             steps=_convert_steps(model.steps),
-            tags=model.tags,
+            tags=tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,
             is_enabled=model.is_enabled,
@@ -167,7 +144,7 @@ async def list_custom_actions(
 ) -> StandardResponse[BasePaginationResp[CompositeActionListItemResponse]]:
     """获取当前用户的自定义操作列表
 
-    支持分页、筛选和排序
+    支持分页、筛选、按名称搜索、按标签筛选和排序
     """
     # 计算 skip
     skip = (request.page - 1) * request.per_page
@@ -175,7 +152,10 @@ async def list_custom_actions(
     # 获取总数
     total = await action_crud_svr.count_by_user(
         mid=auth.mid,
-        filter_type=request.filter_type
+        filter_type=request.filter_type,
+        name=request.name,
+        tag=request.tag,
+        tag_exact=request.tag_exact,
     )
 
     # 获取列表数据
@@ -185,8 +165,14 @@ async def list_custom_actions(
         limit=request.per_page,
         filter_type=request.filter_type,
         sort_by=request.sort_by,
-        sort_order=request.sort_order
+        sort_order=request.sort_order,
+        name=request.name,
+        tag=request.tag,
+        tag_exact=request.tag_exact,
     )
+
+    # 批量加载标签
+    tags_map = await action_crud_svr.get_tags_for_actions([m.id for m in models])
 
     items = [
         CompositeActionListItemResponse(
@@ -195,7 +181,7 @@ async def list_custom_actions(
             action_type=model.action_type,
             description=model.description,
             steps_count=len(model.steps) if model.steps else 0,
-            tags=model.tags or [],
+            tags=tags_map.get(model.id, []),
             is_enabled=model.is_enabled,
             is_public=model.is_public,
             likes_count=model.likes_count,
@@ -225,13 +211,12 @@ async def get_custom_action(
     request: CompositeActionGetRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[CompositeActionDetailResponse]:
-    """获取自定义操作详情"""
+    """获取自定义操作详情，steps 中引用的 ca_ 操作会自动附加完整信息并校验权限"""
     action_id = request.action_id
     if not action_id:
         return error_response(400, "缺少操作action_id")
 
     model = await action_crud_svr.get_by_action_id(str(action_id))
-    # 代码里面判断是不是符合要求
     if not model:
         return error_response(404, "操作不存在")
 
@@ -244,12 +229,18 @@ async def get_custom_action(
         for var in (model.input_vars or [])
     ]
 
-    # 解析 steps 中复合动作的名称
+    # 解析 steps 并校验所有引用的 ca_ 操作的权限，同时获取完整详情
     steps_data = _convert_steps(model.steps)
-    ca_ids = _collect_composite_action_ids(steps_data)
-    if ca_ids:
-        name_map = await action_crud_svr.get_name_map_by_action_ids(ca_ids)
-        _annotate_step_names(steps_data, name_map)
+    try:
+        ca_ids = ActionCrudService._collect_ca_action_ids(steps_data)
+        if ca_ids:
+            detail_map = await action_crud_svr.get_validated_action_details(ca_ids, auth.mid)
+            ActionCrudService._annotate_steps_with_action_details(steps_data, detail_map)
+    except Exception as e:
+        return error_response(getattr(e, "code", 403), str(e.msg) if hasattr(e, "msg") else str(e))
+
+    # 从多对多关联表加载标签
+    tags = await action_crud_svr.get_tags_for_action(model.id)
 
     return success_response(
         CompositeActionDetailResponse(
@@ -261,7 +252,7 @@ async def get_custom_action(
             mid=model.mid,
             parameters_schema=model.parameters_schema,
             steps=steps_data,
-            tags=model.tags,
+            tags=tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,
             is_enabled=model.is_enabled,
@@ -323,6 +314,9 @@ async def update_custom_action(
         for var in (model.input_vars or [])
     ]
 
+    # 从多对多关联表加载标签
+    tags = await action_crud_svr.get_tags_for_action(model.id)
+
     return success_response(
         CompositeActionDetailResponse(
             action_id=model.action_id,
@@ -333,7 +327,7 @@ async def update_custom_action(
             mid=model.mid,
             parameters_schema=model.parameters_schema,
             steps=_convert_steps(model.steps),
-            tags=model.tags,
+            tags=tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,
             is_enabled=model.is_enabled,
@@ -381,6 +375,30 @@ async def list_custom_action_tags(
     """获取当前用户所有自定义操作的去重标签列表"""
     tags = await action_crud_svr.list_tags_by_user(auth.mid)
     return success_response(tags)
+
+
+@router.post(BrowserControlRouterPath.custom_actions_tags_search, summary="搜索标签")
+async def search_custom_action_tags(
+    request: TagSearchRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[List[TagWithCount]]:
+    """搜索标签（支持关键字模糊匹配），返回标签名称及其关联操作数量"""
+    tags = await action_crud_svr.search_tags_by_user(
+        auth.mid, request.keyword, request.filter_type
+    )
+    return success_response([TagWithCount(**t) for t in tags])
+
+
+@router.post(BrowserControlRouterPath.custom_actions_names_search, summary="搜索操作名称（输入联想）")
+async def search_custom_action_names(
+    request: NameSearchRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[List[str]]:
+    """搜索操作名称（用于输入框联想），返回去重的名称列表"""
+    names = await action_crud_svr.search_names_by_user(
+        auth.mid, request.keyword, request.filter_type
+    )
+    return success_response(names)
 
 
 @router.post("/custom_actions/fork", summary="Fork 自定义操作（类似 GitHub）", response_model=StandardResponse[ActionForkResponse])

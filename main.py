@@ -62,9 +62,15 @@ async def lifespan(app: FastAPI):
 
     # 启动后台任务
     await start_background_tasks()
+
+    # 连接 RabbitMQ RPC 客户端（HTTP 请求 Action 通过 RPC 调用 FastapiApp 业务方法）
+    from app.services.mq.rpc_client import rpc_client
+    await rpc_client.connect()
+
     logger.info("lifespan complete!")
     yield
     await stop_background_tasks()
+    await rpc_client.close()
 
 
 def create_app() -> FastAPI:

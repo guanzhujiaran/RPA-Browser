@@ -3,6 +3,9 @@
 
 测试端点：社区列表、点赞、举报、Fork、举报更新
 通过 API 创建测试数据（避免直接数据库操作导致的 MissingGreenlet 问题）
+
+注意：conftest.py 已提供 client, _cleanup_db, PREFIX 等 fixtures，
+     本文件只补充 other_client 等社区特定 fixture。
 """
 import pytest
 from fastapi import FastAPI
@@ -13,50 +16,22 @@ from app.controller.v1.browser_control.execution.action_router import router as 
 from app.utils.depends.mid_depends import get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 
-PREFIX = "/api/v1/rpa/browser/control"
-TEST_MID = "12345678"
+# 复用 conftest 中的 PREFIX 和 TEST_MID
+from test.controller.conftest import PREFIX, TEST_MID
+
 OTHER_MID = "87654321"
-
-
-@pytest.fixture(scope="session")
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture
-def mock_auth():
-    from app.models.common.depends import AuthInfo
-    return AuthInfo(mid=TEST_MID, level=5)
-
-
-def _create_app(auth_override):
-    """创建测试用 FastAPI app"""
-    app = FastAPI()
-    app.include_router(community_router)
-    app.include_router(action_router)
-    app.dependency_overrides[get_auth_info_from_header] = auth_override
-    return app
-
-
-@pytest.fixture
-async def client(mock_auth):
-    """主测试客户端（TEST_MID），使用默认 mock auth"""
-    app = _create_app(lambda: mock_auth)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        yield ac
-
-    app.dependency_overrides.clear()
 
 
 @pytest.fixture
 async def other_client():
-    """其他用户测试客户端（OTHER_MID）"""
+    """其他用户测试客户端（OTHER_MID），模拟另一个用户发起请求"""
     from app.models.common.depends import AuthInfo
     other_auth = AuthInfo(mid=OTHER_MID, level=5)
-    app = _create_app(lambda: other_auth)
+
+    app = FastAPI()
+    app.include_router(community_router)
+    app.include_router(action_router)
+    app.dependency_overrides[get_auth_info_from_header] = lambda: other_auth
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -65,6 +40,8 @@ async def other_client():
 
     app.dependency_overrides.clear()
 
+
+# ── 辅助 factory 函数 ──────────────────────────────────────────
 
 async def _create_public_action(client: AsyncClient, name="公开操作") -> tuple[str, int]:
     """通过 API 创建公开操作，返回 (action_id, db_id)"""
@@ -98,25 +75,6 @@ async def _create_public_plugin(client: AsyncClient, custom_action_id: str, name
     })
     data = resp.json()
     return data["data"]["plugin_id"], data["data"]["id"]
-
-
-@pytest.fixture(autouse=True)
-def _cleanup_db():
-    """每个测试前后清理数据库（同步版本，避免异步 fixture 时序问题）"""
-    yield
-    import anyio
-    from sqlmodel import delete
-    from app.models.database.workflow.models import (
-        ResourceReport, ResourceLike, UserPlugin, UserWorkflow, CompositeActionModel,
-    )
-
-    async def _cleanup():
-        async with DatabaseSessionManager.async_session() as session:
-            for model in [ResourceReport, ResourceLike, UserPlugin, UserWorkflow, CompositeActionModel]:
-                await session.exec(delete(model))
-            await session.commit()
-
-    anyio.run(_cleanup)
 
 
 class TestCommunityListEndpoints:

@@ -280,6 +280,27 @@ class CompositeActionListRequest(BasePaginationReq):
     filter_type: FilterType = Field(default=FilterType.ALL, description="筛选类型")
     sort_by: SortBy = Field(default=SortBy.UPDATED_AT, description="排序字段")
     sort_order: SortOrder = Field(default=SortOrder.DESC, description="排序方向")
+    name: str | None = Field(default=None, description="按名称搜索（模糊匹配）")
+    tag: str | None = Field(default=None, description="按标签筛选")
+    tag_exact: bool = Field(default=True, description="标签精确匹配（true）或模糊匹配（false）")
+
+
+class TagSearchRequest(SQLModel):
+    """标签搜索请求"""
+    keyword: str | None = Field(default=None, description="搜索关键字")
+    filter_type: FilterType = Field(default=FilterType.ALL, description="筛选类型（用于统计标签下操作数量）")
+
+
+class TagWithCount(SQLModel):
+    """标签及其关联操作数量"""
+    name: str
+    count: int
+
+
+class NameSearchRequest(SQLModel):
+    """操作名称搜索请求（用于输入联想）"""
+    keyword: str | None = Field(default=None, description="搜索关键字")
+    filter_type: FilterType = Field(default=FilterType.ALL, description="筛选类型")
 
 
 class CompositeActionDetailResponse(SQLModel):
@@ -623,6 +644,9 @@ __all__ = [
     "CompositeActionDeleteRequest",
     "ActionForkRequest",
     "ActionForkResponse",
+    "TagSearchRequest",
+    "TagWithCount",
+    "NameSearchRequest",
     # 操作执行
     "ActionExecuteRequest",
     "ActionPreviewRequest",

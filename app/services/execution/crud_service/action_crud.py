@@ -1,13 +1,13 @@
 """
 操作 CRUD 服务
 """
-from sqlalchemy import or_, and_, true, false
+from sqlalchemy import or_, and_, true
 from typing import Any, Dict, List
 from datetime import datetime
 import uuid
-from sqlmodel import select, update
+from sqlmodel import select, update, delete
 
-from app.models.database.workflow.models import CompositeActionModel, BuiltinActionType
+from app.models.database.workflow.models import CompositeActionModel, BuiltinActionType, TagModel, CompositeActionTagLink
 from app.models.execution.action_params import BaseWorkflowStep
 from app.models.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -15,6 +15,190 @@ from app.utils.depends.session_manager import DatabaseSessionManager
 
 class ActionCrudService:
     """操作 CRUD 服务"""
+
+    # ═══════════════ steps 中引用的自定义操作校验与详情注解 ═══════════════
+
+    @staticmethod
+    def _collect_ca_action_ids(steps: list[Dict]) -> list[str]:
+        """递归收集 steps 中所有 ca_ 开头的 action_id（含嵌套在 params 中的分支步骤）"""
+        ids: list[str] = []
+        for step in steps:
+            action_id = step.get("action_id", "")
+            if isinstance(action_id, str) and action_id.startswith("ca_"):
+                ids.append(action_id)
+            params = step.get("params")
+            if isinstance(params, dict):
+                for key in ("TrueBranch", "FalseBranch", "loopBranch"):
+                    branch = params.get(key)
+                    if isinstance(branch, list):
+                        ids.extend(ActionCrudService._collect_ca_action_ids(branch))
+        return ids
+
+    @staticmethod
+    async def get_validated_action_details(
+        action_ids: List[str],
+        mid: int | str,
+    ) -> Dict[str, Dict]:
+        """批量获取自定义操作的完整信息，并校验权限（仅返回自己或公开的）
+
+        Args:
+            action_ids: ca_ 前缀的 action_id 列表（会自动去重）
+            mid: 当前用户 mid
+
+        Returns:
+            action_id → 可序列化的详情字典（不含 steps，避免无限递归）
+
+        Raises:
+            ActionNotFoundException: 引用的操作不存在
+            ActionNotAccessibleException: 无权访问引用的操作
+        """
+        from app.models.exceptions.base_exception import (
+            ActionNotFoundException,
+            ActionNotAccessibleException,
+        )
+
+        if not action_ids:
+            return {}
+
+        deduped = list(set(action_ids))
+        mid_str = str(mid)
+
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(CompositeActionModel).where(
+                    CompositeActionModel.action_id.in_(deduped)
+                )
+            )
+            models = result.all()
+            model_map: Dict[str, CompositeActionModel] = {m.action_id: m for m in models}
+            tags_map = await ActionCrudService._get_tags_for_actions(session, [m.id for m in models])
+
+        detail_map: Dict[str, Dict] = {}
+        for aid in deduped:
+            model = model_map.get(aid)
+            if not model:
+                raise ActionNotFoundException(aid)
+            if model.mid != mid_str and not model.is_public:
+                raise ActionNotAccessibleException(aid)
+
+            # 序列化详情（不含 steps，避免无限嵌套）
+            detail_map[aid] = {
+                "action_id": model.action_id,
+                "name": model.name,
+                "version": model.version,
+                "action_type": str(model.action_type.value) if hasattr(model.action_type, "value") else str(model.action_type),
+                "description": model.description or "",
+                "mid": model.mid,
+                "tags": tags_map.get(model.id, []),
+                "input_vars": list(model.input_vars or []),
+                "output_vars": list(model.output_vars or []),
+                "is_enabled": model.is_enabled,
+                "is_public": model.is_public,
+                "timeout": model.timeout,
+                "retry_on_error": model.retry_on_error,
+                "retry_times": model.retry_times,
+                "retry_delay": model.retry_delay,
+                "likes_count": model.likes_count or 0,
+                "is_verified": model.is_verified or False,
+                "forks_count": model.forks_count or 0,
+                "forked_from_id": model.forked_from_id,
+            }
+        return detail_map
+
+    @staticmethod
+    def _annotate_steps_with_action_details(
+        steps: list[Dict],
+        detail_map: Dict[str, Dict],
+    ) -> None:
+        """递归为 steps 中 ca_ 开头的 action_id 添加 action_detail 字段"""
+        for step in steps:
+            action_id = step.get("action_id", "")
+            if isinstance(action_id, str) and action_id.startswith("ca_"):
+                step["action_detail"] = detail_map.get(action_id)
+            params = step.get("params")
+            if isinstance(params, dict):
+                for key in ("TrueBranch", "FalseBranch", "loopBranch"):
+                    branch = params.get(key)
+                    if isinstance(branch, list):
+                        ActionCrudService._annotate_steps_with_action_details(branch, detail_map)
+
+    @staticmethod
+    async def _get_tags_for_action(session, action_db_id: int) -> list[str]:
+        """获取单个动作的标签列表"""
+        result = await session.exec(
+            select(TagModel.name)
+            .join(CompositeActionTagLink, CompositeActionTagLink.tag_id == TagModel.id)
+            .where(CompositeActionTagLink.composite_action_id == action_db_id)
+        )
+        return list(result.all())
+
+    @staticmethod
+    async def _get_tags_for_actions(session, action_db_ids: list[int]) -> dict[int, list[str]]:
+        """批量获取多个动作的标签列表"""
+        if not action_db_ids:
+            return {}
+        result = await session.exec(
+            select(CompositeActionTagLink.composite_action_id, TagModel.name)
+            .join(TagModel, TagModel.id == CompositeActionTagLink.tag_id)
+            .where(CompositeActionTagLink.composite_action_id.in_(action_db_ids))
+        )
+        tags_map: dict[int, list[str]] = {aid: [] for aid in action_db_ids}
+        for row in result.all():
+            tags_map[row[0]].append(row[1])
+        return tags_map
+
+    @staticmethod
+    async def _set_tags_for_action(session, action_db_id: int, tags: list[str]) -> None:
+        """设置动作的标签（替换模式：先删旧关联，再建新关联）"""
+        await session.exec(
+            delete(CompositeActionTagLink)
+            .where(CompositeActionTagLink.composite_action_id == action_db_id)
+        )
+        for tag_name in tags:
+            tag_name = tag_name.strip()
+            if not tag_name:
+                continue
+            result = await session.exec(
+                select(TagModel).where(TagModel.name == tag_name)
+            )
+            tag = result.first()
+            if not tag:
+                tag = TagModel(name=tag_name)
+                session.add(tag)
+                await session.flush()
+            link = CompositeActionTagLink(
+                composite_action_id=action_db_id,
+                tag_id=tag.id,
+            )
+            session.add(link)
+
+    @staticmethod
+    async def get_tags_for_action(action_db_id: int) -> list[str]:
+        """获取动作的标签列表（独立会话）"""
+        async with DatabaseSessionManager.async_session() as session:
+            return await ActionCrudService._get_tags_for_action(session, action_db_id)
+
+    @staticmethod
+    async def get_tags_for_actions(action_db_ids: list[int]) -> dict[int, list[str]]:
+        """批量获取动作的标签列表（独立会话）"""
+        async with DatabaseSessionManager.async_session() as session:
+            return await ActionCrudService._get_tags_for_actions(session, action_db_ids)
+
+    @staticmethod
+    async def validate_steps_referenced_actions(steps: List[Dict], mid: int | str) -> None:
+        """校验 steps 中所有引用的 ca_ 操作是否可访问（不允许越权）
+        
+        在执行路径中调用，提前在校验阶段拦截越权引用。
+
+        Raises:
+            ActionNotFoundException: 引用的操作不存在
+            ActionNotAccessibleException: 无权访问引用的操作
+        """
+        ca_ids = ActionCrudService._collect_ca_action_ids(steps)
+        if ca_ids:
+            await ActionCrudService.get_validated_action_details(ca_ids, mid)
+
+    # ═══════════════ CRUD 方法 ═══════════════
 
     @staticmethod
     async def create(
@@ -78,7 +262,6 @@ class ActionCrudService:
                 is_composite=is_composite,
                 parameters_schema=parameters_schema or [],
                 steps=normalized_steps,
-                tags=tags or [],
                 input_vars=input_vars or [],
                 output_vars=output_vars or [],
                 is_public=is_public,
@@ -87,6 +270,10 @@ class ActionCrudService:
 
             await session.commit()
             await session.refresh(model)
+            if tags:
+                await ActionCrudService._set_tags_for_action(session, model.id, tags)
+                await session.commit()
+                await session.refresh(model)
             return model
 
     @staticmethod
@@ -118,14 +305,36 @@ class ActionCrudService:
             return {row[0]: row[1] for row in result.all()}
 
     @staticmethod
-    async def count_by_user(mid: int, filter_type: str = "all") -> int:
+    def _apply_search_filters(query, name: str | None = None, tag: str | None = None, tag_exact: bool = True):
+        """为查询添加 name 模糊搜索和 tag 筛选条件"""
+        if name:
+            query = query.where(CompositeActionModel.name.ilike(f"%{name}%"))
+        if tag:
+            tag_subquery = (
+                select(CompositeActionTagLink.composite_action_id)
+                .join(TagModel, TagModel.id == CompositeActionTagLink.tag_id)
+            )
+            if tag_exact:
+                tag_subquery = tag_subquery.where(TagModel.name == tag)
+            else:
+                tag_subquery = tag_subquery.where(TagModel.name.ilike(f"%{tag}%"))
+            query = query.where(CompositeActionModel.id.in_(tag_subquery))
+        return query
+
+    @staticmethod
+    async def count_by_user(
+        mid: int,
+        filter_type: str = "all",
+        name: str | None = None,
+        tag: str | None = None,
+        tag_exact: bool = True,
+    ) -> int:
         from sqlmodel import func
 
         async with DatabaseSessionManager.async_session() as session:
             query = select(func.count(1))
-            if filter_type == "private":
-                query = query.where((CompositeActionModel.mid == str(mid)) & (
-                    CompositeActionModel.is_public == false()))
+            if filter_type == "private":  # private只检查是自己创建的就行了
+                query = query.where(CompositeActionModel.mid == str(mid))
             elif filter_type == "public":
                 query = query.where(CompositeActionModel.is_public == true())
             elif filter_type == "community":
@@ -137,6 +346,7 @@ class ActionCrudService:
                 query = query.where((CompositeActionModel.mid == str(mid)) | (
                     CompositeActionModel.is_public == true()))
 
+            query = ActionCrudService._apply_search_filters(query, name, tag, tag_exact)
             result = await session.exec(query)
             return result.one()
 
@@ -147,7 +357,10 @@ class ActionCrudService:
         limit: int = 100,
         filter_type: str = "all",
         sort_by: str = "updated_at",
-        sort_order: str = "desc"
+        sort_order: str = "desc",
+        name: str | None = None,
+        tag: str | None = None,
+        tag_exact: bool = True,
     ) -> List[CompositeActionModel]:
         from sqlmodel import col
 
@@ -165,6 +378,8 @@ class ActionCrudService:
             else:
                 query = query.where((CompositeActionModel.mid == str(mid)) | (
                     CompositeActionModel.is_public == true()))
+
+            query = ActionCrudService._apply_search_filters(query, name, tag, tag_exact)
 
             sort_field = getattr(CompositeActionModel,
                                  sort_by, CompositeActionModel.updated_at)
@@ -219,7 +434,7 @@ class ActionCrudService:
             if steps is not None:
                 model.steps = steps
             if tags is not None:
-                model.tags = tags
+                await ActionCrudService._set_tags_for_action(session, model.id, tags)
             if input_vars is not None:
                 model.input_vars = input_vars
             if output_vars is not None:
@@ -256,6 +471,11 @@ class ActionCrudService:
                     .where(CompositeActionModel.id == model.forked_from_id)
                     .values(forks_count=CompositeActionModel.forks_count - 1)
                 )
+
+            await session.exec(
+                delete(CompositeActionTagLink)
+                .where(CompositeActionTagLink.composite_action_id == model.id)
+            )
 
             await session.delete(model)
             await session.commit()
@@ -351,7 +571,6 @@ class ActionCrudService:
                 parameters_schema=original.parameters_schema.copy(
                 ) if original.parameters_schema else [],
                 steps=original.steps.copy() if original.steps else [],
-                tags=original.tags.copy() if original.tags else [],
                 input_vars=original.input_vars.copy() if original.input_vars else [],
                 output_vars=original.output_vars.copy() if original.output_vars else [],
                 is_public=False,
@@ -366,6 +585,11 @@ class ActionCrudService:
 
             await session.commit()
             await session.refresh(new_model)
+            original_tags = await ActionCrudService._get_tags_for_action(session, original.id)
+            if original_tags:
+                await ActionCrudService._set_tags_for_action(session, new_model.id, original_tags)
+                await session.commit()
+                await session.refresh(new_model)
             return new_model
 
     @staticmethod
@@ -373,20 +597,75 @@ class ActionCrudService:
         """获取用户所有自定义操作的去重标签列表"""
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(CompositeActionModel.tags)
+                select(TagModel.name)
+                .join(CompositeActionTagLink, CompositeActionTagLink.tag_id == TagModel.id)
+                .join(CompositeActionModel, CompositeActionModel.id == CompositeActionTagLink.composite_action_id)
                 .where(CompositeActionModel.mid == str(mid))
+                .distinct()
             )
-            tag_lists = result.all()
-            unique_tags: list[str] = []
-            seen: set[str] = set()
-            for tags in tag_lists:
-                if not tags:
-                    continue
-                for tag in tags:
-                    if tag and tag not in seen:
-                        seen.add(tag)
-                        unique_tags.append(tag)
-            return unique_tags
+            return list(result.all())
+
+    @staticmethod
+    def _apply_filter_type(mid: int, filter_type: str):
+        """根据 filter_type 构建可见性过滤条件，返回可直接用于 .where() 的条件"""
+        if filter_type == "private":
+            return CompositeActionModel.mid == str(mid)
+        elif filter_type == "public":
+            return CompositeActionModel.is_public == true()
+        elif filter_type == "community":
+            return (CompositeActionModel.mid != str(mid)) & (CompositeActionModel.is_public == true())
+        elif filter_type == "verified":
+            return CompositeActionModel.is_verified == true()
+        else:
+            return (CompositeActionModel.mid == str(mid)) | (CompositeActionModel.is_public == true())
+
+    @staticmethod
+    async def search_tags_by_user(
+        mid: int,
+        keyword: str | None = None,
+        filter_type: str = "all",
+        limit: int = 20,
+    ) -> List[Dict]:
+        """搜索标签并返回每个标签关联的操作数量
+
+        Returns:
+            [{"name": "tag1", "count": 3}, ...]
+        """
+        from sqlmodel import func
+
+        async with DatabaseSessionManager.async_session() as session:
+            query = (
+                select(TagModel.name, func.count(CompositeActionModel.id).label("count"))
+                .join(CompositeActionTagLink, CompositeActionTagLink.tag_id == TagModel.id)
+                .join(CompositeActionModel, CompositeActionModel.id == CompositeActionTagLink.composite_action_id)
+                .where(ActionCrudService._apply_filter_type(mid, filter_type))
+                .group_by(TagModel.name)
+            )
+            if keyword:
+                query = query.where(TagModel.name.ilike(f"%{keyword}%"))
+            query = query.order_by(func.count(CompositeActionModel.id).desc()).limit(limit)
+            result = await session.exec(query)
+            return [{"name": row[0], "count": row[1]} for row in result.all()]
+
+    @staticmethod
+    async def search_names_by_user(
+        mid: int,
+        keyword: str | None = None,
+        filter_type: str = "all",
+        limit: int = 10,
+    ) -> List[str]:
+        """搜索操作名称（用于输入联想），返回去重的名称列表"""
+        async with DatabaseSessionManager.async_session() as session:
+            query = (
+                select(CompositeActionModel.name)
+                .where(ActionCrudService._apply_filter_type(mid, filter_type))
+                .distinct()
+            )
+            if keyword:
+                query = query.where(CompositeActionModel.name.ilike(f"%{keyword}%"))
+            query = query.limit(limit)
+            result = await session.exec(query)
+            return list(result.all())
 
 
 action_crud_svr = ActionCrudService()
