@@ -1,8 +1,8 @@
-"""Auto-generated migration (development mode)
+"""init
 
-Revision ID: 86c05e39b054
+Revision ID: a3e376e46d4e
 Revises: 
-Create Date: 2026-06-06 19:02:18.972418
+Create Date: 2026-07-08 22:47:36.056289
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = '86c05e39b054'
+revision: str = 'a3e376e46d4e'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -28,7 +28,7 @@ def upgrade() -> None:
     sa.Column('parent_execution_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=True),
     sa.Column('action_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
     sa.Column('action_name', sqlmodel.sql.sqltypes.AutoString(length=200), nullable=False),
-    sa.Column('action_type', sa.Enum('CLICK', 'INPUT', 'WAIT', 'SCROLL', 'NAVIGATE', 'SCREENSHOT', 'LLM', 'HOVER', 'NEW_PAGE', 'LOOP', 'COMPOSITE', 'IF_ELSE', name='builtinactiontype'), nullable=False),
+    sa.Column('action_type', sa.Enum('CLICK', 'INPUT', 'WAIT', 'SCROLL', 'NAVIGATE', 'SCREENSHOT', 'LLM', 'HOVER', 'NEW_PAGE', 'GET_TEXT', 'GET_WINDOW', 'FETCH_EXTERNAL_DATA', 'PRINT', 'LOOP', 'COMPOSITE', 'IF_ELSE', name='builtinactiontype'), nullable=False),
     sa.Column('status', sa.Enum('PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED', name='executionstatus'), nullable=False),
     sa.Column('params', sa.JSON(), nullable=True),
     sa.Column('result_data', sa.JSON(), nullable=True),
@@ -62,13 +62,11 @@ def upgrade() -> None:
     sa.Column('action_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=200), nullable=False),
     sa.Column('version', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
-    sa.Column('action_type', sa.Enum('CLICK', 'INPUT', 'WAIT', 'SCROLL', 'NAVIGATE', 'SCREENSHOT', 'LLM', 'HOVER', 'NEW_PAGE', 'LOOP', 'COMPOSITE', 'IF_ELSE', name='builtinactiontype'), nullable=False),
+    sa.Column('action_type', sa.Enum('CLICK', 'INPUT', 'WAIT', 'SCROLL', 'NAVIGATE', 'SCREENSHOT', 'LLM', 'HOVER', 'NEW_PAGE', 'GET_TEXT', 'GET_WINDOW', 'FETCH_EXTERNAL_DATA', 'PRINT', 'LOOP', 'COMPOSITE', 'IF_ELSE', name='builtinactiontype'), nullable=False),
     sa.Column('parameters_schema', sa.JSON(), nullable=True),
     sa.Column('steps', sa.JSON(), nullable=True),
     sa.Column('is_composite', sa.Boolean(), nullable=False),
     sa.Column('description', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
-    sa.Column('author', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
-    sa.Column('tags', sa.JSON(), nullable=True),
     sa.Column('input_vars', sa.JSON(), nullable=True),
     sa.Column('output_vars', sa.JSON(), nullable=True),
     sa.Column('forked_from_id', sa.Integer(), nullable=True),
@@ -195,6 +193,12 @@ def upgrade() -> None:
     op.create_index(op.f('ix_resourcereport_mid'), 'resourcereport', ['mid'], unique=False)
     op.create_index(op.f('ix_resourcereport_resource_id'), 'resourcereport', ['resource_id'], unique=False)
     op.create_index(op.f('ix_resourcereport_resource_type'), 'resourcereport', ['resource_type'], unique=False)
+    op.create_table('tagmodel',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_tagmodel_name'), 'tagmodel', ['name'], unique=True)
     op.create_table('userbrowserdefaultsetting',
     sa.Column('browser_id', sa.BIGINT(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
@@ -349,6 +353,13 @@ def upgrade() -> None:
     op.create_index('idx_workflow_user_name_unique', 'workflowrecord', ['mid', 'name'], unique=True)
     op.create_index(op.f('ix_workflowrecord_mid'), 'workflowrecord', ['mid'], unique=False)
     op.create_index(op.f('ix_workflowrecord_workflow_id'), 'workflowrecord', ['workflow_id'], unique=True)
+    op.create_table('compositeactiontaglink',
+    sa.Column('composite_action_id', sa.Integer(), nullable=False),
+    sa.Column('tag_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['composite_action_id'], ['compositeactionmodel.id'], ),
+    sa.ForeignKeyConstraint(['tag_id'], ['tagmodel.id'], ),
+    sa.PrimaryKeyConstraint('composite_action_id', 'tag_id')
+    )
     op.create_table('workflowpluginrelation',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('workflow_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
@@ -369,6 +380,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_workflowpluginrelation_workflow_id'), table_name='workflowpluginrelation')
     op.drop_index(op.f('ix_workflowpluginrelation_plugin_id'), table_name='workflowpluginrelation')
     op.drop_table('workflowpluginrelation')
+    op.drop_table('compositeactiontaglink')
     op.drop_index(op.f('ix_workflowrecord_workflow_id'), table_name='workflowrecord')
     op.drop_index(op.f('ix_workflowrecord_mid'), table_name='workflowrecord')
     op.drop_index('idx_workflow_user_name_unique', table_name='workflowrecord')
@@ -394,6 +406,8 @@ def downgrade() -> None:
     op.drop_table('userbrowserinfo')
     op.drop_index(op.f('ix_userbrowserdefaultsetting_mid'), table_name='userbrowserdefaultsetting')
     op.drop_table('userbrowserdefaultsetting')
+    op.drop_index(op.f('ix_tagmodel_name'), table_name='tagmodel')
+    op.drop_table('tagmodel')
     op.drop_index(op.f('ix_resourcereport_resource_type'), table_name='resourcereport')
     op.drop_index(op.f('ix_resourcereport_resource_id'), table_name='resourcereport')
     op.drop_index(op.f('ix_resourcereport_mid'), table_name='resourcereport')

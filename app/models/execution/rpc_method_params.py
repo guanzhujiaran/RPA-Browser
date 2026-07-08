@@ -65,6 +65,10 @@ class TimePresetEnum(StrEnum):
     last_7_days = "7d"
     last_14_days = "14d"
     last_30_days = "30d"
+    last_60_days = "60d"
+    last_90_days = "90d"
+    last_180_days = "180d"
+    last_365_days = "365d"
 
 
 # ============ 通用基础参数 ============
@@ -80,8 +84,8 @@ class LotteryAdvancedQueryRpcParams(SQLModel):
     注意：RPA 端作为 RPC client 不设置任何默认值，
     默认值由前端和 FastapiApp 端 RPC 服务端模型决定。
     """
-    page_num: int | None = Field(default=None, ge=1, description="页码，从 1 开始，最小值为 1")
-    page_size: int | None = Field(default=1000, ge=1, le=3000, description="每页数量，最大 3000，最小值为 1")
+    page_num: int | None = Field(default=1, ge=1, description="页码，从 1 开始，最小值为 1")
+    page_size: int | None = Field(default=1000, ge=1, le=3000, description="每页数量，默认 1000，最大 3000，最小值为 1")
 
     # 时间范围筛选（开奖时间）
     start_ts: int | None = Field(default=None, ge=0, description="开奖时间起始（Unix 秒时间戳）")
@@ -109,9 +113,9 @@ class LotteryAdvancedQueryRpcParams(SQLModel):
 
     # 时间快捷筛选（优先级高于 start_ts/end_ts 对应的精确时间字段）
     created_at_preset: TimePresetEnum | None = Field(
-        default=TimePresetEnum.last_7_days, description="收录时间快捷筛选: 1d/3d/5d/7d/14d/30d")
+        default=TimePresetEnum.last_7_days, description="收录时间快捷筛选: 1d/3d/5d/7d/14d/30d/60d/90d/180d/365d")
     pub_time_preset: TimePresetEnum | None = Field(
-        default=TimePresetEnum.last_7_days, description="发布时间快捷筛选: 1d/3d/5d/7d/14d/30d")
+        default=TimePresetEnum.last_7_days, description="发布时间快捷筛选: 1d/3d/5d/7d/14d/30d/60d/90d/180d/365d")
 
 
 # ============ 各方法独立参数模型 ============
@@ -147,13 +151,13 @@ class GetAllLotteryRpcParams(SQLModel):
     注意：RPA 端作为 RPC client 不设置任何默认值，
     默认值由前端和 FastapiApp 端 RPC 服务端模型决定。
     """
-    page_num: int | None = Field(default=None, ge=1, description="页码，从 1 开始，最小值为 1")
+    page_num: int | None = Field(default=1, ge=1, description="页码，从 1 开始，最小值为 1")
     page_size: int | None = Field(
-        default=None, ge=1, le=1000, description="每页数量，最大 1000，最小值为 1"
+        default=3000, ge=1, le=3000, description="每页数量，最大 3000，最小值为 1"
     )
     created_at_preset: TimePresetEnum | None = Field(
         default=None,
-        description="收录时间快捷筛选: 1d/3d/5d/7d/14d/30d",
+        description="收录时间快捷筛选: 1d/3d/5d/7d/14d/30d/60d/90d/180d/365d",
     )
     created_at_start: int | None = Field(
         default=None, ge=0, description="收录起始时间（Unix 秒），preset 优先级高于此字段"
@@ -163,7 +167,7 @@ class GetAllLotteryRpcParams(SQLModel):
     )
     pub_time_preset: TimePresetEnum | None = Field(
         default=None,
-        description="发布时间快捷筛选: 1d/3d/5d/7d/14d/30d",
+        description="发布时间快捷筛选: 1d/3d/5d/7d/14d/30d/60d/90d/180d/365d",
     )
     pub_time_start: int | None = Field(
         default=None, ge=0, description="发布起始时间（Unix 秒），preset 优先级高于此字段"
@@ -181,8 +185,8 @@ class GetOthersLotDynListRpcParams(SQLModel):
     注意：RPA 端作为 RPC client 不设置任何默认值，
     默认值由前端和 FastapiApp 端 RPC 服务端模型决定。
     """
-    page_num: int | None = Field(default=None, ge=1, description="页码，从 1 开始，最小值为 1")
-    page_size: int | None = Field(default=None, ge=1, le=3000, description="每页数量，最大 3000，最小值为 1")
+    page_num: int | None = Field(default=1, ge=1, description="页码，从 1 开始，最小值为 1")
+    page_size: int | None = Field(default=1000, ge=1, le=3000, description="每页数量，默认 1000，最大 3000，最小值为 1")
 
     # 排序
     sort_by: OthersLotDynSortEnum | None = Field(
@@ -193,13 +197,13 @@ class GetOthersLotDynListRpcParams(SQLModel):
         description="排序方向: asc/desc")
 
     # 是否抽奖
-    is_lot: bool | None = Field(default=None, description="是否筛选为抽奖的动态")
+    is_lot: bool | None = Field(default=True, description="是否筛选为抽奖的动态")
 
     # 时间快捷筛选（handler 内部会转换为对应时间戳，优先级高于精确时间字段）
     created_at_preset: TimePresetEnum | None = Field(
-        default=None, description="收录时间快捷筛选: 1d/3d/5d/7d/14d/30d")
+        default=TimePresetEnum.last_30_days, description="收录时间快捷筛选: 1d/3d/5d/7d/14d/30d/60d/90d/180d/365d，默认 30d")
     pub_time_preset: TimePresetEnum | None = Field(
-        default=None, description="发布时间快捷筛选: 1d/3d/5d/7d/14d/30d")
+        default=TimePresetEnum.last_30_days, description="发布时间快捷筛选: 1d/3d/5d/7d/14d/30d/60d/90d/180d/365d，默认 30d")
 
     # 精确时间范围筛选（Unix 秒时间戳）
     pub_time_start: int | None = Field(default=None, ge=0, description="发布起始时间（Unix 秒）")

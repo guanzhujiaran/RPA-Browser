@@ -1,5 +1,4 @@
 from __future__ import annotations
-from langchain_core.messages import AIMessage
 
 import contextlib
 from enum import StrEnum
@@ -27,6 +26,13 @@ from app.models.execution.rpc_method_params import (
     GetOthersLotDynListRpcParams,
     RPC_METHOD_PARAMS_FIELD_MAP,
 )
+
+
+class OnErrorEnum(StrEnum):
+    """步骤失败时的处理策略"""
+    STOP = "stop"          # 停止执行
+    CONTINUE = "continue"  # 忽略错误继续
+    RETRY = "retry"        # 重试后停止
 
 
 class BuiltinActionDesc(StrEnum):
@@ -333,6 +339,11 @@ class LLMParams(BaseActionParams):
                             description="最大生成的 token 数")
     timeout: float = Field(default=120000, ge=1000,
                            le=600000, description="请求超时时间(毫秒)")
+    # 结构化输出
+    response_schema: dict | None = Field(
+        default=None,
+        description="JSON Schema 定义，提供后将启用 LangChain structured output，返回符合 schema 的结构化数据",
+    )
 
 
 class FetchExternalDataParams(BaseActionParams):
@@ -564,11 +575,15 @@ class ScreenshotResult(SQLModel):
 
 class LLMResult(SQLModel):
     """LLM 操作结果"""
-    content: str = Field(default="", description="回复内容")
+    content: str = Field(default="", description="回复文本内容")
     role: str = Field(default="assistant", description="角色")
-    model: str = Field(default="", description="模型名称")
+    model: str = Field(default="", description="实际使用的模型名称")
     usage: Dict = Field(default_factory=dict, description="token 使用量")
-    raw_response: AIMessage = Field(description="原始响应")
+    # 结构化输出
+    is_structured: bool = Field(
+        default=False, description="是否为结构化输出模式")
+    structured_data: dict | None = Field(
+        default=None, description="结构化输出数据（response_schema 提供时有效）")
 
 
 class FetchExternalDataResult(SQLModel):
@@ -695,7 +710,9 @@ class BaseWorkflowStep(SQLModel, Generic[P]):
     action_id: str
     params: P | None = None
     retry: int = 0
-    input_vars: Dict | None = None
+    on_error: OnErrorEnum = OnErrorEnum.STOP
+    on_error_branch: list[WorkflowStep] | None = None  # 失败时执行的子步骤（回退/清理）
+    input_vars: Dict[str, Any] | None = None
     output_vars: list[str] | None = None
     timeout: int | None = None
     children: list[WorkflowStep] | None = None

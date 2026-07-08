@@ -19,11 +19,6 @@ from botright.playwright_mock import browser
 from .modules import Faker, ProxyManager
 from .playwright_mock import BrowserContext
 
-logging.getLogger("websockets").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-loguru.logger.disable("hcaptcha_challenger")
-
-
 class Botright(AsyncObject):
     def __init__(
             self,

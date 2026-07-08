@@ -29,7 +29,6 @@ Pipeline — 工作流管道
 
 from __future__ import annotations
 
-import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -37,7 +36,7 @@ from typing import Any, Callable, Coroutine, List, Protocol
 
 from loguru import logger
 
-from app.models.execution.action_params import BuiltinActionType
+from app.models.execution.action_params import BuiltinActionType, OnErrorEnum
 from app.models.execution.condition_models import (
     ConditionRule,
     ConditionEvaluateError,
@@ -71,6 +70,8 @@ class StepNode(ABC):
     action_id: str
     condition: ConditionRule | None = None
     retry: int = 0
+    on_error: OnErrorEnum = OnErrorEnum.STOP
+    on_error_branch: Pipeline | None = None  # 失败时执行的子管道（回退/清理/告警等）
 
     def should_execute(self, scope: Scope) -> bool:
         """条件门控：评估 step.condition。"""
@@ -231,7 +232,8 @@ class LoopStep(StepNode):
             ir = await body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                break
+                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                    break
         return results
 
     async def _loop_by_count(self, scope: Scope, executor: ActionExecutor) -> list[ActionResult]:
@@ -241,7 +243,8 @@ class LoopStep(StepNode):
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                break
+                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                    break
         return results
 
     async def _loop_by_while(self, scope: Scope, executor: ActionExecutor) -> list[ActionResult]:
@@ -254,7 +257,8 @@ class LoopStep(StepNode):
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                break
+                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                    break
             i += 1
         return results
 
@@ -268,11 +272,58 @@ class LoopStep(StepNode):
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                break
+                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                    break
             if safe_evaluate_condition(self.loop_until, scope.snapshot()):
                 break
             i += 1
         return results
+
+    async def _handle_iteration_error(
+        self,
+        scope: Scope,
+        executor: ActionExecutor,
+        body: Pipeline,
+        ir: list[ActionResult],
+        results: list[ActionResult],
+    ) -> bool:
+        """处理单次迭代失败，返回 True=继续下一轮，False=break。
+
+        根据 self.on_error 策略：
+            "continue" → 跳过失败迭代，继续下一轮
+            "retry"    → 重试 self.retry 次，成功则继续，失败则根据配置决定
+            "stop"     → 停止循环
+        """
+        last_result = ir[-1]
+
+        # ── 先跑 on_error_branch ──
+        if self.on_error_branch and self.on_error_branch.steps:
+            scope.push()
+            scope.set("last_error", last_result.error or "未知错误")
+            scope.set("last_output", last_result.data)
+            logger.info(f"循环迭代失败，执行 on_error_branch")
+            eb_results = await self.on_error_branch.execute(scope, executor)
+            results.extend(eb_results)
+            scope.pop()
+
+        # ── 策略 ──
+        if self.on_error == OnErrorEnum.CONTINUE:
+            logger.warning(f"循环迭代失败但继续: {last_result.error}")
+            return True
+
+        if self.on_error == OnErrorEnum.RETRY and self.retry > 0:
+            for retry_i in range(self.retry):
+                logger.info(f"循环重试 ({retry_i + 1}/{self.retry})")
+                retry_ir = await body.execute(scope, executor)
+                results.extend(retry_ir)
+                if retry_ir and retry_ir[-1].success:
+                    return True
+            # 重试全部失败，根据 retry 后行为：继续下一轮还是停止
+            if self.retry > 0:
+                return False  # 重试耗尽 → break
+
+        # 默认 stop → break
+        return False
 
 
 @dataclass
@@ -300,13 +351,68 @@ class IfElseStep(StepNode):
             take_true = False
 
         selected = self.true_body if take_true else self.false_body
+        branch_name = "true" if take_true else "false"
         if selected is None:
             return ActionResult(success=True, action_id=self.action_id, action_name="if_else")
 
         results = await selected.execute(scope, executor)
+        branch_failed = results and not results[-1].success
+
+        if branch_failed:
+            return await self._handle_branch_error(scope, executor, selected, results, branch_name)
+
         return ActionResult(
             success=True,
-            data={"branch": "true" if take_true else "false", "results": results},
+            data={"branch": branch_name, "results": results},
+            action_id=self.action_id,
+            action_name="if_else",
+        )
+
+    async def _handle_branch_error(
+        self,
+        scope: Scope,
+        executor: ActionExecutor,
+        selected: Pipeline,
+        results: list[ActionResult],
+        branch_name: str,
+    ) -> ActionResult:
+        """分支失败处理：先跑 on_error_branch，再按 on_error 策略返回"""
+        last_result = results[-1]
+
+        if self.on_error_branch and self.on_error_branch.steps:
+            scope.push()
+            scope.set("last_error", last_result.error or "未知错误")
+            scope.set("last_output", last_result.data)
+            logger.info(f"if_else 分支 {branch_name} 失败，执行 on_error_branch")
+            self.on_error_branch.execute(scope, executor)  # fire-and-forget 日志
+            scope.pop()
+
+        if self.on_error == OnErrorEnum.CONTINUE:
+            logger.warning(f"if_else 分支 {branch_name} 失败但忽略: {last_result.error}")
+            return ActionResult(
+                success=True,
+                data={"branch": branch_name, "results": results},
+                action_id=self.action_id,
+                action_name="if_else",
+            )
+
+        if self.on_error == OnErrorEnum.RETRY and self.retry > 0:
+            for retry_i in range(self.retry):
+                logger.info(f"if_else 重试分支 {branch_name} ({retry_i + 1}/{self.retry})")
+                retry_results = await selected.execute(scope, executor)
+                results.extend(retry_results)
+                if retry_results and retry_results[-1].success:
+                    return ActionResult(
+                        success=True,
+                        data={"branch": branch_name, "results": results},
+                        action_id=self.action_id,
+                        action_name="if_else",
+                    )
+
+        return ActionResult(
+            success=False,
+            error=f"if_else 分支 {branch_name} 执行失败: {last_result.error}",
+            data={"branch": branch_name, "results": results},
             action_id=self.action_id,
             action_name="if_else",
         )
@@ -350,18 +456,36 @@ class Pipeline:
                 result.action_id = step.action_id
                 results.append(result)
 
-                # retry == 0 表示不重试，失败即停止
-                if not result.success and step.retry == 0:
-                    break
+                if result.success:
+                    continue  # 成功，进入下一步
 
-                # retry > 0 时重试
-                if not result.success and step.retry > 0:
+                # ── 失败处理：先跑 on_error_branch（回退/清理/告警）──
+                if step.on_error_branch and step.on_error_branch.steps:
+                    scope.push()
+                    scope.set("last_error", result.error or "未知错误")
+                    scope.set("last_output", result.data)
+                    logger.info(f"执行 {step.action_id} 的错误处理分支")
+                    error_results = await step.on_error_branch.execute(scope, executor)
+                    results.extend(error_results)
+                    scope.pop()
+
+                # ── 根据 on_error 策略决定后续行为 ──
+                if step.on_error == OnErrorEnum.CONTINUE:
+                    logger.warning(f"步骤 {step.action_id} 失败但继续执行: {result.error}")
+                    continue
+
+                if step.on_error == OnErrorEnum.RETRY and step.retry > 0:
                     for retry_i in range(step.retry):
                         logger.info(f"重试 {step.action_id} ({retry_i + 1}/{step.retry})")
                         result = await step.execute(scope, executor)
                         if result.success:
                             break
                     results[-1] = result
+                    if result.success:
+                        continue  # 重试成功，进入下一步
+
+                # on_error="stop"（默认）或重试全部失败 → 停止
+                break
 
             except Exception as e:
                 logger.error(f"步骤异常: {step.action_id} - {e}")
@@ -422,6 +546,9 @@ class PipelineBuilder:
                 loop_item_var = PipelineBuilder._get_param(s, "loop_item_var") or "loop_item"
                 loop_index_var = PipelineBuilder._get_param(s, "loop_index_var") or "loop_index"
                 param_mapping = PipelineBuilder._get_param(s, "param_mapping")
+                on_error = OnErrorEnum(PipelineBuilder._get_attr(s, "on_error", "stop") or "stop")
+                on_error_raw = PipelineBuilder._get_attr(s, "on_error_branch")
+                on_error_branch = PipelineBuilder.build(on_error_raw) if on_error_raw else None
 
                 # 确定迭代次数
                 if loop_source == "fixed_count":
@@ -437,6 +564,8 @@ class PipelineBuilder:
                 nodes.append(LoopStep(
                     action_id=action_id,
                     condition=condition,
+                    on_error=on_error,
+                    on_error_branch=on_error_branch,
                     body=PipelineBuilder.build(children) if children else Pipeline([]),
                     count=count,
                     loop_condition=loop_while,
@@ -453,10 +582,15 @@ class PipelineBuilder:
                 false_raw = PipelineBuilder._get_param(s, "FalseBranch")
                 rule_raw = PipelineBuilder._get_param(s, "condition")
                 rule = ConditionRule.model_validate(rule_raw) if isinstance(rule_raw, dict) else rule_raw
+                on_error = OnErrorEnum(PipelineBuilder._get_attr(s, "on_error", "stop") or "stop")
+                on_error_raw = PipelineBuilder._get_attr(s, "on_error_branch")
+                on_error_branch = PipelineBuilder.build(on_error_raw) if on_error_raw else None
 
                 nodes.append(IfElseStep(
                     action_id=action_id,
                     condition=condition,
+                    on_error=on_error,
+                    on_error_branch=on_error_branch,
                     condition_rule=rule,
                     true_body=PipelineBuilder.build(true_raw) if true_raw else None,
                     false_body=PipelineBuilder.build(false_raw) if false_raw else None,
@@ -468,10 +602,15 @@ class PipelineBuilder:
                 input_vars = PipelineBuilder._get_attr(s, "input_vars", None) or {}
                 output_vars = PipelineBuilder._get_attr(s, "output_vars", None) or []
                 retry = PipelineBuilder._get_attr(s, "retry", 0) or 0
+                on_error = OnErrorEnum(PipelineBuilder._get_attr(s, "on_error", "stop") or "stop")
+                on_error_raw = PipelineBuilder._get_attr(s, "on_error_branch")
+                on_error_branch = PipelineBuilder.build(on_error_raw) if on_error_raw else None
                 nodes.append(AtomicStep(
                     action_id=action_id,
                     condition=condition,
                     retry=retry,
+                    on_error=on_error,
+                    on_error_branch=on_error_branch,
                     params=params if isinstance(params, dict) else params.model_dump(),
                     input_vars=input_vars if isinstance(input_vars, dict) else {},
                     output_vars=output_vars,

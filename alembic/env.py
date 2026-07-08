@@ -1,25 +1,69 @@
-"""Alembic environment configuration - delegates to app/utils/alembic_migration.py"""
-from logging.config import fileConfig
+# -*- coding: utf-8 -*-
+"""
+RPA-Browser Alembic 异步环境配置
+参照 FastapiApp 的 alembic/env.py 写法
+"""
+import asyncio
+import sys
+from pathlib import Path
 
-from alembic.config import Config
 from alembic import context
+from sqlalchemy.ext.asyncio import create_async_engine
 
-# 从主迁移工具导入所有必要的组件
-from app.utils.alembic_migration import (
-    get_alembic_config_for_env,
-    target_metadata,
-    run_migrations_offline,
-    run_migrations_online,
-)
+# 确保项目根目录在 path 中，以便导入 app 模块
+_current_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(_current_dir.parent))
 
-# 获取配置
-config = get_alembic_config_for_env()
+from app.config import settings
+from sqlmodel import SQLModel
 
-# 设置日志
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# 导入所有数据库模型，确保它们注册到 SQLModel.metadata
+from app.models.database.workflow.models import *  # noqa: F401, F403
+from app.models.database.browser.info import *  # noqa: F401, F403
+from app.models.database.notify.models import *  # noqa: F401, F403
 
-# 执行迁移
+target_metadata = SQLModel.metadata
+
+_DB_URL: str = settings.mysql_browser_info_url
+
+config = context.config
+config.set_main_option("sqlalchemy.url", _DB_URL)
+
+
+def do_run_migrations(connection):
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations():
+    connectable = create_async_engine(_DB_URL)
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
+
+
+def run_migrations_offline() -> None:
+    url = _DB_URL
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    asyncio.run(run_async_migrations())
+
+
 if context.is_offline_mode():
     run_migrations_offline()
 else:

@@ -7,32 +7,14 @@ from app.routes import setup_routes
 from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
 from scripts.initd.main import init_dependencies
-from app.utils.alembic_migration import run_alembic_migrations, run_alembic_migrations_async
+from app.utils.alembic_migration import run_alembic_upgrade_head, check_schemas
 import asyncio
 from loguru import logger
-
-async def init_alembic_migration() -> None:
-    """
-    初始化 Alembic 数据库迁移（从 lifespan 中提取的单独函数）
-    
-    处理自动迁移检查，支持在已运行的事件循环中异步执行。
-    """
-    if settings.alembic_auto_migrate:
-        logger.info("🔄 开始数据库迁移检查...")
-        await run_alembic_migrations_async(
-            upgrade_to=settings.alembic_upgrade_target,
-            auto_upgrade=True,
-            auto_generate=True,  # 自动检测并生成迁移
-        )
-        logger.info("✅ 数据库迁移检查完成")
-    else:
-        logger.info("ℹ️  跳过自动数据库迁移（alembic_auto_migrate=False）")
+from app.services.mq.rpc_client import rpc_client
 
 
 def _setup_windows_event_loop() -> None:
-    """
-    Windows 平台事件循环配置（从 lifespan 中提取的单独函数）
-    """
+    """Windows 平台事件循环配置"""
     if sys.platform.startswith("win"):
         try:
             policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
@@ -55,8 +37,12 @@ async def lifespan(app: FastAPI):
     # Windows 平台事件循环配置
     _setup_windows_event_loop()
 
-    # 执行 Alembic 数据库迁移（使用提取的异步函数）
-    await init_alembic_migration()
+    # 参照 FastapiApp lifespan 模式：先执行 alembic upgrade head，再检查 Schema 一致性
+    if settings.alembic_auto_migrate:
+        if not await run_alembic_upgrade_head():
+            raise RuntimeError("alembic upgrade head 执行失败，请检查数据库连接与迁移脚本")
+        if not await check_schemas():
+            raise RuntimeError("数据库 Schema 与模型不一致，请先手动执行 alembic upgrade head")
 
     await init_dependencies()
 
@@ -64,7 +50,6 @@ async def lifespan(app: FastAPI):
     await start_background_tasks()
 
     # 连接 RabbitMQ RPC 客户端（HTTP 请求 Action 通过 RPC 调用 FastapiApp 业务方法）
-    from app.services.mq.rpc_client import rpc_client
     await rpc_client.connect()
 
     logger.info("lifespan complete!")

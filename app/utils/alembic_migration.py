@@ -1,599 +1,173 @@
-"""Alembic 数据库迁移工具"""
+# -*- coding: utf-8 -*-
+"""Alembic 数据库迁移与 Schema 一致性校验
+
+参照 FastapiApp Utils/FastAPI/alembic_manager.py 模式，仅保留：
+  - run_alembic_upgrade_head(): 执行增量迁移
+  - check_schemas(): Schema 一致性校验
+"""
+
+import asyncio
+import re
+import sys
 from pathlib import Path
-from alembic.config import Config
+
 from alembic import command
-from alembic.autogenerate import compare_metadata
-from alembic.script import ScriptDirectory
-from alembic.runtime.migration import MigrationContext
-from alembic import context
-from app.models.database.workflow.models import *
-from app.models.database.browser.info import *
-from app.models.database.notify.models import *
-from sqlalchemy import create_engine, pool
-from sqlalchemy.pool import QueuePool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
-import pymysql
-from urllib.parse import urlparse, parse_qs
+from alembic.config import Config as AlembicConfig
+from sqlalchemy import inspect, create_engine
+from sqlmodel import SQLModel
+
 from app.config import settings
 from loguru import logger
-import time
-import asyncio
 
-# 获取 Alembic 配置（用于 env.py 调用）
-_config = None
+# 导入所有模型，确保 SQLModel.metadata 中注册了所有表
+from app.models.database.workflow.models import *  # noqa: F401, F403
+from app.models.database.browser.info import *  # noqa: F401, F403
+from app.models.database.notify.models import *  # noqa: F401, F403
 
-def get_alembic_config_for_env() -> Config:
-    """获取 Alembic 配置对象（供 env.py 使用）"""
-    global _config
-    if _config is None:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        alembic_ini_path = str(project_root / "alembic.ini")
-        _config = Config(alembic_ini_path)
-        
-        # 确保 script_location 被正确设置
-        try:
-            script_location = _config.get_main_option("script_location")
-            if not script_location:
-                script_location = str(project_root / "alembic")
-                _config.set_main_option("script_location", script_location)
-        except Exception:
-            script_location = str(project_root / "alembic")
-            _config.set_main_option("script_location", script_location)
-    
-    return _config
-
-# 模型 metadata（供 env.py 使用）
-target_metadata = CompositeActionModel.metadata
-
-# 缓存已创建的引擎，避免重复创建
-_engine_cache = {}
-
-# 缓存上次检查结果，避免频繁检查
-_last_check_time = 0
-_last_check_result = None
-_CHECK_CACHE_DURATION = 60  # 缓存有效期60秒
+_project_root = Path(__file__).resolve().parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 
 
-def _get_sync_engine(db_url: str):
-    """
-    获取或创建 SQLAlchemy 同步引擎（带连接池）
+# ================================================================
+# 公开入口
+# ================================================================
 
-    Args:
-        db_url: 数据库连接 URL
-
-    Returns:
-        SQLAlchemy 引擎对象
-    """
-    global _engine_cache
-
-    if db_url in _engine_cache:
-        return _engine_cache[db_url]
-
-    # 创建带连接池的引擎
-    engine = create_engine(
-        db_url,
-        poolclass=QueuePool,
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
-        pool_recycle=3600,
-        echo=False,
-        connect_args={
-            'connect_timeout': 10,
-            'read_timeout': 30,
-            'write_timeout': 30,
-        } if db_url.startswith('mysql') else {}
-    )
-
-    _engine_cache[db_url] = engine
-    return engine
-
-
-async def _ensure_database_exists(db_url: str) -> None:
-    """
-    确保数据库存在，如果不存在则创建（异步版本）
-
-    Args:
-        db_url: 数据库连接 URL
-    """
-    import aiomysql
-
-    # 解析 URL
-    parsed = urlparse(db_url)
-
-    # 提取数据库名称
-    db_name = parsed.path.lstrip('/')
-    if not db_name:
-        logger.warning("⚠️  无法从 URL 中提取数据库名称")
-        return
-
-    # 提取连接参数
-    query_params = parse_qs(parsed.query)
-
-    # ⚠️ 关键：移除 auth_plugin 参数，避免使用 mysql_native_password
-    if 'auth_plugin' in query_params:
-        logger.info("🔧 检测到 URL 中包含 auth_plugin 参数，已移除以避免认证问题")
-        del query_params['auth_plugin']
-
-    # 从 URL 或查询参数中提取用户名和密码
-    # 支持两种格式:
-    # 1. mysql://user:pass@host/db (标准格式)
-    # 2. mysql://host/db?user=xxx&password=yyy (查询参数格式)
-    username = parsed.username or query_params.get('user', ['root'])[0]
-    password = parsed.password or query_params.get('password', [''])[0]
-
-    # 构建连接到 MySQL 服务器的参数 (不包含数据库名)
-    connection_params = {
-        'host': parsed.hostname or '127.0.0.1',
-        'port': parsed.port or 3306,
-        'user': username,
-        'password': password,
-        # 不使用 auth_plugin，让 aiomysql 自动协商
-    }
-
-    logger.info(f"🔍 检查数据库是否存在：{db_name} (用户：{username})")
-
-    # 使用 aiomysql 异步连接
-    connection = await aiomysql.connect(**connection_params)
+async def run_alembic_upgrade_head() -> bool:
+    """执行 alembic upgrade head（增量迁移），成功返回 True"""
+    logger.info("===== 开始执行 alembic upgrade head =====")
+    alembic_ini = _project_root / "alembic.ini"
     try:
-        async with connection.cursor() as cursor:
-            # 检查数据库是否存在
-            await cursor.execute(
-                "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s",
-                (db_name,)
-            )
-
-            if await cursor.fetchone():
-                logger.info(f"✅ 数据库已存在：{db_name}")
-            else:
-                # 数据库不存在，创建它
-                logger.info(f"🚀 数据库不存在，正在创建：{db_name}")
-                await cursor.execute(
-                    f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-                )
-                await connection.commit()
-                logger.info(f"✅ 数据库创建成功：{db_name}")
-    finally:
-        connection.close()
-
-
-def _ensure_database_exists_sync(db_url: str) -> None:
-    """
-    确保数据库存在，如果不存在则创建（同步版本，用于同步函数调用）
-
-    Args:
-        db_url: 数据库连接 URL
-    """
-    # 解析 URL
-    parsed = urlparse(db_url)
-
-    # 提取数据库名称
-    db_name = parsed.path.lstrip('/')
-    if not db_name:
-        logger.warning("⚠️  无法从 URL 中提取数据库名称")
-        return
-
-    # 提取连接参数
-    query_params = parse_qs(parsed.query)
-
-    # ⚠️ 关键：移除 auth_plugin 参数，避免使用 mysql_native_password
-    if 'auth_plugin' in query_params:
-        logger.info("🔧 检测到 URL 中包含 auth_plugin 参数，已移除以避免认证问题")
-        del query_params['auth_plugin']
-
-    # 从 URL 或查询参数中提取用户名和密码
-    # 支持两种格式:
-    # 1. mysql://user:pass@host/db (标准格式)
-    # 2. mysql://host/db?user=xxx&password=yyy (查询参数格式)
-    username = parsed.username or query_params.get('user', ['root'])[0]
-    password = parsed.password or query_params.get('password', [''])[0]
-
-    # 构建连接到 MySQL 服务器的参数 (不包含数据库名)
-    connection_params = {
-        'host': parsed.hostname or '127.0.0.1',
-        'port': parsed.port or 3306,
-        'user': username,
-        'password': password,
-        # 不使用 auth_plugin，让 PyMySQL 自动协商
-    }
-
-    logger.info(f"🔍 检查数据库是否存在：{db_name} (用户：{username})")
-
-    # 直接使用 PyMySQL 连接 (不通过 SQLAlchemy)
-    connection = pymysql.connect(**connection_params)
-    with connection.cursor() as cursor:
-        # 检查数据库是否存在
-        cursor.execute(
-            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = %s",
-            (db_name,)
-        )
-
-        if cursor.fetchone():
-            logger.info(f"✅ 数据库已存在：{db_name}")
-        else:
-            # 数据库不存在，创建它
-            logger.info(f"🚀 数据库不存在，正在创建：{db_name}")
-            cursor.execute(
-                f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-            )
-            connection.commit()
-            logger.info(f"✅ 数据库创建成功：{db_name}")
-
-    connection.close()
-
-
-def _get_alembic_config(alembic_ini_path: str | None = None) -> Config:
-    """
-    获取 Alembic 配置对象（复用逻辑）
-
-    Args:
-        alembic_ini_path: alembic.ini 文件路径
-
-    Returns:
-        Alembic Config 对象
-    """
-    if alembic_ini_path is None:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        alembic_ini_path = str(project_root / "alembic.ini")
-
-    alembic_cfg = Config(alembic_ini_path)
-
-    # 确保 script_location 被正确设置
-    script_location = alembic_cfg.get_main_option("script_location")
-    if not script_location:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        script_location = str(project_root / "alembic")
-        alembic_cfg.set_main_option("script_location", script_location)
-    return alembic_cfg
-
-
-def run_alembic_migrations(
-    alembic_ini_path: str | None = None,
-    upgrade_to: str = "heads",
-    auto_upgrade: bool = True,
-    auto_generate: bool = False,
-) -> bool:
-    """
-    执行 Alembic 数据库迁移（优化版）
-
-    Args:
-        alembic_ini_path: alembic.ini 文件路径，默认为项目根目录下的 alembic.ini
-        upgrade_to: 升级目标版本，默认为 "heads"（最新版本）
-        auto_upgrade: 是否自动执行升级，如果为 False 则只检查不执行
-        auto_generate: 是否自动生成迁移脚本（仅开发环境使用！）
-
-    Returns:
-        bool: 迁移是否成功
-
-    Raises:
-        Exception: 迁移失败时抛出异常
-    """
-    start_time = time.time()
-
-    # 获取 Alembic 配置
-    alembic_cfg = _get_alembic_config(alembic_ini_path)
-    logger.info(f"🔧 检查数据库迁移状态...")
-
-    # 获取同步引擎（使用缓存）
-    sync_url = settings.mysql_browser_info_url
-    if sync_url.startswith("mysql+aiomysql://"):
-        sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
-
-    # 确保数据库存在（同步版本）
-    _ensure_database_exists_sync(sync_url)
-
-    # 使用带连接池的引擎
-    engine = _get_sync_engine(sync_url)
-
-    with engine.connect() as conn:
-        context = MigrationContext.configure(conn)
-        current_rev = context.get_current_revision()
-
-        script = ScriptDirectory.from_config(alembic_cfg)
-        head_rev = script.get_current_head()
-
-        if current_rev == head_rev:
-            logger.info(f"✅ 数据库已是最新版本: {current_rev}")
-
-            # 如果启用了自动生成，检查是否有未跟踪的变更
-            if auto_generate:
-                logger.info(f"🔍 检查模型与数据库的结构差异...")
-                has_changes = _check_and_autogenerate_if_needed(
-                    alembic_cfg, engine)
-                if has_changes:
-                    script = ScriptDirectory.from_config(alembic_cfg)
-                    head_rev = script.get_current_head()
-                    logger.info(f"📝 已生成新的迁移脚本，最新版本: {head_rev}")
-                else:
-                    elapsed = time.time() - start_time
-                    logger.info(f"✅ 迁移检查完成，耗时: {elapsed:.2f}s")
-                    return True
-            else:
-                elapsed = time.time() - start_time
-                logger.info(f"✅ 迁移检查完成，耗时: {elapsed:.2f}s")
-                return True
-        else:
-            logger.info(f"📝 检测到待应用的迁移:")
-            logger.info(f"   当前版本: {current_rev or 'None (初始状态)'}")
-            logger.info(f"   最新版本: {head_rev}")
-
-
-    # 执行迁移
-    if auto_upgrade:
-        logger.info(f"🚀 正在应用数据库迁移 (升级到 {upgrade_to})...")
-        command.upgrade(alembic_cfg, upgrade_to)
-        elapsed = time.time() - start_time
-        logger.info(f"✅ 数据库迁移成功完成! 总耗时: {elapsed:.2f}s")
+        cfg = AlembicConfig(str(alembic_ini))
+        # env.py 内部会 asyncio.run，需在独立线程中执行以避免与当前事件循环冲突
+        await asyncio.to_thread(command.upgrade, cfg, "head")
+        logger.info("===== alembic upgrade head 完成 =====")
         return True
-        
-    else:
-        elapsed = time.time() - start_time
-        logger.info(f"ℹ️  跳过自动迁移（auto_upgrade=False），耗时: {elapsed:.2f}s")
-        return True
-
-
-def check_alembic_status(alembic_ini_path: str | None = None, use_cache: bool = True) -> dict:
-    """
-    检查 Alembic 迁移状态（优化版，支持缓存）
-
-    Args:
-        alembic_ini_path: alembic.ini 文件路径
-        use_cache: 是否使用缓存（默认启用，60秒有效期）
-
-    Returns:
-        dict: 包含迁移状态信息
-            - current_revision: 当前版本
-            - head_revision: 最新版本
-            - needs_upgrade: 是否需要升级
-
-    Raises:
-        Exception: 检查失败时抛出异常
-    """
-    global _last_check_time, _last_check_result
-
-    # 如果启用缓存且缓存未过期，直接返回缓存结果
-    if use_cache and _last_check_result is not None:
-        elapsed = time.time() - _last_check_time
-        if elapsed < _CHECK_CACHE_DURATION:
-            logger.debug(f"📦 使用缓存的迁移状态（缓存时间: {elapsed:.1f}s）")
-            return _last_check_result
-
-    # 获取 Alembic 配置
-    alembic_cfg = _get_alembic_config(alembic_ini_path)
-
-    # 获取同步 URL
-    sync_url = settings.mysql_browser_info_url
-    if sync_url.startswith("mysql+aiomysql://"):
-        sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
-
-    # 使用带连接池的引擎
-    engine = _get_sync_engine(sync_url)
-
-    with engine.connect() as conn:
-        context = MigrationContext.configure(conn)
-        current_rev = context.get_current_revision()
-
-        script = ScriptDirectory.from_config(alembic_cfg)
-        head_rev = script.get_current_head()
-
-        result = {
-            "current_revision": current_rev,
-            "head_revision": head_rev,
-            "needs_upgrade": current_rev != head_rev,
-        }
-
-        # 更新缓存
-        _last_check_time = time.time()
-        _last_check_result = result
-
-        return result
-
-
-def _check_and_autogenerate_if_needed(alembic_cfg: Config, engine) -> bool:
-    """
-    检查模型与数据库的差异，如果有差异则自动生成迁移脚本（优化版）
-
-    Args:
-        alembic_cfg: Alembic 配置对象
-        engine: SQLAlchemy 引擎
-
-    Returns:
-        bool: 是否生成了新的迁移脚本
-    """
-    start_time = time.time()
-    
-    # 获取所有模型的 metadata（复用已加载的模型）
-    target_metadata = CompositeActionModel.metadata
-    
-    # 比较差异（最耗时的操作）
-    logger.debug(f"🔍 开始比较模型与数据库结构差异...")
-    compare_start = time.time()
-    
-    with engine.connect() as conn:
-        migration_context = MigrationContext.configure(conn)
-        diff = compare_metadata(
-            migration_context,
-            target_metadata
-        )
-    
-    compare_elapsed = time.time() - compare_start
-    logger.debug(f"✅ 差异比较完成，耗时: {compare_elapsed:.2f}s")
-
-    if not diff:
-        total_elapsed = time.time() - start_time
-        logger.info(f"✅ 模型与数据库结构完全一致，无需生成迁移（总耗时: {total_elapsed:.2f}s）")
+    except Exception as e:
+        logger.error(f"alembic upgrade head 失败: {e}")
         return False
 
-    # 有差异，生成迁移脚本
-    logger.warning(f"⚠️  检测到 {len(diff)} 处结构差异:")
-    for change in diff:
-        logger.warning(f"   - {change}")
 
-    logger.info(f"🚀 正在自动生成迁移脚本...")
-    
-    # 使用 alembic revision --autogenerate
-    revision_start = time.time()
-    command.revision(
-        alembic_cfg,
-        message="Auto-generated migration (development mode)",
-        autogenerate=True
-    )
-    revision_elapsed = time.time() - revision_start
-    logger.debug(f"✅ 迁移脚本生成完成，耗时: {revision_elapsed:.2f}s")
-
-    total_elapsed = time.time() - start_time
-    logger.info(f"✅ 迁移脚本已生成，请检查 alembic/versions/ 目录（总耗时: {total_elapsed:.2f}s）")
-    return True
+async def check_schemas() -> bool:
+    """检查 Schema 是否与模型一致，不一致返回 False"""
+    return await asyncio.to_thread(_check_schema_sync)
 
 
-async def run_alembic_migrations_async(
-    alembic_ini_path: str | None = None,
-    upgrade_to: str = "heads",
-    auto_upgrade: bool = True,
-    auto_generate: bool = False,
-) -> bool:
+# ================================================================
+# Schema 一致性校验
+# ================================================================
+
+def _normalize_column_type(col_type_str: str) -> str:
+    """将 SQLAlchemy 列类型字符串归一化，便于跨驱动比较"""
+    s = col_type_str.upper().strip()
+    s = re.sub(r"\s+COLLATE\s+.*$", "", s)
+    s = re.sub(r"\(.*\)", "", s)
+    aliases = {
+        "LONGTEXT": "TEXT", "MEDIUMTEXT": "TEXT", "TINYTEXT": "TEXT",
+        "INTEGER": "INT",
+        "TIMESTAMP": "DATETIME",
+        "BOOL": "TINYINT", "BOOLEAN": "TINYINT",
+    }
+    return aliases.get(s, s)
+
+
+def _is_type_compatible(model_type: str, db_type: str) -> bool:
+    """判断两个归一化后的类型是否兼容"""
+    if model_type == db_type:
+        return True
+    text_types = {"VARCHAR", "CHAR", "TEXT", "LONGTEXT", "MEDIUMTEXT", "TINYTEXT"}
+    if model_type in text_types and db_type in text_types:
+        return True
+    int_types = {"TINYINT", "SMALLINT", "INT", "BIGINT", "INTEGER"}
+    if model_type in int_types and db_type in int_types:
+        return True
+    if {model_type, db_type} <= {"DATETIME", "TIMESTAMP"}:
+        return True
+    if model_type == "JSON" and db_type in ("TEXT", "LONGTEXT"):
+        return True
+    # StrEnum/IntEnum 兼容：模型报告为 VARCHAR/INT，但数据库存储为 ENUM
+    if (model_type in text_types or model_type in int_types) and db_type == "ENUM":
+        return True
+    if db_type in (text_types | int_types) and model_type == "ENUM":
+        return True
+    return False
+
+
+def _check_schema_sync() -> bool:
     """
-    执行 Alembic 数据库迁移（异步版本，用于从已运行的事件循环中调用）
+    同步执行 Schema 一致性校验
 
-    Args:
-        alembic_ini_path: alembic.ini 文件路径，默认为项目根目录下的 alembic.ini
-        upgrade_to: 升级目标版本，默认为 "heads"（最新版本）
-        auto_upgrade: 是否自动执行升级，如果为 False 则只检查不执行
-        auto_generate: 是否自动生成迁移脚本（仅开发环境使用！）
-
-    Returns:
-        bool: 迁移是否成功
-
-    Raises:
-        Exception: 迁移失败时抛出异常
+    检查项（关键，阻塞启动）:
+        - 模型中声明但数据库不存在的表
+        - 模型中存在但数据库缺少的列
+        - 列类型不匹配
+    非关键（仅警告，不阻塞）:
+        - 数据库中存在但模型未声明的列
     """
-    start_time = time.time()
+    logger.info("===== 开始 Schema 一致性校验 =====")
 
-    # 获取 Alembic 配置
-    alembic_cfg = _get_alembic_config(alembic_ini_path)
-    logger.info(f"🔧 检查数据库迁移状态...")
-
-    # 获取同步引擎（使用缓存）
     sync_url = settings.mysql_browser_info_url
     if sync_url.startswith("mysql+aiomysql://"):
         sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
 
-    # 确保数据库存在（异步版本）
-    await _ensure_database_exists(sync_url)
+    metadata = SQLModel.metadata
 
-    # 使用带连接池的引擎
-    engine = _get_sync_engine(sync_url)
+    critical: list[str] = []
+    non_critical: list[str] = []
 
-    with engine.connect() as conn:
-        context = MigrationContext.configure(conn)
-        current_rev = context.get_current_revision()
-
-        script = ScriptDirectory.from_config(alembic_cfg)
-        head_rev = script.get_current_head()
-
-        if current_rev == head_rev:
-            logger.info(f"✅ 数据库已是最新版本: {current_rev}")
-
-            # 如果启用了自动生成，检查是否有未跟踪的变更
-            if auto_generate:
-                logger.info(f"🔍 检查模型与数据库的结构差异...")
-                # 使用线程执行同步操作，避免事件循环冲突
-                has_changes = await asyncio.to_thread(
-                    _check_and_autogenerate_if_needed,
-                    alembic_cfg, engine
-                )
-                if has_changes:
-                    script = ScriptDirectory.from_config(alembic_cfg)
-                    head_rev = script.get_current_head()
-                    logger.info(f"📝 已生成新的迁移脚本，最新版本: {head_rev}")
-                    # 生成新迁移后需要继续执行迁移升级
-                else:
-                    elapsed = time.time() - start_time
-                    logger.info(f"✅ 迁移检查完成，耗时: {elapsed:.2f}s")
-                    return True
-            else:
-                elapsed = time.time() - start_time
-                logger.info(f"✅ 迁移检查完成，耗时: {elapsed:.2f}s")
-                return True
-        else:
-            logger.info(f"📝 检测到待应用的迁移:")
-            logger.info(f"   当前版本: {current_rev or 'None (初始状态)'}")
-            logger.info(f"   最新版本: {head_rev}")
-
-
-    # 执行迁移
-    if auto_upgrade:
-        logger.info(f"🚀 正在应用数据库迁移 (升级到 {upgrade_to})...")
-        # 使用线程执行同步的 command.upgrade，避免事件循环冲突
-        await asyncio.to_thread(command.upgrade, alembic_cfg, upgrade_to)
-        elapsed = time.time() - start_time
-        logger.info(f"✅ 数据库迁移成功完成! 总耗时: {elapsed:.2f}s")
-        return True
-
-    else:
-        elapsed = time.time() - start_time
-        logger.info(f"ℹ️  跳过自动迁移（auto_upgrade=False），耗时: {elapsed:.2f}s")
-        return True
-
-
-# ============ Alembic env.py 相关函数 ============
-
-def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
-    url = settings.mysql_browser_info_url
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-def do_run_migrations(connection: Connection) -> None:
-    """执行迁移（内部函数）"""
-    context.configure(connection=connection, target_metadata=target_metadata)
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations() -> None:
-    """执行异步迁移（供在线迁移使用）"""
-    db_url = settings.mysql_browser_info_url
-    # 确保使用异步驱动
-    if db_url.startswith("mysql+pymysql://"):
-        db_url = db_url.replace("mysql+pymysql://", "mysql+aiomysql://")
-    
-    config = get_alembic_config_for_env()
-    config.set_main_option("sqlalchemy.url", db_url)
-    
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
-
-
-def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    # 使用新的事件循环，避免与已有事件循环冲突
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    engine = create_engine(sync_url)
     try:
-        loop.run_until_complete(run_async_migrations())
+        with engine.connect() as conn:
+            inspector = inspect(conn)
+            db_tables = set(inspector.get_table_names())
+            model_tables = set(metadata.tables.keys())
+
+            missing_tables = model_tables - db_tables
+            if missing_tables:
+                critical.append(f"模型中声明但数据库中不存在的表: {sorted(missing_tables)}")
+
+            for table_name in sorted(model_tables & db_tables):
+                db_cols = {
+                    col["name"]: _normalize_column_type(str(col["type"]))
+                    for col in inspector.get_columns(table_name)
+                }
+                model_cols = {
+                    col.name: _normalize_column_type(str(col.type))
+                    for col in metadata.tables[table_name].columns
+                }
+                mcs, dcs = set(model_cols), set(db_cols)
+                for col in sorted(mcs - dcs):
+                    critical.append(
+                        f"{table_name}: 模型中存在但DB缺少列 '{col}' ({model_cols[col]})")
+                for col in sorted(dcs - mcs):
+                    non_critical.append(
+                        f"{table_name}: DB中存在但模型中未声明的列 '{col}' ({db_cols[col]})")
+                for col in sorted(mcs & dcs):
+                    mt, dt = model_cols[col], db_cols[col]
+                    if mt != dt and not _is_type_compatible(mt, dt):
+                        critical.append(
+                            f"{table_name}.{col}: 类型不匹配 模型={mt}, DB={dt}")
+    except Exception as e:
+        logger.error(f"Schema 校验异常: {e}")
+        return False
     finally:
-        loop.close()
+        engine.dispose()
 
+    if non_critical:
+        logger.warning("=" * 60)
+        logger.warning("Schema 非关键差异 (不阻塞启动):")
+        for w in non_critical:
+            logger.warning(f"  {w}")
+        logger.warning("=" * 60)
 
-async def run_migrations_online_async() -> None:
-    """Run migrations in 'online' mode - async version for calling from existing event loop."""
-    await run_async_migrations()
+    if critical:
+        logger.error("=" * 60)
+        logger.error("Schema 不一致，拒绝启动:")
+        for w in critical:
+            logger.error(f"  {w}")
+        logger.error("=" * 60)
+        logger.error("请先执行 alembic upgrade head 同步 Schema")
+        return False
+
+    logger.info("===== Schema 一致性校验全部通过 =====")
+    return True

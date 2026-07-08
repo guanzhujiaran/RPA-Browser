@@ -233,7 +233,15 @@ class BaseAction(ABC, Generic[ParamsT]):
 
     async def execute(self) -> ActionResult:
         """执行动作"""
-        action_result = await self._execute()
+        try:
+            action_result = await self._execute()
+        except Exception as e:
+            action_result = ActionResult(
+                success=False,
+                error=f"执行异常: {e}",
+                action_id=self.action_id,
+                action_name=self.action_name,
+            )
         self._merge_output_vars(action_result)
         action_result.variables = {
             k: v for k, v in self.variables.items() if not callable(v)}
