@@ -15,6 +15,7 @@ from typing import Type
 from app.models.database.notify.models import NotificationConfig
 from app.utils.decorator import log_class_decorator
 from app.utils.http import httpx_client
+from app.services.message.message_pub import publish_message
 import loguru
 
 
@@ -962,9 +963,15 @@ async def one() -> str:
     return res.get("hitokoto", "") + "    ----" + res.get("from", "")
 
 
-async def send(title: str, content: str, conf: NotificationConfig, **kwargs):
+async def send(title: str, content: str, conf=None, **kwargs):
     """
-    发送推送消息的全局函数接口
+    发送推送消息的全局函数接口。
+
+    行为已从「在本服务内直接调用各推送渠道」改为「发布到 RabbitMQ，
+    由 message-service 统一完成实际推送」，以便集中管理渠道与限流。
+    per-user 的 PushChannelConfig 会一并序列化到消息的 config 字段中；
+    也可直接传入 dict（如共享的 MESSAGE_CONFIG）。
     """
-    service = PushMessageService(conf)
-    await service.send(title, content)
+    # conf 为 pydantic / SQLModel 模型时统一序列化为 dict，再投递给 message-service
+    config = conf.model_dump() if conf is not None else None
+    await publish_message(title, content, push_type=None, config=config)

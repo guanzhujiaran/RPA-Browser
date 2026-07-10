@@ -237,7 +237,7 @@ async def test_notify_router(
         notification_config = NotificationConfig(**config_dict)
 
         # 尝试发送测试通知
-        from app.services.notify import push_msg
+        from app.services.message import push_msg
 
         push_service = push_msg.PushMessageService(notification_config)
 
@@ -249,8 +249,8 @@ async def test_notify_router(
             if getattr(notification_config, method, None)
         ]
 
-        # 异步发送通知
-        await push_service.send(request.title, request.content)
+        # 异步发送通知：发布到 MQ，由 message-service 统一推送
+        await push_msg.send(request.title, request.content, notification_config)
 
         # 根据配置判断可能发送的渠道（简化版本）
         if notification_config.bark_push:

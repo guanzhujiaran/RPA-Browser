@@ -11,7 +11,8 @@ from app.models.notify.models import (
     NotificationConfigUpdate,
 )
 from app.models.notify.response_models import NotificationConfigEffectiveResp
-from app.services.notify import push_msg
+from app.services.message import push_msg
+from app.config import settings
 
 
 class NotificationService:
@@ -168,6 +169,10 @@ class NotificationService:
             mid, session, browser_id
         )
         if config is None:
+            # 无 per-user 配置时，回落到 docker-compose 中共享的全局 MESSAGE_CONFIG
+            # message_config 始终为 pydantic 模型（可能为空），直接交给 message-service 兜底
+            global_conf = settings.message_config
+            await NotificationService.push_msg_by_config(title, content, global_conf)
             return
         await NotificationService.push_msg_by_config(title, content, config)
 
