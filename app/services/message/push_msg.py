@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import re
+import socket
 import time
 import urllib.parse
 import smtplib
@@ -963,15 +964,48 @@ async def one() -> str:
     return res.get("hitokoto", "") + "    ----" + res.get("from", "")
 
 
+def server_label() -> str:
+    """返回本服务标识前缀，例如 ``[rpa-browser@10.0.0.5]``。
+
+    所有推送标题都会带上它，便于在告警中区分「是哪台服务器的哪个服务」报错。
+    ``SERVER_NAME`` / ``SERVER_ADDRESS`` 来自全局 ``settings``（可被环境变量覆盖），
+    ``SERVER_ADDRESS`` 缺省时自动取本机 hostname。
+    """
+    from app.config import settings
+
+    name = settings.SERVER_NAME or "rpa-browser"
+    addr = settings.SERVER_ADDRESS or socket.gethostname()
+    return f"[{name}@{addr}]"
+
+
 async def send(title: str, content: str, conf=None, **kwargs):
     """
-    发送推送消息的全局函数接口。
+    发送推送消息的全局函数接口（信息类）。
 
     行为已从「在本服务内直接调用各推送渠道」改为「发布到 RabbitMQ，
     由 message-service 统一完成实际推送」，以便集中管理渠道与限流。
     per-user 的 PushChannelConfig 会一并序列化到消息的 config 字段中；
     也可直接传入 dict（如共享的 MESSAGE_CONFIG）。
+    标题会自动加上本服务标识前缀（服务名@地址）。
+
+    报错类推送请使用 :func:`send_error`，其标题只写服务+地址与笼统主题，
+    不暴露具体错误，具体错误统一放进内容。
     """
     # conf 为 pydantic / SQLModel 模型时统一序列化为 dict，再投递给 message-service
     config = conf.model_dump() if conf is not None else None
-    await publish_message(title, content, push_type=None, config=config)
+    label = server_label()
+    final_title = f"{label} {title}" if title else label
+    await publish_message(final_title, content, push_type=None, config=config)
+
+
+async def send_error(content: str, *, subject: str = "运行异常", conf=None, **kwargs):
+    """
+    统一的「报错」推送入口（通用函数）。
+
+    标题只含「服务@地址 + 笼统的 subject（如 运行异常）」，不写入任何具体错误信息；
+    具体错误内容（异常信息、堆栈、上下文）全部放入 content。
+    """
+    # conf 为 pydantic / SQLModel 模型时统一序列化为 dict，再投递给 message-service
+    config = conf.model_dump() if conf is not None else None
+    final_title = f"{server_label()} {subject}"
+    await publish_message(final_title, content, push_type=None, config=config)

@@ -7,12 +7,12 @@
 """
 from fastapi import APIRouter
 from app.controller.v1.browser.browser_router import router as fingerprint_router
-from app.controller.v1.browser.notify_router import router as notify_router
+from app.controller.v1.browser.message_router import router as message_router
 from app.controller.v1.browser.default_settings_router import router as default_settings_router
 
 router = APIRouter()
 router.include_router(fingerprint_router)
-router.include_router(notify_router)
+router.include_router(message_router)
 router.include_router(default_settings_router)
 
 __all__ = ["router"]

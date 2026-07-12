@@ -166,6 +166,9 @@ class Settings(BaseSettings):
     # 全局推送渠道配置（pydantic PushChannelConfig，与 message-service / fastapi 共用同一份）
     # 作为无 per-user 通知配置时的兜底；由 pydantic-settings 自动解析 JSON 环境变量，无需 Json() 包装
     message_config: PushChannelConfig = PushChannelConfig()
+    # 本服务标识（写入推送告警标题，便于定位「哪台服务器的哪个服务」报错）
+    SERVER_NAME: str = "rpa-browser"
+    SERVER_ADDRESS: str = ""  # 缺省自动取本机 hostname
     GEMINI_API_KEY: str = "NotNecessary"
     default_proxy_server: str = (
         ""  # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128

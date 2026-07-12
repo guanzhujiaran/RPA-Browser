@@ -1,5 +1,5 @@
-FROM python:3.12-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+FROM ghcr.nju.edu.cn/astral-sh/uv:python3.13-bookworm-slim
+
 WORKDIR /home/RPA-Browser
 
 # 安装系统依赖（OpenCV 需要 libgl1）
