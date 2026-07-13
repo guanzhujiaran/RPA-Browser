@@ -22,8 +22,8 @@ docker-compose up -d
 ```
 
 2. 访问应用：
-   - API 文档: http://localhost:8000/docs
-   - API 地址: http://localhost:8000
+   - API 文档: http://localhost:28000/docs
+   - API 地址: http://localhost:28000
 
 ### 故障排除
 

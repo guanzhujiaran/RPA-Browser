@@ -23,7 +23,7 @@ RUN uv sync
 COPY . .
 
 # 暴露端口
-EXPOSE 8000
+EXPOSE 28000
 
 # 启动命令
-CMD ["uv","run","uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+CMD ["uv","run","uvicorn", "main:app", "--host", "0.0.0.0", "--port", "28000", "--log-level", "info"]
