@@ -272,7 +272,7 @@ class PushMessageService:
             return
         self.logger.info("PUSHPLUS 服务启动")
 
-        url = "https://www.pushplus.plus/send"
+        url = "http://www.pushplus.plus/send"
         data = {
             "token": self.conf.push_plus_token,
             "title": title,

@@ -142,7 +142,13 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"  # JWT算法
     jwt_expire_minutes: int = 7 * 24 * 60  # JWT过期时间（分钟），默认30分钟
     proxy_server_url: str = "http://127.0.0.1:10809"  # 可以访问外网的代理地址
-    github_proxy_url: str = "https://gh-proxy.com/"
+    github_proxy_urls: list[str] = Field(
+        default_factory=lambda: ["https://gh.llkk.cc/",
+                                 "https://ghproxy.cn/",
+                                 "https://ghproxy.net/",
+                                 "https://gitproxy.click/",
+                                 "https://github.tbedu.top/",
+                                 "https://github.moeyy.xyz/"])
 
     # RabbitMQ 连接地址，用于 HTTP 请求 Action 通过 RPC 调用 FastapiApp 内部业务方法
     # 后端定时执行工作流时通过 RabbitMQ RPC 调用系统接口，不经过网关、不依赖 JWT
@@ -180,20 +186,19 @@ class Settings(BaseSettings):
     browser_session_max_idle_time: int = 1800  # 最大闲置时间（秒）
     browser_session_cleanup_interval: int = 300  # 清理检查间隔（秒）
     browser_session_expiration_time: int | None = None  # 会话过期时间（秒），None表示不过期
-    
+
     # 浏览器页面数量限制配置
     browser_max_pages_per_context: int = 10  # 每个浏览器上下文的最大页面数
-    
+
     # 工作流控制流嵌套深度限制
     workflow_max_nesting_depth: int = 10  # 最大嵌套深度（Loop/IfElse）
-    
+
     # WebRTC 视频流配置
     browser_webrtc_idle_timeout: int = 300  # WebRTC 流最大闲置时间（秒），默认5分钟
-    
+
     # Alembic 数据库迁移配置
     alembic_auto_migrate: bool = True  # 是否在应用启动时自动执行数据库迁移
     alembic_upgrade_target: str = "heads"  # 迁移目标版本，默认为最新版本
-
 
 
 settings = Settings()
