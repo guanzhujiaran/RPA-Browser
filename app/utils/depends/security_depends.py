@@ -4,14 +4,14 @@
 """
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models.exceptions.base_exception import (
+from app.models.common.exceptions.base_exception import (
     BrowserIdNotBeloneToUserException,
     FingerprintLimitExceededException,
 )
-from app.models.common.depends import (
+from bili_common.models.depends import (
     BrowserReqAuthInfo,
 )
-from app.services.RPA_browser.browser_db_service import BrowserDBService
+from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
 from app.services.RPA_browser.permission_config_service import PermissionConfigService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -38,7 +38,7 @@ async def _verify_browser_ownership_core(
     """
 
     # 验证浏览器指纹是否存在且属于当前用户
-    fingerprint_info = await BrowserDBService.read_fingerprint(
+    fingerprint_info = await BrowserFingerprintService.read_fingerprint(
         browser_id=browser_id,
         mid=auth_info.mid,
         session=session,
@@ -90,11 +90,11 @@ async def verify_fingerprint_limit(
     """
     # 获取当前等级允许的最大指纹数量
     max_fingerprints = await PermissionConfigService.get_max_fingerprints_by_level(
-        auth_info.level
+        auth_info.level, auth_info.role
     )
 
     # 获取当前用户的指纹数量
-    current_count = await BrowserDBService.count_fingerprint(auth_info.mid, session)
+    current_count = await BrowserFingerprintService.count_fingerprint(auth_info.mid, session)
 
     # 检查是否超出限制
     if current_count >= max_fingerprints:

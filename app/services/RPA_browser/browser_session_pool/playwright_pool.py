@@ -12,7 +12,7 @@ from app.services.RPA_browser.browser_session_pool.session_pool_model import (
 )
 import time
 from loguru import logger
-from app.models.exceptions.base_exception import BrowserNotStartedException
+from app.models.common.exceptions.base_exception import BrowserNotStartedException
 
 
 class PlaywrightSessionPool:

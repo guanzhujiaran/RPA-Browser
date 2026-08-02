@@ -1,5 +1,5 @@
-from app.models.common.response_msg import ResponseMsg
-from app.models.common.response_code import ResponseCode
+from bili_common.models.response_msg import ResponseMsg
+from bili_common.models.response_code import ResponseCode
 
 
 class BaseException(Exception):
@@ -85,3 +85,57 @@ class FingerprintLimitExceededException(BaseException):
 
     def __init__(self, max_fingerprints: int):
         self.msg = self.msg.format(max=max_fingerprints)
+
+
+class BrowserPageIndexError(BaseException):
+    code = ResponseCode.BAD_REQUEST
+    msg = ResponseMsg.exception_browser_page_index_error
+
+    def __init__(self, page_index: int):
+        self.msg = ResponseMsg.exception_browser_page_index_error.format(
+            page_index=page_index)
+
+
+class GetBrowserInfoFailedException(BaseException):
+    code = ResponseCode.INTERNAL_ERROR
+    msg = ResponseMsg.exception_get_browser_info_failed
+
+    def __init__(self, error: str):
+        self.msg = self.msg.format(error=error)
+
+
+class WebRTCStreamNotActiveException(BaseException):
+    code = ResponseCode.INTERNAL_ERROR
+    msg = ResponseMsg.exception_webrtc_stream_not_active
+
+
+class BilibiliLoginFailedException(BaseException):
+    code = ResponseCode.INTERNAL_ERROR
+    msg = ResponseMsg.exception_bilibili_login_failed
+
+
+class NameAlreadyExistsException(BaseException):
+    """名称已存在异常（同一用户下）"""
+    code = ResponseCode.BAD_REQUEST
+    msg = "您已存在名为 '{name}' 的{name_type}，请使用其他名称"
+
+    def __init__(self, name: str, name_type: str = "项目"):
+        self.msg = self.msg.format(name=name, name_type=name_type)
+
+
+class ActionNotAccessibleException(BaseException):
+    """无权访问自定义操作异常"""
+    code = ResponseCode.FORBIDDEN
+    msg = "无权访问操作: {action_id}"
+
+    def __init__(self, action_id: str):
+        self.msg = self.msg.format(action_id=action_id)
+
+
+class ActionNotFoundException(BaseException):
+    """引用的自定义操作不存在异常"""
+    code = ResponseCode.NOT_FOUND
+    msg = "引用的操作不存在: {action_id}"
+
+    def __init__(self, action_id: str):
+        self.msg = self.msg.format(action_id=action_id)

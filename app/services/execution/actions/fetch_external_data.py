@@ -12,9 +12,9 @@
 
 两种模式互斥，由 params 字段自动校验。
 
-结果数据（ActionResult.data）直接返回响应体：
-- RPC 模式：返回 CommonResponseModel 的 data 字段
-- HTTP 模式：JSON 响应返回解析后的 dict / list，非 JSON 返回原始文本
+结果数据（ActionResult.data）为 FetchExternalDataResult：
+- RPC 模式：将其 CommonResponseModel.data 放入 result.data，并附带 code/msg
+- HTTP 模式：放入解析后的响应体（JSON 解析结果或文本），并附带 status/headers/url 等元信息
 """
 import time
 from typing import Dict, List, Any
@@ -23,7 +23,10 @@ import httpx
 from loguru import logger
 
 from app.services.execution.actions.base import BaseAction, ActionResult
-from app.models.execution.action_params import FetchExternalDataParams
+from app.models.execution.action_params import (
+    FetchExternalDataParams,
+    FetchExternalDataResult,
+)
 from app.models.execution.enums import HttpBodyTypeEnum
 from app.models.execution.system_services import (
     validate_rpc_method,
@@ -43,9 +46,8 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
     - RPC 模式（method_name 提供）：通过 RabbitMQ RPC 调用 FastapiApp 内部业务方法
     - HTTP 模式（url 提供）：发送普通 HTTP/HTTPS 请求
 
-    注意：data 字段直接返回响应体本身（JSON 解析结果或文本），
-    不再使用 FetchExternalDataResult 包装。FetchExternalDataResult 仅保留作为
-    result_model 用于预览/Schema 生成。
+    注意：data 字段为结构化的 FetchExternalDataResult（含 status_code / data / text /
+    headers / url / elapsed / is_json），与 result_model 对齐，便于强类型消费与预览。
     """
 
     action_id: BuiltinActionType = BuiltinActionType.FETCH_EXTERNAL_DATA
@@ -70,7 +72,7 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
             kwargs['_action_name'] = action_name
         return cls(**kwargs)
 
-    async def _execute(self) -> ActionResult[Any]:
+    async def _execute(self) -> ActionResult[FetchExternalDataResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
@@ -113,7 +115,7 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
         validated_params: "FetchExternalDataParams",
         timeout_sec: float,
         start_time: float,
-    ) -> ActionResult[Any]:
+    ) -> ActionResult[FetchExternalDataResult]:
         """通过 RabbitMQ RPC（FastStream）调用 FastapiApp 内部业务方法获取外部数据
 
         - method_name 字段标识要调用的 RPC 方法（如 get_reserve_lottery）
@@ -200,7 +202,15 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
 
         return ActionResult(
             success=True,
-            data=raw_data,
+            data=FetchExternalDataResult(
+                status_code=code,
+                data=raw_data,
+                text=str(raw_data),
+                headers={},
+                url="",
+                elapsed=elapsed,
+                is_json=True,
+            ),
             execution_time=elapsed,
             action_id=self.metadata.id, action_name=self.metadata.name,
         )
@@ -221,7 +231,7 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
         proxy: str | None,
         timeout_sec: float,
         start_time: float,
-    ) -> ActionResult[Any]:
+    ) -> ActionResult[FetchExternalDataResult]:
         """发送普通 HTTP/HTTPS 请求获取外部数据
 
         使用 httpx.AsyncClient 发送请求，根据 body_type 自动构造请求体。
@@ -288,7 +298,15 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
 
         return ActionResult(
             success=True,
-            data=raw_data,
+            data=FetchExternalDataResult(
+                status_code=response.status_code,
+                data=raw_data,
+                text=response.text,
+                headers=dict(response.headers),
+                url=str(response.url),
+                elapsed=elapsed,
+                is_json=is_json,
+            ),
             execution_time=elapsed,
             action_id=self.metadata.id, action_name=self.metadata.name,
         )

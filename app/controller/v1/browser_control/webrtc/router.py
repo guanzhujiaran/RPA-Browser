@@ -5,15 +5,15 @@ WebRTC 视频流 API 路由
 无需调用 enable_webrtc —— 管理器在会话创建时已自动就绪。
 """
 
-from app.services.RPA_browser.live_service import live_service
+from app.services.RPA_browser.session.live_service import live_service
 from fastapi import Depends
 from loguru import logger
 from app.models.response import success_response, error_response
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
-from app.services.RPA_browser.live_service import LiveService
+from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqAuthInfo
+from bili_common.models.depends import BrowserReqAuthInfo
 from ..base import new_webrtc_router
 from pydantic import BaseModel
 

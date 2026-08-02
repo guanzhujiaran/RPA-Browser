@@ -24,15 +24,19 @@ from app.models.base.base_sqlmodel import BasePaginationResp
 from app.services.broswer_fingerprint.fingerprint_gen import (
     gen_from_browserforge_fingerprint,
 )
-from app.models.response_code import ResponseCode
-from app.models.exceptions.base_exception import BrowserFingerprintNotFoundException, NameAlreadyExistsException
+from bili_common.models.response_code import ResponseCode
+from app.config import CONF
+from app.models.common.exceptions.base_exception import (
+    BrowserFingerprintNotFoundException,
+    NameAlreadyExistsException,
+)
 from typing import Union
 from pathlib import Path
 import asyncio
 import shutil
 
 
-class BrowserDBService:
+class BrowserFingerprintService:
     @staticmethod
     async def upsert_fingerprint(
         params: BrowserFingerprintUpsertParams, mid: int, session: AsyncSession
@@ -45,8 +49,10 @@ class BrowserDBService:
         if params.browser_id is not None:
             # 更新现有记录
             stmt = select(UserBrowserInfo).where(
-                and_(UserBrowserInfo.browser_id == int(
-                    params.browser_id), UserBrowserInfo.mid == mid)
+                and_(
+                    UserBrowserInfo.browser_id == int(params.browser_id),
+                    UserBrowserInfo.mid == mid,
+                )
             )
             result = await session.exec(stmt)
             browser_info = result.one_or_none()
@@ -55,15 +61,16 @@ class BrowserDBService:
                 raise BrowserFingerprintNotFoundException()
 
             # 只更新提供的字段
-            update_data = params.model_dump(exclude_unset=True, exclude={
-                                            "browser_id", "browser_id_str"})
+            update_data = params.model_dump(
+                exclude_unset=True, exclude={"browser_id", "browser_id_str"}
+            )
         else:
             # 创建新记录
             # 将 UpsertParams 转换为 CreateParams
             create_params = BrowserFingerprintCreateParams(
                 fingerprint_int=params.fingerprint_int
             )
-            user_default_settings = await BrowserDBService.get_user_default_settings(
+            user_default_settings = await BrowserFingerprintService.get_user_default_settings(
                 mid=mid,
                 session=session,
             )
@@ -75,12 +82,12 @@ class BrowserDBService:
             )
 
             # 创建浏览器信息对象
-            browser_info = UserBrowserInfo(
-                mid=mid, **fingerprint_data.model_dump())
+            browser_info = UserBrowserInfo(mid=mid, **fingerprint_data.model_dump())
 
             # 如果有额外的更新参数，应用它们
             update_data = params.model_dump(
-                exclude_unset=True, exclude={"browser_id", 'browser_id_str', "fingerprint_int"}
+                exclude_unset=True,
+                exclude={"browser_id", "browser_id_str", "fingerprint_int"},
             )
 
         # 检查 custom_name 是否重复
@@ -121,7 +128,7 @@ class BrowserDBService:
         """
         创建浏览器指纹信息
         """
-        user_default_settings = await BrowserDBService.get_user_default_settings(
+        user_default_settings = await BrowserFingerprintService.get_user_default_settings(
             mid=mid,
             session=session,
         )
@@ -133,8 +140,7 @@ class BrowserDBService:
         )
 
         # 创建浏览器信息对象
-        browser_info = UserBrowserInfo(
-            mid=mid, **fingerprint_data.model_dump())
+        browser_info = UserBrowserInfo(mid=mid, **fingerprint_data.model_dump())
 
         # 先将browser_info提交到数据库，确保外键引用存在
         session.add(browser_info)
@@ -174,8 +180,10 @@ class BrowserDBService:
         params: BrowserFingerprintUpdateParams, mid: int, session: AsyncSession
     ) -> tuple[ResponseCode, bool, str]:
         stmt = select(UserBrowserInfo).where(
-            and_(UserBrowserInfo.browser_id ==
-                 params.browser_id, UserBrowserInfo.mid == mid)
+            and_(
+                UserBrowserInfo.browser_id == params.browser_id,
+                UserBrowserInfo.mid == mid,
+            )
         )
         result = await session.exec(stmt)
         browser_info_row = result.one_or_none()
@@ -215,10 +223,7 @@ class BrowserDBService:
 
         # 异步删除对应的 user_data_dir
         user_data_dir_path = (
-            Path(__file__).parent.parent.parent.parent
-            / "user_data_dir"
-            / str(mid)
-            / str(params.browser_id)
+            Path(CONF.Path.user_data_dir) / str(mid) / str(params.browser_id)
         )
         if user_data_dir_path.exists():
             await asyncio.to_thread(
@@ -266,7 +271,9 @@ class BrowserDBService:
             duplicate_browser = duplicate_result.one_or_none()
 
             if duplicate_browser is not None:
-                raise NameAlreadyExistsException(name=params.custom_name, name_type="浏览器")
+                raise NameAlreadyExistsException(
+                    name=params.custom_name, name_type="浏览器"
+                )
 
         browser_info.custom_name = params.custom_name
         session.add(browser_info)
@@ -288,13 +295,13 @@ class BrowserDBService:
             )
         )
         result = await session.exec(stmt)
-        return result.one_or_none()
+        return result.one_or_none() or 0
 
     @staticmethod
     async def list_fingerprint(
         params: BrowserFingerprintListParams, mid: int, session: AsyncSession
     ) -> BasePaginationResp[UserBrowserInfo]:
-        cnt = await BrowserDBService.count_fingerprint(mid, session)
+        cnt = await BrowserFingerprintService.count_fingerprint(mid, session)
 
         if cnt == 0:
             return BasePaginationResp()
@@ -377,7 +384,7 @@ class BrowserDBService:
             UserBrowserDefaultSettingResponse: 创建或更新后的默认设置响应
         """
         # 检查是否已存在用户的默认设置
-        existing_settings = await BrowserDBService.get_user_default_settings(
+        existing_settings = await BrowserFingerprintService.get_user_default_settings(
             mid, session
         )
 
@@ -387,8 +394,7 @@ class BrowserDBService:
             settings_to_save = existing_settings
         else:
             # 创建新设置
-            new_settings = UserBrowserDefaultSetting(
-                mid=mid, **request.model_dump())
+            new_settings = UserBrowserDefaultSetting(mid=mid, **request.model_dump())
             settings_to_save = new_settings
             update_data = {}
 
@@ -419,7 +425,7 @@ class BrowserDBService:
             bool: 删除成功返回True，如果设置不存在返回False
         """
         # 检查是否已存在用户的默认设置
-        existing_settings = await BrowserDBService.get_user_default_settings(
+        existing_settings = await BrowserFingerprintService.get_user_default_settings(
             mid, session
         )
 
@@ -446,7 +452,7 @@ class BrowserDBService:
             bool: 应用成功返回True，否则返回False
         """
         # 获取用户的默认设置
-        default_settings = await BrowserDBService.get_user_default_settings(
+        default_settings = await BrowserFingerprintService.get_user_default_settings(
             mid, session
         )
 
@@ -471,10 +477,10 @@ class BrowserDBService:
         # 例如，只更新代理设置或视口设置等
 
         # 示例：更新代理设置
-        if default_settings.default_proxy_server and hasattr(browser_info, "proxy_server"):
-            setattr(
-                browser_info, "proxy_server", default_settings.default_proxy_server
-            )
+        if default_settings.default_proxy_server and hasattr(
+            browser_info, "proxy_server"
+        ):
+            setattr(browser_info, "proxy_server", default_settings.default_proxy_server)
 
         # 示例：更新视口设置
         if (

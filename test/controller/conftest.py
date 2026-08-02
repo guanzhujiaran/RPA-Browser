@@ -15,7 +15,7 @@ from app.controller.v1.browser_control.execution.plugin_router import router as 
 from app.controller.v1.browser_control.execution.execution_router import router as execution_router
 from app.utils.depends.mid_depends import get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 
 PREFIX = "/api/v1/rpa/browser/control"
 TEST_MID = 12345678
@@ -30,7 +30,7 @@ def anyio_backend():
 @pytest.fixture
 def mock_auth():
     """Mock 认证信息"""
-    from app.models.common.depends import AuthInfo
+    from bili_common.models.depends import AuthInfo
 
     return AuthInfo(mid=TEST_MID, level=5)
 

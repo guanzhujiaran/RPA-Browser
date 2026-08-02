@@ -13,7 +13,7 @@ from typing import Dict
 from app.config import settings
 from app.models.consts.enums import ConfigRunningModeEnum
 from loguru import logger
-from app.models.exceptions.base_exception import (
+from app.models.common.exceptions.base_exception import (
     BrowserNotStartedException,
     BrowserPageIndexError,
 )
@@ -89,7 +89,6 @@ class LiveService:
             logger.error(f"解析会话键失败: {session_key}, error: {e}")
             raise
 
-    @staticmethod
     async def _check_session_cleanup(self):
         """检查会话清理 - 使用状态机判断会话清理"""
         current_time = int(time.time())

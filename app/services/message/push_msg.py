@@ -20,6 +20,27 @@ from app.services.message.message_pub import publish_message
 import loguru
 
 
+class PushSubject(str):
+    """推送消息主题标识。
+
+    标题统一采用 ``[主题]`` 前缀，便于在告警/通知中区分消息性质：
+
+    =======  ======  ======  =====================
+    主题       标识    描述     示例（title）
+    -------  ------  ------  ---------------------
+    info      [i]    信息     [i]收到一条信息
+    success   [s]    成功     [s]任务执行成功
+    warning   [w]    警告     [w]服务器cpu告警
+    failure   [f]    失败     [f]网站签到失败
+    =======  ======  ======  =====================
+    """
+
+    INFO = "[i]"
+    SUCCESS = "[s]"
+    WARNING = "[w]"
+    FAILURE = "[f]"
+
+
 @log_class_decorator.decorator
 class PushMessageService:
     """
@@ -978,7 +999,13 @@ def server_label() -> str:
     return f"[{name}@{addr}]"
 
 
-async def send(title: str, content: str, conf=None, **kwargs):
+async def send(
+    title: str,
+    content: str,
+    conf=None,
+    subject: str = PushSubject.INFO,
+    **kwargs,
+):
     """
     发送推送消息的全局函数接口（信息类）。
 
@@ -986,26 +1013,38 @@ async def send(title: str, content: str, conf=None, **kwargs):
     由 message-service 统一完成实际推送」，以便集中管理渠道与限流。
     per-user 的 PushChannelConfig 会一并序列化到消息的 config 字段中；
     也可直接传入 dict（如共享的 MESSAGE_CONFIG）。
-    标题会自动加上本服务标识前缀（服务名@地址）。
+    标题会自动加上消息主题标识（默认 ``[i]`` 信息）与本服务标识前缀（服务名@地址），
+    顺序为「主题 + 服务标识 + 原标题」。
 
-    报错类推送请使用 :func:`send_error`，其标题只写服务+地址与笼统主题，
-    不暴露具体错误，具体错误统一放进内容。
+    报错类推送请使用 :func:`send_error`，其标题只写主题与服务标识、不暴露具体错误，
+    具体错误统一放进内容。
+
+    :param subject: 消息主题标识，取自 :class:`PushSubject`，如 ``[i]``/``[s]``/``[w]``/``[f]``。
     """
     # conf 为 pydantic / SQLModel 模型时统一序列化为 dict，再投递给 message-service
     config = conf.model_dump() if conf is not None else None
     label = server_label()
-    final_title = f"{label} {title}" if title else label
+    final_title = f"{subject}{label} {title}" if title else f"{subject}{label}"
     await publish_message(final_title, content, push_type=None, config=config)
 
 
-async def send_error(content: str, *, subject: str = "运行异常", conf=None, **kwargs):
+async def send_error(
+    content: str,
+    *,
+    subject: str = "运行异常",
+    conf=None,
+    topic: str = PushSubject.FAILURE,
+    **kwargs,
+):
     """
     统一的「报错」推送入口（通用函数）。
 
-    标题只含「服务@地址 + 笼统的 subject（如 运行异常）」，不写入任何具体错误信息；
+    标题只含「失败主题[f] + 服务@地址 + 笼统的 subject（如 运行异常）」，不写入任何具体错误信息；
     具体错误内容（异常信息、堆栈、上下文）全部放入 content。
+
+    :param topic: 消息主题标识，默认 ``[f]``（失败），可传 ``[w]`` 等其它主题。
     """
     # conf 为 pydantic / SQLModel 模型时统一序列化为 dict，再投递给 message-service
     config = conf.model_dump() if conf is not None else None
-    final_title = f"{server_label()} {subject}"
+    final_title = f"{topic}{server_label()} {subject}"
     await publish_message(final_title, content, push_type=None, config=config)

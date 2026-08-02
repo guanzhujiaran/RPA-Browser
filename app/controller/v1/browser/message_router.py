@@ -1,5 +1,5 @@
-from app.models.response_code import ResponseCode
-from app.models.common.depends import VerifyBrowserDependsReq
+from bili_common.models.response_code import ResponseCode
+from bili_common.models.depends import VerifyBrowserDependsReq
 from app.utils.depends.security_depends import verify_browser_ownership
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -22,7 +22,7 @@ from app.models.notify.request_models import (
 from app.models.router.router_prefix import NotifyRouterPath
 from .base import new_notify_router
 from app.models.response import StandardResponse, success_response, error_response
-from app.services.RPA_browser.browser_service import BrowserService
+from app.services.RPA_browser.browser import BrowserService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.bigint_utils import str_to_int

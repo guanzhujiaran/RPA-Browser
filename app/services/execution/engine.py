@@ -29,13 +29,27 @@ from app.services.execution.scope import Scope
 from botright.playwright_mock.page import Page
 import time
 import asyncio
+from datetime import datetime
 from typing import Any, Dict, List
 
 from loguru import logger
 
+from app.models.database.log.models import ActionLogSourceEnum, ActionLogStatusEnum
+from app.services.execution.action_logger import (
+    ActionLogContext,
+    new_execution_id,
+    resolve_log_option,
+    save_action_log,
+)
 from app.models.database.workflow.models import WorkflowStep
 from app.services.execution.crud_service import action_crud_svr, plugin_crud_svr, workflow_crud_svr
-from app.models.execution.action_params import ActionMetadata, PluginConfig, BaseWorkflowStep, BuiltinActionType
+from app.models.execution.action_params import (
+    ActionMetadata,
+    PluginConfig,
+    BaseWorkflowStep,
+    BuiltinActionType,
+    ActionLogOption,
+)
 from app.models.execution.condition_models import ConditionRule
 from app.services.execution.actions.control_flow import CompositeAction as CompositeActionClass
 from app.services.execution.action_registry import action_registry
@@ -63,7 +77,10 @@ class ExecutionEngine:
         browser_id: str,
         page: Page | None = None,
         plugins: List[PluginConfig] | None = None,
-    ) -> ActionResult[Any]:
+        execution_id: str | None = None,
+        parent_execution_id: str | None = None,
+        log_source: ActionLogSourceEnum = ActionLogSourceEnum.ACTION,
+    ) -> ActionResult:
         """执行单个操作（含插件钩子）。
 
         路由 /actions/execute 直接调用此方法。
@@ -86,6 +103,9 @@ class ExecutionEngine:
             plugins=plugins or [],
             mid=req.mid,
             auth_headers=getattr(req, 'auth_headers', {}) or {},
+            execution_id=execution_id or getattr(req, 'execution_id', '') or new_execution_id(),
+            parent_execution_id=parent_execution_id,
+            log_source=log_source,
         )
 
     async def execute_steps(
@@ -113,6 +133,8 @@ class ExecutionEngine:
         scope = Scope(req.variables)
         scope.set("execute_steps_func", self.execute_steps)
         req_auth_headers = getattr(req, 'auth_headers', {}) or {}
+        exec_id = getattr(req, 'execution_id', '') or new_execution_id()
+        workflow_id = getattr(req, 'workflow_id', None)
 
         pipeline = PipelineBuilder.build(steps)
 
@@ -133,6 +155,10 @@ class ExecutionEngine:
                 plugins=plugins or [],
                 mid=req.variables.get("mid", req.mid),
                 auth_headers=req_auth_headers,
+                execution_id=exec_id,
+                depth=depth,
+                workflow_id=workflow_id,
+                log_source=ActionLogSourceEnum.WORKFLOW,
             )
 
         return await pipeline.execute(scope, executor)
@@ -152,7 +178,80 @@ class ExecutionEngine:
         plugins: List[PluginConfig],
         mid: int | str = 0,
         auth_headers: dict[str, str] | None = None,
-    ) -> ActionResult[Any]:
+        execution_id: str | None = None,
+        parent_execution_id: str | None = None,
+        depth: int = 0,
+        workflow_id: str | None = None,
+        log_source: ActionLogSourceEnum = ActionLogSourceEnum.ACTION,
+    ) -> ActionResult:
+        """执行单个 action 并按用户配置采集操作日志。
+
+        这是所有浏览器操作执行的唯一入口（单操作 / 工作流步骤 / 插件钩子都会经过），
+        因此在此处统一埋点，保证日志采集不遗漏。
+        """
+        exec_id = execution_id or new_execution_id()
+        log_ctx = ActionLogContext(
+            mid=mid,
+            action_id=action_id,
+            action_name=action_id,
+            action_type=action_id,
+            source=log_source,
+            execution_id=exec_id,
+            parent_execution_id=parent_execution_id,
+            depth=depth,
+            workflow_id=workflow_id,
+            browser_id=str(browser_id or ""),
+            session_id=str(session_id or ""),
+            page=page,
+            started_at=datetime.now(),
+        )
+
+        result = await self._run_action_core(
+            action_id=action_id,
+            params=params,
+            scope=scope,
+            output_vars=output_vars,
+            session_id=session_id,
+            browser_id=browser_id,
+            page=page,
+            plugins=plugins,
+            mid=mid,
+            auth_headers=auth_headers,
+            execution_id=exec_id,
+            depth=depth,
+            workflow_id=workflow_id,
+            log_ctx=log_ctx,
+        )
+
+        log_ctx.action_name = str(result.action_name or action_id)
+        log_ctx.params = result.replaced_params or dict(params)
+        log_ctx.variables = scope.snapshot()
+        status = (
+            ActionLogStatusEnum.TIMEOUT
+            if (not result.success and (result.error or "").strip() == "操作超时")
+            else None
+        )
+        await save_action_log(log_ctx, result, status=status)
+        return result
+
+    async def _run_action_core(
+        self,
+        *,
+        action_id: str,
+        params: dict,
+        scope: Scope,
+        output_vars: list[str],
+        session_id: str,
+        browser_id: str,
+        page: Page,
+        plugins: List[PluginConfig],
+        mid: int | str = 0,
+        auth_headers: dict[str, str] | None = None,
+        execution_id: str = "",
+        depth: int = 0,
+        workflow_id: str | None = None,
+        log_ctx: ActionLogContext | None = None,
+    ) -> ActionResult:
         """执行单个 action 的核心方法。
 
         流程：
@@ -199,8 +298,22 @@ class ExecutionEngine:
             params=merged,
             output_vars=output_vars,
         )
+        # 解析本操作的日志采集配置，供内部子步骤继承（自定义操作按其基础配置，
+        # 内置操作按服务端兜底；也可由执行参数中的 log 选项显式覆盖）
+        log_cfg: ActionLogOption | None = await resolve_log_option(mid, action_id, merged)
+        if log_ctx is not None:
+            log_ctx.log_config = log_cfg
         # 透传本系统认证请求头，供 HTTP 请求类操作按需附带
         action.auth_headers = auth_headers or {}
+        # 透传执行元信息，供复合操作内部子步骤的日志采集串联同一条链路
+        action.exec_meta = {
+            "execution_id": execution_id,
+            "parent_execution_id": log_ctx.parent_execution_id if log_ctx else None,
+            "browser_id": str(browser_id or ""),
+            "session_id": str(session_id or ""),
+            "workflow_id": workflow_id,
+            "log_config": log_cfg,
+        }
 
         ok, err = action.validate_params(merged)
         if not ok:
@@ -210,7 +323,7 @@ class ExecutionEngine:
 
         try:
             # ── before_action 插件（失败中断） ──
-            if fail := await self._run_hooks("before_action", plugins, session_id, browser_id, page, scope, mid):
+            if fail := await self._run_hooks("before_action", plugins, session_id, browser_id, page, scope, mid, execution_id):
                 return self._fail(f"前置插件失败: {fail}", action_id, start, action.action_name, replaced_params=merged)
 
             logger.info(f"▶ 执行: {action.action_name} ({action_id})")
@@ -234,18 +347,18 @@ class ExecutionEngine:
 
             await self._run_hooks(
                 "on_success" if result.success else "on_error",
-                plugins, session_id, browser_id, page, scope, mid,
+                plugins, session_id, browser_id, page, scope, mid, execution_id,
             )
 
             return result
 
         except asyncio.TimeoutError:
-            await self._run_hooks("on_timeout", plugins, session_id, browser_id, page, scope, mid)
+            await self._run_hooks("on_timeout", plugins, session_id, browser_id, page, scope, mid, execution_id)
             return self._fail("操作超时", action_id, start, action.action_name, replaced_params=merged)
 
         except Exception as e:
             logger.error(f"操作失败: {action_id} - {e}")
-            await self._run_hooks("on_error", plugins, session_id, browser_id, page, scope, mid)
+            await self._run_hooks("on_error", plugins, session_id, browser_id, page, scope, mid, execution_id)
             return self._fail(str(e), action_id, start, action.action_name, replaced_params=merged)
 
     # ═══════════════ 插件系统 ─────────────────────────────────
@@ -259,7 +372,8 @@ class ExecutionEngine:
         page: Page,
         variables: dict | None = None,
         mid: int | str = 0,
-        action_result: ActionResult[Any] | None = None,
+        action_result: ActionResult | None = None,
+        execution_id: str | None = None,
     ) -> List[ActionResult]:
         """执行匹配 hook_type 的插件列表。"""
         plugin_results: List[ActionResult] = []
@@ -296,6 +410,8 @@ class ExecutionEngine:
                 )
                 pr = await self.execute_action(
                     p_req, session_id=session_id, browser_id=browser_id, page=page,
+                    parent_execution_id=execution_id,
+                    log_source=ActionLogSourceEnum.PLUGIN,
                 )
                 pr.execution_time = time.time() - p_start
                 plugin_results.append(pr)
@@ -318,6 +434,7 @@ class ExecutionEngine:
         page: Page,
         scope: Scope,
         mid: int | str = 0,
+        execution_id: str | None = None,
     ) -> str | None:
         """执行插件钩子。返回首个失败信息，全成功返回 None。"""
         if not plugins:
@@ -325,7 +442,7 @@ class ExecutionEngine:
         results = await self._execute_plugins(
             plugins=plugins, hook_type=hook_type,
             session_id=session_id, browser_id=browser_id, page=page,
-            variables=scope.current, mid=mid,
+            variables=scope.current, mid=mid, execution_id=execution_id,
         )
         first = next((r for r in results if not r.success), None)
         return (first.error or f"{hook_type} 插件失败") if first else None
@@ -333,7 +450,7 @@ class ExecutionEngine:
     # ═══════════════ 工具方法 ─────────────────────────────────
 
     @staticmethod
-    def _fail(error: str, action_id: str, start: float, action_name: str = "", replaced_params: dict | None = None) -> ActionResult[Any]:
+    def _fail(error: str, action_id: str, start: float, action_name: str = "", replaced_params: dict | None = None) -> ActionResult:
         return ActionResult(
             success=False, error=error,
             execution_time=time.time() - start,

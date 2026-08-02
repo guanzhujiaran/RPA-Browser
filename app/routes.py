@@ -1,4 +1,4 @@
-from app.models.exceptions.base_exception import BaseException as CustomBaseException
+from app.models.common.exceptions.base_exception import BaseException as CustomBaseException
 from fastapi import FastAPI
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError

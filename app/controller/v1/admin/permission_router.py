@@ -2,7 +2,7 @@
 from loguru import logger
 from fastapi import APIRouter
 
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_tag import RouterTag
 from app.models.system.permission import PermissionConfigList

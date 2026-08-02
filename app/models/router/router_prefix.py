@@ -73,6 +73,14 @@ class BrowserControlRouterPath(StrEnum):
     community_workflows_list = "/community/workflows/list"
     community_plugins_list = "/community/plugins/list"
 
+    # === 操作日志查询 ===
+    action_logs_list = "/action-logs/list"
+    action_logs_get = "/action-logs/get"
+    action_logs_by_execution = "/action-logs/by-execution"
+    action_logs_delete = "/action-logs/delete"
+    action_logs_clear = "/action-logs/clear"
+    action_logs_stats = "/action-logs/stats"
+
     # === 系统微服务 ===
     system_services_list = "/system-services/list"
 

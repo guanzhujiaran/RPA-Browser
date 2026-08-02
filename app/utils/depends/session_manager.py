@@ -23,8 +23,12 @@ engine = create_async_engine(
     # 连接池配置 - 增强稳定性
     pool_size=20,  # 连接池中的连接数
     max_overflow=30,  # 超过pool_size后最多可以创建的连接数
-    pool_pre_ping=False,  # 连接前检查连接是否有效
-    pool_recycle=1800,  # 缩短连接回收时间至30分钟，防止MySQL断开空闲连接
+    # 取出连接前先 ping 一下，避免拿到 MySQL 已关闭的陈旧连接（错误码 2013）。
+    # MySQL wait_timeout=600，空闲连接会被服务端静默断开，必须启用 pre_ping 兜底。
+    pool_pre_ping=True,
+    # 连接回收周期必须小于 MySQL 的 wait_timeout(600s)，否则回收前连接可能已被服务端断开。
+    # 取 300s（5分钟），留出充足余量。
+    pool_recycle=300,
     pool_timeout=30,  # 获取连接超时时间
     # 查询配置
     echo=False,  # 是否打印SQL语句，生产环境建议设为False

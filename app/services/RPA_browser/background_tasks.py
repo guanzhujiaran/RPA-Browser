@@ -1,6 +1,6 @@
 """后台任务服务 - 处理浏览器操作的异步后台任务"""
 
-from app.services.RPA_browser.live_service import live_service
+from app.services.RPA_browser.session.live_service import live_service
 from loguru import logger
 from app.config import settings, ConfigRunningModeEnum
 

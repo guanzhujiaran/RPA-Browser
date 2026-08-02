@@ -7,10 +7,10 @@ from loguru import logger
 from typing import Any, Dict
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
-from app.services.RPA_browser.live_service import LiveService
+from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
+from bili_common.models.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_operation_router
 from pydantic import BaseModel, Field
 from fastapi import Depends

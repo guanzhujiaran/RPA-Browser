@@ -178,10 +178,30 @@ class Position(SQLModel):
     y: float = Field(description="Y 坐标（像素）")
 
 
+class ActionLogOption(SQLModel):
+    """操作日志采集选项（通用参数，可挂在任意操作的 BaseActionParams 上）
+
+    用户在执行参数中携带 log 字段即可声明该次执行的日志采集策略；
+    自定义操作（ca_xxx）也可由其 CompositeActionModel 的 log_* 字段映射而来。
+    """
+    enabled: bool = Field(default=False, description="是否采集该操作的执行日志")
+    record_params: bool = Field(default=True, description="是否记录变量替换后的入参")
+    record_result: bool = Field(default=True, description="是否记录执行返回结果")
+    record_variables: bool = Field(default=False, description="是否记录变量池快照")
+    only_on_error: bool = Field(default=False, description="仅在执行失败时记录")
+    max_payload_length: int = Field(
+        default=4000, description="params/result/variables 序列化后最大字符数，超出则截断；0 表示不限制")
+    retention_days: int = Field(
+        default=30, description="日志保留天数，0 表示永久保留")
+
+
 class BaseActionParams(SQLModel):
     """操作参数基类 - 所有操作参数模型继承此类"""
     timeout: float = Field(default=30000, ge=0, le=300000,
                            description="最大等待时间（毫秒），默认为 30000。传入 0 禁用超时")
+    log: ActionLogOption | None = Field(
+        default=None,
+        description="操作日志采集选项；为空时按 action 自有配置或服务端兜底决定")
 
 
 class SelectorActionParams(BaseActionParams):

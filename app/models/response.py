@@ -2,7 +2,7 @@ from typing import TypeVar, Generic, Any
 from sqlmodel import SQLModel
 from pydantic import BaseModel
 
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 
 # 定义数据类型变量
 DataT = TypeVar("DataT")

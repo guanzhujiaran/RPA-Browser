@@ -25,7 +25,7 @@ OTHER_MID = "87654321"
 @pytest.fixture
 async def other_client():
     """其他用户测试客户端（OTHER_MID），模拟另一个用户发起请求"""
-    from app.models.common.depends import AuthInfo
+    from bili_common.models.depends import AuthInfo
     other_auth = AuthInfo(mid=OTHER_MID, level=5)
 
     app = FastAPI()

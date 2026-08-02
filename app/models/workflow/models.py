@@ -252,6 +252,13 @@ class CompositeActionCreateRequest(SQLModel):
     retry_on_error: bool = Field(default=False, description="错误时重试")
     retry_times: int = Field(default=0, description="重试次数")
     retry_delay: float = Field(default=1.0, description="重试延迟(秒)")
+    log_enabled: bool = Field(default=False, description="是否采集该操作的执行日志")
+    log_record_params: bool = Field(default=True, description="是否记录变量替换后的入参")
+    log_record_result: bool = Field(default=True, description="是否记录执行返回结果")
+    log_record_variables: bool = Field(default=False, description="是否记录变量池快照")
+    log_only_on_error: bool = Field(default=False, description="仅在执行失败时记录")
+    log_max_payload_length: int = Field(default=4000, description="payload 最大字符数")
+    log_retention_days: int = Field(default=30, description="日志保留天数，0 表示永久")
 
 
 class CompositeActionUpdateRequest(SQLModel):
@@ -273,6 +280,13 @@ class CompositeActionUpdateRequest(SQLModel):
     retry_on_error: bool | None = Field(default=None, description="错误时重试")
     retry_times: int | None = Field(default=None, description="重试次数")
     retry_delay: float | None = Field(default=None, description="重试延迟(秒)")
+    log_enabled: bool | None = Field(default=None, description="是否采集该操作的执行日志")
+    log_record_params: bool | None = Field(default=None, description="是否记录变量替换后的入参")
+    log_record_result: bool | None = Field(default=None, description="是否记录执行返回结果")
+    log_record_variables: bool | None = Field(default=None, description="是否记录变量池快照")
+    log_only_on_error: bool | None = Field(default=None, description="仅在执行失败时记录")
+    log_max_payload_length: int | None = Field(default=None, description="payload 最大字符数")
+    log_retention_days: int | None = Field(default=None, description="日志保留天数，0 表示永久")
 
 
 class CompositeActionListRequest(BasePaginationReq):
@@ -322,6 +336,13 @@ class CompositeActionDetailResponse(SQLModel):
     retry_on_error: bool
     retry_times: int
     retry_delay: float
+    log_enabled: bool = False
+    log_record_params: bool = True
+    log_record_result: bool = True
+    log_record_variables: bool = False
+    log_only_on_error: bool = False
+    log_max_payload_length: int = 4000
+    log_retention_days: int = 30
     likes_count: int = 0
     reports_count: int = 0
     is_verified: bool = False
@@ -341,6 +362,7 @@ class CompositeActionListItemResponse(SQLModel):
     tags: List[str] = Field(default_factory=list)
     is_enabled: bool
     is_public: bool = False
+    log_enabled: bool = False
     likes_count: int = 0
     reports_count: int = 0
     is_verified: bool = False

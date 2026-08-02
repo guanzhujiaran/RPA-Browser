@@ -5,7 +5,7 @@ from typing import Generic
 from sqlmodel import SQLModel, Field as SField
 from pydantic import Field
 
-from app.models.common.response import DataT
+from bili_common.models.response import DataT
 
 
 class BaseSQLModel(SQLModel):

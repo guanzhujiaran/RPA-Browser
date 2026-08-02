@@ -21,7 +21,7 @@ from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
 from app.services.RPA_browser.base.base_engines import BaseUndetectedPlaywright
 from app.utils.decorator import log_class_decorator
 from app.utils.depends.session_manager import DatabaseSessionManager
-from app.services.RPA_browser.browser_db_service import BrowserDBService
+from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
 from pydantic import computed_field
 from app.config import settings
 from app.services.RPA_browser.webrtc.stream_manager import WebRTCStreamManager
@@ -461,7 +461,7 @@ class WebRTCEnabledSession(SessionInfo):
             try:
                 # 获取浏览器指纹信息
                 async with DatabaseSessionManager.async_session() as session:
-                    fingerprint_info = await BrowserDBService.read_fingerprint(
+                    fingerprint_info = await BrowserFingerprintService.read_fingerprint(
                         browser_id=browser_id,
                         mid=mid,
                         session=session,

@@ -125,6 +125,13 @@ browser_control_execution_router = RouterInfo(
     description="执行引擎 - 提供浏览器操作的执行",
 )
 
+browser_control_action_log_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.action_log_management,
+    router_prefix=RouterPrefix.BROWSER_CONTROL,
+    description="操作日志管理 - 日志查询与清理",
+)
+
 # ====== 系统管理模块 ======
 
 admin_router = RouterInfo(
@@ -155,6 +162,7 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_webrtc_router,  # WebRTC 视频流
     browser_control_session_router,
     browser_control_community_router,   # 社区互动
+    browser_control_action_log_router,  # 操作日志管理
 ]
 
 # 系统管理相关路由

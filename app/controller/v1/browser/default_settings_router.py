@@ -11,17 +11,17 @@ from fastapi import Depends
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.response import StandardResponse, success_response, error_response
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 from app.models.database.browser.info import (
     UserBrowserDefaultSettingRequest,
     UserBrowserDefaultSettingResponse,
     UserBrowserServerSideDefaultSetting,
 )
-from app.models.common.depends import (
+from bili_common.models.depends import (
     VerifyBrowserDependsReq,
     BrowserReqAuthInfo,
 )
-from app.services.RPA_browser.browser_db_service import BrowserDBService
+from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.depends.security_depends import verify_browser_ownership
@@ -53,7 +53,7 @@ async def get_user_default_settings(
 
     如果用户没有设置过默认设置，返回 null
     """
-    settings = await BrowserDBService.get_user_default_settings(auth.mid, session)
+    settings = await BrowserFingerprintService.get_user_default_settings(auth.mid, session)
 
     if not settings:
         return success_response(None)
@@ -74,7 +74,7 @@ async def create_or_update_user_default_settings(
 
     如果用户已有默认设置，则更新；否则创建新的默认设置
     """
-    result = await BrowserDBService.create_or_update_user_default_settings(
+    result = await BrowserFingerprintService.create_or_update_user_default_settings(
         mid=auth.mid,
         request=request,
         session=session,
@@ -99,7 +99,7 @@ async def delete_user_default_settings(
 
     成功删除返回 true，如果设置不存在返回 false
     """
-    result = await BrowserDBService.delete_user_default_settings(auth.mid, session)
+    result = await BrowserFingerprintService.delete_user_default_settings(auth.mid, session)
     return success_response(result)
 
 
@@ -119,7 +119,7 @@ async def apply_default_settings_to_browser(
 
     将用户的默认设置（如代理、视口等）应用到指定的浏览器实例
     """
-    result = await BrowserDBService.apply_default_settings_to_browser(
+    result = await BrowserFingerprintService.apply_default_settings_to_browser(
         browser_id=browser_auth.browser_id,
         mid=browser_auth.auth_info.mid,
         session=session,

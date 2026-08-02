@@ -1,8 +1,9 @@
 # from typing import Optional  # Python 3.10+ 使用 | None 语法
-from app.models.exceptions.base_exception import BrowserNotifyConfNotFoundException
+from app.models.common.exceptions.base_exception import BrowserNotifyConfNotFoundException
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.config import PushChannelConfig
 from app.models.database.notify.models import (
     NotificationConfig,
 )
@@ -178,6 +179,13 @@ class NotificationService:
 
     @classmethod
     async def push_msg_by_config(
-        cls, title: str, content: str, conf: NotificationConfig, **kwargs
+        cls,
+        title: str,
+        content: str,
+        conf: NotificationConfig | PushChannelConfig,
+        **kwargs,
     ):
+        # conf 既可能是 DB 中的 NotificationConfig（SQLModel），
+        # 也可能是全局兜底配置 settings.message_config（PushChannelConfig）。
+        # 下游 push_msg.send 仅依赖 .model_dump()，二者均可兼容。
         return await push_msg.send(title, content, conf, **kwargs)

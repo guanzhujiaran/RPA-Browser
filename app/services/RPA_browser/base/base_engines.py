@@ -8,6 +8,7 @@ from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
 from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
     browser_exec_info_helper,
 )
+from app.config import CONF
 from botright.botright import Botright
 
 
@@ -37,12 +38,7 @@ class BaseUndetectedPlaywright:
         """
 
         self.default_args = []
-        self._base_user_data_dir = Path(
-            os.path.join(
-                os.path.dirname(
-                    __file__), "..", "..", "..", "..", "user_data_dir"
-            )
-        )
+        self._base_user_data_dir = Path(CONF.Path.user_data_dir)
         self.mid = mid
         self.browser_id = browser_id  # 如果没有提供browser_id，则生成一个
         self.headless = headless

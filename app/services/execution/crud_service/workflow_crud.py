@@ -9,7 +9,7 @@ from sqlalchemy import true, false
 
 from app.models.database.workflow.models import UserWorkflow, WorkflowPluginRelation, CompositeActionModel, UserPlugin
 from app.models.execution.action_params import PluginConfig
-from app.models.exceptions.base_exception import NameAlreadyExistsException
+from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 

@@ -9,7 +9,7 @@ from sqlmodel import select, update, delete
 
 from app.models.database.workflow.models import CompositeActionModel, BuiltinActionType, TagModel, CompositeActionTagLink
 from app.models.execution.action_params import BaseWorkflowStep
-from app.models.exceptions.base_exception import NameAlreadyExistsException
+from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -52,7 +52,7 @@ class ActionCrudService:
             ActionNotFoundException: 引用的操作不存在
             ActionNotAccessibleException: 无权访问引用的操作
         """
-        from app.models.exceptions.base_exception import (
+        from app.models.common.exceptions.base_exception import (
             ActionNotFoundException,
             ActionNotAccessibleException,
         )
@@ -218,6 +218,13 @@ class ActionCrudService:
         retry_on_error: bool = False,
         retry_times: int = 0,
         retry_delay: float = 1.0,
+        log_enabled: bool = False,
+        log_record_params: bool = True,
+        log_record_result: bool = True,
+        log_record_variables: bool = False,
+        log_only_on_error: bool = False,
+        log_max_payload_length: int = 4000,
+        log_retention_days: int = 30,
     ) -> CompositeActionModel:
         # 为每个 step dict 添加 action_type（从 action_id 推断），确保 discriminated union 能匹配
         # 同时将 Pydantic 模型实例转为 dict，避免 JSON 序列化错误
@@ -265,6 +272,13 @@ class ActionCrudService:
                 input_vars=input_vars or [],
                 output_vars=output_vars or [],
                 is_public=is_public,
+                log_enabled=log_enabled,
+                log_record_params=log_record_params,
+                log_record_result=log_record_result,
+                log_record_variables=log_record_variables,
+                log_only_on_error=log_only_on_error,
+                log_max_payload_length=log_max_payload_length,
+                log_retention_days=log_retention_days,
             )
             session.add(model)
 
@@ -408,6 +422,13 @@ class ActionCrudService:
         retry_times: int | None = None,
         retry_delay: float | None = None,
         is_public: bool | None = None,
+        log_enabled: bool | None = None,
+        log_record_params: bool | None = None,
+        log_record_result: bool | None = None,
+        log_record_variables: bool | None = None,
+        log_only_on_error: bool | None = None,
+        log_max_payload_length: int | None = None,
+        log_retention_days: int | None = None,
     ) -> CompositeActionModel | None:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == id))
@@ -451,6 +472,20 @@ class ActionCrudService:
                 model.retry_delay = retry_delay
             if is_public is not None:
                 model.is_public = is_public
+            if log_enabled is not None:
+                model.log_enabled = log_enabled
+            if log_record_params is not None:
+                model.log_record_params = log_record_params
+            if log_record_result is not None:
+                model.log_record_result = log_record_result
+            if log_record_variables is not None:
+                model.log_record_variables = log_record_variables
+            if log_only_on_error is not None:
+                model.log_only_on_error = log_only_on_error
+            if log_max_payload_length is not None:
+                model.log_max_payload_length = log_max_payload_length
+            if log_retention_days is not None:
+                model.log_retention_days = log_retention_days
 
             model.updated_at = datetime.now()
             await session.commit()
@@ -575,6 +610,13 @@ class ActionCrudService:
                 output_vars=original.output_vars.copy() if original.output_vars else [],
                 is_public=False,
                 forked_from_id=original.id,
+                log_enabled=original.log_enabled,
+                log_record_params=original.log_record_params,
+                log_record_result=original.log_record_result,
+                log_record_variables=original.log_record_variables,
+                log_only_on_error=original.log_only_on_error,
+                log_max_payload_length=original.log_max_payload_length,
+                log_retention_days=original.log_retention_days,
             )
 
             session.add(new_model)

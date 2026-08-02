@@ -18,7 +18,7 @@ from app.models.workflow.models import (
     PluginForkRequest,
     PluginForkResponse,
 )
-from app.models.exceptions.base_exception import NameAlreadyExistsException
+from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.services.execution.crud_service import plugin_crud_svr, action_crud_svr, workflow_crud_svr
 from app.models.base.base_sqlmodel import BasePaginationResp

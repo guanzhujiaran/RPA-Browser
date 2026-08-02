@@ -1,6 +1,6 @@
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models.common.depends import BrowserReqAuthInfo
+from bili_common.models.depends import BrowserReqAuthInfo
 from app.utils.depends.mid_depends import AuthInfo
 
 from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
@@ -24,8 +24,8 @@ from app.models.base.base_sqlmodel import BasePaginationResp
 from app.models.router.router_prefix import BrowserFingerprintRouterPath
 from .base import new_fingerprint_router
 from app.models.response import StandardResponse, success_response
-from app.services.RPA_browser.browser_service import BrowserService
-from app.services.RPA_browser.browser_db_service import BrowserDBService
+from app.services.RPA_browser.browser import BrowserService
+from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
 from app.utils.depends.mid_depends import get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 from typing import Union
@@ -92,7 +92,7 @@ async def upsert_fingerprint_router(
         更新操作时只能更新属于当前用户的浏览器指纹信息
         创建新指纹时会检查当前等级的指纹数量限制
     """
-    result = await BrowserDBService.upsert_fingerprint(params, auth_info.mid, session)
+    result = await BrowserFingerprintService.upsert_fingerprint(params, auth_info.mid, session)
     return success_response(data=result)
 
 
@@ -122,7 +122,7 @@ async def read_fingerprint_router(
     Note:
         只能查询属于当前用户的浏览器指纹信息
     """
-    result = await BrowserDBService.read_fingerprint(browser_info.browser_id, browser_info.auth_info.mid, session)
+    result = await BrowserFingerprintService.read_fingerprint(browser_info.browser_id, browser_info.auth_info.mid, session)
     return success_response(data=result)
 
 
@@ -150,7 +150,7 @@ async def delete_fingerprint_router(
     Note:
         删除操作不可恢复，请确保不再需要该指纹信息后再执行删除操作
     """
-    await BrowserDBService.delete_fingerprint(
+    await BrowserFingerprintService.delete_fingerprint(
         BrowserFingerprintDeleteParams(id=browser_info.browser_id),
         browser_info.auth_info.mid,
         session,
@@ -185,7 +185,7 @@ async def count_fingerprint_router(
     Note:
         只统计属于当前用户的浏览器指纹信息
     """
-    count = await BrowserDBService.count_fingerprint(auth_info.mid, session)
+    count = await BrowserFingerprintService.count_fingerprint(auth_info.mid, session)
     return success_response(data=count)
 
 
@@ -216,7 +216,7 @@ async def list_fingerprint_router(
     Note:
         只返回属于当前用户的浏览器指纹信息，按创建时间倒序排列
     """
-    result = await BrowserDBService.list_fingerprint(params, auth_info.mid, session)
+    result = await BrowserFingerprintService.list_fingerprint(params, auth_info.mid, session)
     return success_response(data=result)
 
 
@@ -247,5 +247,5 @@ async def rename_fingerprint_router(
         只能修改属于当前用户的浏览器指纹信息
         设置 custom_name 为 null 可清除名称
     """
-    result = await BrowserDBService.rename_fingerprint(params, browser_info.browser_id, session)
+    result = await BrowserFingerprintService.rename_fingerprint(params, browser_info.browser_id, session)
     return success_response(data=result)

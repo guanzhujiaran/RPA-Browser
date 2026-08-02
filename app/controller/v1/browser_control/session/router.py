@@ -1,5 +1,5 @@
 from app.models.runtime.control import BrowserSessionStatusData
-from app.services.RPA_browser.live_service import live_service
+from app.services.RPA_browser.session.live_service import live_service
 from fastapi import Depends, BackgroundTasks
 import time
 from app.config import settings
@@ -9,12 +9,12 @@ from app.models.runtime.control import (
     BrowserSessionStatus,
 )
 from app.models.response import StandardResponse, success_response, error_response
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserSessionRouterPath
-from app.services.RPA_browser.live_service import LiveService
+from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqInfo, BrowserReqAuthInfo
+from bili_common.models.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_session_router
 
 router = new_session_router()

@@ -44,6 +44,7 @@ dependencies = [
     "langchain-openai>=0.3.0",
     "faststream[rabbit]>=0.6.7",
     "dacite>=1.9.2",
+    "bili-common",
 ]
 [tool.uv]
 python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"
@@ -52,6 +53,11 @@ python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-st
 name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
+
+[tool.uv.sources]
+# 本地路径依赖（非 editable）：uv sync 会把 bili-common 作为普通包复制进 site-packages，
+# 这样 ty 等静态工具可直接解析，且不依赖宿主机绝对路径，Docker 构建也安全。
+bili-common = { path = "../bili-common", editable = true }
 
 [dependency-groups]
 dev = [

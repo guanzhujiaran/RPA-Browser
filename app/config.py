@@ -5,6 +5,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.models.consts.enums import ConfigRunningModeEnum
 
 current_dir = os.path.dirname(__file__)
+# 项目根目录（RPA-Browser/），所有基于项目根的运行时路径都应从这里派生，
+# 不要再使用 Path(__file__).parent.parent... 层层回溯
+PROJECT_ROOT = os.path.abspath(os.path.join(current_dir, ".."))
 
 
 class PushChannelConfig(BaseModel):
@@ -200,6 +203,11 @@ class Settings(BaseSettings):
     alembic_auto_migrate: bool = True  # 是否在应用启动时自动执行数据库迁移
     alembic_upgrade_target: str = "heads"  # 迁移目标版本，默认为最新版本
 
+    # 浏览器操作日志采集配置（用户未做任何设置时的服务端兜底值）
+    action_log_default_enabled: bool = False  # 默认是否采集操作日志（用户可按 action 覆盖）
+    action_log_max_payload_length: int = 4000  # params/result/variables 序列化后最大字符数
+    action_log_default_retention_days: int = 30  # 默认日志保留天数，0 表示永久保留
+
 
 settings = Settings()
 logger.info(f"Settings loaded\n{settings}")
@@ -216,6 +224,8 @@ class CONF:
         """
 
         logs = os.path.join(current_dir, "./logs")
+        project_root = PROJECT_ROOT
+        user_data_dir = os.path.join(PROJECT_ROOT, "user_data_dir")
 
 
 __all__ = ["settings", "CONF"]

@@ -65,6 +65,9 @@ class BaseAction(ABC, Generic[ParamsT]):
     output_vars: List[str] = field(default_factory=list)
     variables: Dict = field(default_factory=dict)
     auth_headers: Dict[str, str] = field(default_factory=dict)
+    # 执行元信息（execution_id / parent_execution_id / browser_id / session_id / workflow_id）
+    # 由 ExecutionEngine 在创建实例后注入，供操作日志采集串联执行链路
+    exec_meta: Dict[str, Any] = field(default_factory=dict)
     _logs: List[str] = field(default_factory=list, repr=False)
     _phase: ExecutionPhase = field(
         default=ExecutionPhase.VALIDATION, repr=False)

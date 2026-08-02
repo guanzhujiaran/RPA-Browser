@@ -23,6 +23,7 @@ from loguru import logger
 from app.models.database.workflow.models import *  # noqa: F401, F403
 from app.models.database.browser.info import *  # noqa: F401, F403
 from app.models.database.notify.models import *  # noqa: F401, F403
+from app.models.database.log.models import *  # noqa: F401, F403
 
 _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:

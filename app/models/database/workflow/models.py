@@ -159,6 +159,18 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     retry_times: int = Field(default=0)
     retry_delay: float = Field(default=1.0)
 
+    # === 操作日志采集配置（随 action 一起增删改，无需单独设置） ===
+    log_enabled: bool = Field(
+        default=False, description="是否采集该操作的执行日志")
+    log_record_params: bool = Field(default=True, description="是否记录变量替换后的入参")
+    log_record_result: bool = Field(default=True, description="是否记录执行返回结果")
+    log_record_variables: bool = Field(default=False, description="是否记录变量池快照")
+    log_only_on_error: bool = Field(default=False, description="仅在执行失败时记录")
+    log_max_payload_length: int = Field(
+        default=4000, description="params/result/variables 序列化后最大字符数，超出则截断")
+    log_retention_days: int = Field(
+        default=30, description="日志保留天数，0 表示永久保留")
+
 
 class TagModel(SQLModel, table=True):
     """标签表（多对多）"""
@@ -249,28 +261,6 @@ class UserWorkflow(CommunityResourceBase, table=True):
     )
 
 
-class WorkflowExecutionLog(SQLModel, table=True):
-    """工作流执行日志表"""
-
-    id: int | None = Field(primary_key=True,)
-    workflow_id: str = Field(index=True, max_length=100)
-    session_id: str = Field(index=True, max_length=100)
-    browser_id: str = Field(index=True, max_length=100)
-    mid: str = Field(max_length=255, index=True)
-    execution_id: str = Field(index=True, max_length=100)
-    status: str = Field(max_length=50)
-    total_time: float = Field(default=0.0)
-    steps_count: int = Field(default=0)
-    success_count: int = Field(default=0)
-    failed_count: int = Field(default=0)
-    results: List[Dict] = Field(
-        default_factory=list, sa_column=Column(JSON))
-    variables: Dict | None = Field(
-        default=None, sa_column=Column(JSON), description="变量池快照")
-    started_at: datetime = Field(default_factory=datetime.now)
-    finished_at: datetime | None = Field(default=None)
-
-
 class ResourceLike(SQLModel, table=True):
     """资源点赞表"""
     __table_args__ = (
@@ -304,62 +294,6 @@ class ResourceReport(SQLModel, table=True):
         default=None, max_length=255, description="审核管理员ID")
     reviewed_at: datetime | None = Field(default=None, description="审核时间")
     created_at: datetime = Field(default_factory=datetime.now)
-
-
-class ActionExecutionLog(SQLModel, table=True):
-    """
-    动作执行日志表
-
-    记录每一次动作或插件的执行详情。
-    使用树形结构追踪执行链路。
-    """
-    __table_args__ = {"extend_existing": True}
-
-    id: int | None = Field(default=None, primary_key=True)
-    execution_id: str = Field(index=True, max_length=100, description="执行批次ID")
-    parent_execution_id: str | None = Field(
-        default=None,
-        max_length=100,
-        description="父执行ID（用于树形结构）"
-    )
-    action_id: str = Field(index=True, max_length=100, description="动作ID")
-    action_name: str = Field(default="", max_length=200)
-    action_type: BuiltinActionType = Field(description="动作类型")
-    status: ExecutionStatus = Field(description="执行状态")
-    params: Dict = Field(
-        default_factory=dict,
-        sa_column=Column(JSON),
-        description="实际执行参数"
-    )
-    result_data: Dict | None = Field(
-        default=None,
-        sa_column=Column(JSON),
-        description="执行结果数据"
-    )
-    error_message: str | None = Field(default=None, max_length=1000)
-
-    execution_time: float = Field(default=0.0, description="执行时长(秒)")
-
-    depth: int = Field(default=0, description="执行深度（用于追踪嵌套）")
-    order: int = Field(default=0, description="同层级执行顺序")
-
-    logs: List[str] = Field(
-        default_factory=list,
-        sa_column=Column(JSON),
-        description="执行日志"
-    )
-
-    mid: str = Field(max_length=255, index=True)
-
-    workflow_id: str | None = Field(
-        default=None,
-        index=True,
-        max_length=100,
-        description="关联的工作流ID"
-    )
-
-    started_at: datetime = Field(default_factory=datetime.now)
-    finished_at: datetime | None = Field(default=None)
 
 
 class WorkflowRecord(SQLModel, table=True):

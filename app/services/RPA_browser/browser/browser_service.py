@@ -8,7 +8,7 @@ from app.models.notify.models import (
 from app.models.notify.response_models import NotificationConfigEffectiveResp
 from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
 from app.models.runtime.api import BrowserFingerprintCreateParams
-from app.services.RPA_browser.notification_service import NotificationService
+from app.services.RPA_browser.browser.notification_service import NotificationService
 from app.services.broswer_fingerprint.fingerprint_gen import (
     gen_from_browserforge_fingerprint,
 )
@@ -111,17 +111,3 @@ class BrowserService:
         return await NotificationService.push_msg(
             str(self.mid), title, content, session, browser_id
         )
-
-    async def send_msg(
-        self,
-        browser_id,
-        title: str,
-        content: str,
-    ) -> None:
-        async with DatabaseSessionManager.async_session() as session:
-            conf = await self.get_notification_config(
-                session=session, browser_id=browser_id
-            )
-        if not conf:
-            return
-        await send(title=title, content=content, conf=conf)

@@ -23,7 +23,6 @@ import operator
 import time
 import re
 import uuid
-from datetime import datetime
 from typing import Dict, List, Any,  Iterator
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Any
@@ -31,21 +30,28 @@ from botright.playwright_mock import Page
 from loguru import logger
 from app.services.execution.actions.base import BaseAction, ActionResult
 from app.config import settings
-from app.models.database.workflow.models import (
-    BuiltinActionType, ExecutionStatus,
-    ActionExecutionLog
-)
+from app.models.database.workflow.models import BuiltinActionType
+from app.models.database.log.models import ActionLogSourceEnum
+from app.services.execution.action_logger import ActionLogContext, save_action_log, resolve_log_option
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
 class ExecutionContext:
     """执行上下文 - 保存执行状态（备忘录模式）"""
 
-    def __init__(self, variables: Dict = None):
+    def __init__(self, variables: Dict = None, exec_meta: Dict | None = None):
         self.variables = dict(variables) if variables else {}
         self.execution_stack: List[str] = []
         self.current_depth = 0
-        self.execution_id = str(uuid.uuid4())
+        # 执行元信息由引擎透传，用于操作日志采集的链路串联
+        meta = exec_meta or {}
+        self.execution_id = str(meta.get("execution_id") or uuid.uuid4().hex)
+        self.parent_execution_id = meta.get("parent_execution_id")
+        self.browser_id = str(meta.get("browser_id") or "")
+        self.session_id = str(meta.get("session_id") or "")
+        self.workflow_id = meta.get("workflow_id")
+        # 从父操作透传下来的日志采集配置（仅当父操作启用了采集时非空）
+        self.log_config = meta.get("log_config")
 
     def save_state(self) -> Dict:
         """保存当前状态"""
@@ -251,12 +257,15 @@ class AtomicStrategy(ExecutionStrategy):
         # 替换模板变量
         params = self._replace_templates(params)
 
+        # 解析生效的日志采集配置：自定义操作按其基础配置，内置操作回落服务端兜底；
+        # 子步骤继承父操作透传下来的采集配置（也可被自身参数中的 log 选项覆盖）
+        substep_cfg = await resolve_log_option(self.mid, action_id, params, self.context.log_config)
+
         # 确定日志用的 action_type（自定义操作 ca_xxx 映射为 composite）
         log_action_type = action_id if not action_id.startswith(
             'ca_') else BuiltinActionType.COMPOSITE
-
-        # 记录执行开始
-        await self._log_execution(action_id, params, step_index, ExecutionStatus.RUNNING, log_action_type)
+        log_ctx = self._new_log_context(
+            action_id, params, step_index, log_action_type, log_config=substep_cfg)
 
         try:
             from app.services.execution.actions.all_actions import get_action_class
@@ -301,6 +310,8 @@ class AtomicStrategy(ExecutionStrategy):
                 input_vars=step.input_vars or {},
                 output_vars=step.output_vars or [],
             )
+            # 将生效的采集配置透传给子步骤（含嵌套复合操作），供其日志采集串联
+            action.exec_meta = {"log_config": substep_cfg}
 
             # 执行（使用 execute() 而非 _execute()，确保 _merge_output_vars 被调用）
             result = await action.execute()
@@ -310,12 +321,8 @@ class AtomicStrategy(ExecutionStrategy):
             if result.success:
                 self._update_variables(result, step_index)
 
-            # 记录执行完成
-            await self._log_execution_complete(
-                action_id,
-                ExecutionStatus.SUCCESS if result.success else ExecutionStatus.FAILED,
-                result
-            )
+            log_ctx.action_name = str(getattr(result, "action_name", "") or action_id)
+            await save_action_log(log_ctx, result)
 
             return result
 
@@ -328,7 +335,7 @@ class AtomicStrategy(ExecutionStrategy):
                 action_name=action_id,
                 replaced_params=params if isinstance(params, dict) else getattr(params, 'model_dump', lambda: {})() or {},
             )
-            await self._log_execution_complete(action_id, ExecutionStatus.FAILED, error_result)
+            await save_action_log(log_ctx, error_result)
             return error_result
 
     def _replace_templates(self, params: Dict) -> Dict:
@@ -374,46 +381,34 @@ class AtomicStrategy(ExecutionStrategy):
         if result.variables:
             self.context.variables.update(result.variables)
 
-    async def _log_execution(self, action_id: str, params: Dict, depth: int, status: ExecutionStatus, action_type: str | BuiltinActionType | None = None):
-        """记录执行日志"""
-        # 若 params 是 Pydantic 模型，先转为 dict 以避免 JSON 序列化错误
+    def _new_log_context(
+        self,
+        action_id: str,
+        params: Dict,
+        depth: int,
+        action_type: str | BuiltinActionType | None = None,
+        log_config: Any = None,
+    ) -> ActionLogContext:
+        """构建操作日志采集上下文（复合操作内部的子步骤）"""
         if not isinstance(params, dict) and hasattr(params, 'model_dump'):
             params = params.model_dump()
-        async with DatabaseSessionManager.async_session() as session:
-            log = ActionExecutionLog(
-                execution_id=self.context.execution_id,
-                action_id=action_id,
-                action_name=action_id,
-                action_type=action_type or action_id,
-                status=status,
-                params=params,
-                depth=depth,
-                mid=self.mid,
-            )
-            session.add(log)
-            await session.commit()
-
-    async def _log_execution_complete(self, action_id: str, status: ExecutionStatus, result: ActionResult):
-        """更新执行完成日志"""
-        async with DatabaseSessionManager.async_session() as session:
-            query = select(ActionExecutionLog).where(
-                ActionExecutionLog.execution_id == self.context.execution_id,
-                ActionExecutionLog.action_id == action_id,
-                ActionExecutionLog.finished_at == None,
-            )
-            result_row = await session.exec(query)
-            log = result_row.scalars().first()
-            if log:
-                log.status = status
-                data = result.data
-                if hasattr(data, 'model_dump'):
-                    data = data.model_dump()
-                log.result_data = {
-                    "success": result.success, "data": data}
-                log.error_message = result.error
-                log.execution_time = result.execution_time
-                log.finished_at = datetime.now()
-                await session.commit()
+        return ActionLogContext(
+            mid=self.mid,
+            action_id=action_id,
+            action_name=action_id,
+            action_type=str(action_type or action_id),
+            source=ActionLogSourceEnum.WORKFLOW,
+            execution_id=self.context.execution_id,
+            parent_execution_id=getattr(self.context, "parent_execution_id", None),
+            depth=depth,
+            workflow_id=getattr(self.context, "workflow_id", None),
+            browser_id=str(getattr(self.context, "browser_id", "") or ""),
+            session_id=str(getattr(self.context, "session_id", "") or ""),
+            page=self.page,
+            params=params if isinstance(params, dict) else {},
+            variables=dict(self.context.variables),
+            log_config=log_config,
+        )
 
 
 class LoopStrategy(ExecutionStrategy):
@@ -902,7 +897,7 @@ class LoopAction(BaseAction[LoopParams]):
         loop_index_var = getattr(self.params, 'loop_index_var', 'loop_index') or 'loop_index'
 
         # 创建执行上下文和执行器
-        context = ExecutionContext(self.variables)
+        context = ExecutionContext(self.variables, self.exec_meta)
         executor = StepExecutor(context, self.page, self.mid)
 
         # 解析 param_mapping
@@ -1286,7 +1281,7 @@ class IfElseAction(BaseAction[IfElseParams]):
                     step.params = {}
 
         # 创建执行上下文和执行器
-        context = ExecutionContext(self.variables)
+        context = ExecutionContext(self.variables, self.exec_meta)
         executor = StepExecutor(context, self.page, self.mid)
 
         # 评估条件
@@ -1440,7 +1435,7 @@ class CompositeAction(BaseAction[CompositeParams]):
                     )
 
         # 创建执行上下文和执行器
-        context = ExecutionContext(self.variables)
+        context = ExecutionContext(self.variables, self.exec_meta)
         executor = StepExecutor(context, self.page, self.mid)
 
         # 执行所有步骤（责任链模式）

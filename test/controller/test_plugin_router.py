@@ -6,7 +6,7 @@
 
 import pytest
 
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 
 # 复用 conftest 中的 PREFIX
 from test.controller.conftest import PREFIX

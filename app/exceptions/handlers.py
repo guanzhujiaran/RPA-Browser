@@ -4,12 +4,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 import uuid
 from app.models.response import StandardResponse
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 from app.models.consts.enums import ConfigRunningModeEnum
 import traceback
 from app.config import settings
 from sqlalchemy.exc import DisconnectionError, OperationalError
-from app.models.exceptions.base_exception import BaseException as CustomBaseException
+from app.models.common.exceptions.base_exception import BaseException as CustomBaseException
 
 from loguru import logger
 

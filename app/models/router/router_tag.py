@@ -17,6 +17,7 @@ class RouterTag(StrEnum):
     webrtc_video_stream = "WebRTC 视频流"  # WebRTC 超低延迟实时画面传输
     session_control = "浏览器会话控制"
     execution_engine = "执行引擎"  # 提供浏览器操作的执行
+    action_log_management = "操作日志管理"  # 浏览器操作日志采集配置与查询
     # === 系统管理 ===
     community_management = "社区互动管理"  # 公开资源浏览、点赞、举报、Fork
     # === 系统管理 ===

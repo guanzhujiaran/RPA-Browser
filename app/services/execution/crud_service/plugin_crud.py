@@ -9,7 +9,7 @@ from sqlmodel import select, update
 from sqlalchemy import true, false
 
 from app.models.database.workflow.models import CompositeActionModel, UserPlugin
-from app.models.exceptions.base_exception import NameAlreadyExistsException
+from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
 from sqlmodel import col
 from typing import Sequence

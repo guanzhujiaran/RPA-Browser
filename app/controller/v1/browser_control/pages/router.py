@@ -2,12 +2,12 @@
 页面管理路由 - 提供页面列表、切换、关闭等功能
 """
 from numpy.ma import count
-from app.services.RPA_browser.live_service import live_service
+from app.services.RPA_browser.session.live_service import live_service
 from fastapi import Depends
-from app.models.common.depends import BrowserReqAuthInfo
+from bili_common.models.depends import BrowserReqAuthInfo
 from app.models.response import StandardResponse, success_response, error_response
-from app.models.response_code import ResponseCode
-from app.services.RPA_browser.live_service import LiveService
+from bili_common.models.response_code import ResponseCode
+from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.security_depends import verify_browser_ownership
 from ..base import new_webrtc_router
 import loguru

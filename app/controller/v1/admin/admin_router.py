@@ -3,7 +3,7 @@ from loguru import logger
 from fastapi import APIRouter
 import time
 from app.config import settings
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 from app.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_tag import RouterTag
 from app.models.system.admin import (
@@ -11,7 +11,7 @@ from app.models.system.admin import (
     BrowserSessionConfigResponse,
     UpdateBrowserSessionConfigRequest,
 )
-from app.services.RPA_browser.live_service import LiveService
+from app.services.RPA_browser.session.live_service import LiveService
 
 router = APIRouter(tags=[RouterTag.admin_management])
 

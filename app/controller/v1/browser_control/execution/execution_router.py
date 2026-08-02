@@ -6,11 +6,11 @@
 """
 from fastapi import Depends
 from app.models.response import StandardResponse, success_response, error_response
-from app.models.response_code import ResponseCode
+from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.security_depends import verify_browser_ownership
-from app.models.common.depends import BrowserReqAuthInfo
-from app.services.RPA_browser.live_service import live_service
+from bili_common.models.depends import BrowserReqAuthInfo
+from app.services.RPA_browser.session.live_service import live_service
 from app.services.execution.engine import ExecutionEngine
 from app.services.execution.action_registry import action_registry
 from app.services.execution.actions.control_flow import CompositeAction as CompositeActionClass

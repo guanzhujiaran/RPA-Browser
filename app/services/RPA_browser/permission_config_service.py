@@ -146,8 +146,20 @@ class PermissionConfigService:
         return None
 
     @classmethod
-    async def get_max_fingerprints_by_level(cls, level_value: int) -> int:
-        """根据等级数值获取允许创建的最大浏览器指纹数量"""
+    async def get_max_fingerprints_by_level(
+        cls, level_value: int, role: str | None = None
+    ) -> int:
+        """根据等级数值获取允许创建的最大浏览器指纹数量
+
+        root 角色权限高于一切，不受等级限制，直接返回 root 等级配置的上限。
+        """
+        if role and role.lower() == "root":
+            config = await cls.get_permissions()
+            for level_config in config.levels:
+                if level_config.level_name.lower() == "root":
+                    return level_config.max_fingerprints
+            return 999999  # root 兜底上限
+
         config = await cls.get_permissions()
         for level_config in config.levels:
             if level_config.level_value == level_value:
