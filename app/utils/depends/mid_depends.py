@@ -13,7 +13,7 @@ from bili_common.deps.auth import (
     LevelPermissions,
     get_auth_info_from_header,
 )
-from app.models.common.exceptions.base_exception import (
+from bili_common.exceptions import (
     NotLoggedInException,
     InvalidUIDException,
     InvalidMidFormatException,

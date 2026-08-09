@@ -52,6 +52,14 @@ class ReportReason(IntEnum):
     OTHER = 5
 
 
+class ReportDecision(StrEnum):
+    """举报处理决策"""
+    PENDING = "pending"
+    IGNORED = "ignored"      # 标记无效/忽略，资源保持不变
+    WARNED = "warned"        # 警告被举报人（通知待私信系统建成后接入）
+    TAKEDOWN = "takedown"    # 下架资源（设为非公开，从社区隐藏）
+
+
 class ExecutionStatus(StrEnum):
     """执行状态"""
     PENDING = "pending"
@@ -293,6 +301,9 @@ class ResourceReport(SQLModel, table=True):
     reviewed_by_mid: str | None = Field(
         default=None, max_length=255, description="审核管理员ID")
     reviewed_at: datetime | None = Field(default=None, description="审核时间")
+    decision: ReportDecision = Field(
+        default=ReportDecision.PENDING, description="处理决策：pending/ignored/warned/takedown")
+    review_note: str = Field(default="", max_length=500, description="审核备注")
     created_at: datetime = Field(default_factory=datetime.now)
 
 

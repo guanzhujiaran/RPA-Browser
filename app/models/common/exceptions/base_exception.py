@@ -25,9 +25,8 @@ class BrowserIdNotBeloneToUserException(BaseException):
         self.msg = self.msg.format(browser_id=browser_id)
 
 
-class NotLoggedInException(BaseException):
-    code = ResponseCode.UNAUTHORIZED
-    msg = ResponseMsg.exception_not_logged_in
+# 注意：未登录异常已统一收敛到 bili_common.exceptions.NotLoggedInException
+# （业务码 -101，HTTP 200），本项目不再自定义，避免与公共包产生码值/HTTP 状态分歧。
 
 
 class InvalidUIDException(BaseException):

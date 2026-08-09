@@ -158,7 +158,10 @@ class Settings(BaseSettings):
     # heartbeat=180：与服务端保持一致，避免 handler 执行时间较长时 heartbeat 超时导致连接关闭
     rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/?heartbeat=180"
 
-    admin_base_path: str = "/admin_api"
+    admin_base_path: str = "/api/admin/rpa"
+
+    # 是否强制要求执行操作前已通过对应审批单（默认关闭，治理成熟后开启）
+    require_approval_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_file=(

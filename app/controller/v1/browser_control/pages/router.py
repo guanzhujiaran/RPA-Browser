@@ -5,7 +5,7 @@ from numpy.ma import count
 from app.services.RPA_browser.session.live_service import live_service
 from fastapi import Depends
 from bili_common.models.depends import BrowserReqAuthInfo
-from app.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import StandardResponse, success_response, error_response
 from bili_common.models.response_code import ResponseCode
 from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.security_depends import verify_browser_ownership

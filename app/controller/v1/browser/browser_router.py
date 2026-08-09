@@ -23,7 +23,7 @@ from app.utils.depends.security_depends import (
 from app.models.base.base_sqlmodel import BasePaginationResp
 from app.models.router.router_prefix import BrowserFingerprintRouterPath
 from .base import new_fingerprint_router
-from app.models.response import StandardResponse, success_response
+from bili_common.models.response import StandardResponse, success_response
 from app.services.RPA_browser.browser import BrowserService
 from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
 from app.utils.depends.mid_depends import get_auth_info_from_header

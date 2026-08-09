@@ -5,10 +5,11 @@
 自定义操作和工作流的 CRUD 已迁移到 action_router.py 和 workflow_router.py
 """
 from fastapi import Depends
-from app.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import StandardResponse, success_response, error_response
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.security_depends import verify_browser_ownership
+from app.utils.depends.admin_depends import assert_approved
 from bili_common.models.depends import BrowserReqAuthInfo
 from app.services.RPA_browser.session.live_service import live_service
 from app.services.execution.engine import ExecutionEngine
@@ -99,6 +100,7 @@ async def execute_action(
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ) -> StandardResponse[ActionResultResponse | None]:
     """执行单个操作"""
+    await assert_approved("action", request.action_id, "execute")
     merged_vars = {**request.variables, **request.input_vars} if request.input_vars else (request.variables or {})
     req = ActionExecutionRequest(
         mid=browser_info.auth_info.mid,
@@ -148,6 +150,10 @@ async def execute_workflow(
     """
     mid = browser_info.auth_info.mid
     bid= browser_info.browser_id
+    if request.action_id:
+        await assert_approved("action", request.action_id, "execute")
+    elif request.workflow_id:
+        await assert_approved("workflow", request.workflow_id, "execute")
     req = WorkflowExecutionRequest(
         mid=mid,
         browser_id=bid,

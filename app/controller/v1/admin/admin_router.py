@@ -4,7 +4,7 @@ from fastapi import APIRouter
 import time
 from app.config import settings
 from bili_common.models.response_code import ResponseCode
-from app.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_tag import RouterTag
 from app.models.system.admin import (
     AdminAllSessionsResponse,

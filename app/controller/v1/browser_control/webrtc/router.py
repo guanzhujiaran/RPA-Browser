@@ -8,7 +8,7 @@ WebRTC 视频流 API 路由
 from app.services.RPA_browser.session.live_service import live_service
 from fastapi import Depends
 from loguru import logger
-from app.models.response import success_response, error_response
+from bili_common.models.response import success_response, error_response
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.session.live_service import LiveService

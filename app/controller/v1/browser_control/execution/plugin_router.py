@@ -8,7 +8,7 @@ from sqlmodel import select
 from typing import List
 import uuid
 
-from app.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import StandardResponse, success_response, error_response
 from app.models.workflow.models import (
     PluginCreateRequest,
     PluginUpdateRequest,

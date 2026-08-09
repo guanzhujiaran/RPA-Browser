@@ -1,18 +1,26 @@
 """
 举报管理路由 - 管理员功能
 
-提供举报列表查看和举报状态管理功能
+提供举报列表查看和举报审核功能。
+审核决策：ignore（标记无效）/ warn（警告，通知待私信系统建成后接入）/ takedown（下架资源）。
 """
-from app.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import StandardResponse, success_response, error_response
 from app.services.execution.crud_service import community_crud_svr
-from app.models.database.workflow.models import ResourceReport, ResourceType, ReportReason
-from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
-from fastapi import Depends
+from app.models.database.workflow.models import (
+    ResourceReport,
+    ResourceType,
+    ReportReason,
+    ReportDecision,
+)
+from app.utils.depends.mid_depends import AuthInfo
+from app.utils.depends.admin_depends import require_admin
+from app.services.admin_audit import log_admin_action
+from fastapi import APIRouter, Depends
 from app.models.base.base_sqlmodel import BasePaginationResp
 from sqlmodel import SQLModel, Field
-from .base import new_admin_router
+from app.models.router.router_tag import RouterTag
 
-router = new_admin_router()
+router = APIRouter(tags=[RouterTag.admin_management])
 
 
 def _get_resource_type_name(resource_type: ResourceType) -> str:
@@ -48,6 +56,8 @@ class ReportListItemResponse(SQLModel):
     reason_name: str
     description: str
     is_valid: bool
+    decision: ReportDecision
+    review_note: str
     reviewed_by_mid: str | None = Field(default=None, max_length=255)
     reviewed_at: str | None = None
     created_at: str
@@ -66,6 +76,8 @@ class ReportListItemResponse(SQLModel):
             reason_name=_get_reason_name(report.reason),
             description=report.description,
             is_valid=report.is_valid,
+            decision=report.decision,
+            review_note=report.review_note,
             reviewed_by_mid=report.reviewed_by_mid,
             reviewed_at=report.reviewed_at.isoformat() if report.reviewed_at else None,
             created_at=report.created_at.isoformat(),
@@ -75,20 +87,18 @@ class ReportListItemResponse(SQLModel):
 @router.post("/reports/list", summary="获取举报列表")
 async def list_reports(
     request: dict | None = None,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
+    auth: AuthInfo = Depends(require_admin),
 ) -> StandardResponse[BasePaginationResp[ReportListItemResponse]]:
-    """获取举报列表（管理员用）
+    """获取举报列表（仅管理员/root）
 
     Args:
         request: {
             "page": 页码（默认1）,
             "per_page": 每页数量（默认50）,
-            "is_valid": 是否有效（None=全部, True=有效, False=无效）,
+            "is_valid": 是否有效（None=全部, True=未处理, False=已处理）,
             "resource_type": 资源类型筛选（可选）
         }
     """
-    # TODO: 添加管理员权限验证
-
     if request is None:
         request = {}
 
@@ -128,25 +138,68 @@ async def list_reports(
     return success_response(pagination)
 
 
+class ReportReviewRequest(SQLModel):
+    """举报审核请求"""
+    report_id: int
+    decision: str  # ignore / warn / takedown
+    review_note: str = ""
+
+
+@router.post("/reports/review", summary="审核举报")
+async def review_report(
+    request: ReportReviewRequest,
+    auth: AuthInfo = Depends(require_admin),
+) -> StandardResponse[dict]:
+    """审核举报（仅管理员/root）
+
+    decision:
+        - ignore:   标记无效，资源保持不变
+        - warn:     警告被举报人（通知待私信系统建成后接入）
+        - takedown: 下架资源（设为非公开，从社区隐藏）
+    """
+    decision_map = {
+        "ignore": ReportDecision.IGNORED,
+        "warn": ReportDecision.WARNED,
+        "takedown": ReportDecision.TAKEDOWN,
+    }
+    decision = decision_map.get(request.decision)
+    if not decision:
+        return error_response(400, "decision 必须为 ignore / warn / takedown")
+
+    ok = await community_crud_svr.review_report(
+        report_id=request.report_id,
+        admin_mid=auth.mid,
+        decision=decision,
+        review_note=request.review_note,
+    )
+    if ok is None:
+        return error_response(404, "举报记录不存在")
+    if ok is False:
+        return error_response(400, "该举报已被处理")
+    await log_admin_action(auth.mid, "report:review", "report", request.report_id, f"decision={request.decision}, note={request.review_note}")
+    return success_response({"message": "审核完成", "decision": request.decision})
+
+
 @router.post("/reports/mark-invalid", summary="标记举报为无效")
 async def mark_report_invalid(
     request: dict,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
+    auth: AuthInfo = Depends(require_admin),
 ) -> StandardResponse[dict]:
-    """管理员标记举报为无效
+    """管理员标记举报为无效（等价于 ignore 决策）
 
     Args:
-        request: {"report_id": <举报记录ID>}
+        request: {"report_id": <举报记录ID>, "review_note": <可选备注>}
     """
-    # TODO: 添加管理员权限验证
     report_id = request.get("report_id")
     if not report_id:
         return error_response(400, "缺少举报记录ID")
     success = await community_crud_svr.mark_report_invalid(
         report_id=report_id,
-        admin_mid=auth.mid
+        admin_mid=auth.mid,
+        review_note=request.get("review_note", "")
     )
     if success:
+        await log_admin_action(auth.mid, "report:mark_invalid", "report", report_id)
         return success_response({"message": "举报已标记为无效"})
     else:
-        return error_response(400, "操作失败，举报不存在或已被标记")
+        return error_response(400, "操作失败，举报不存在或已被处理")

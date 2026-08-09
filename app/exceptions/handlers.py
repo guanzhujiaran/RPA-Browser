@@ -3,7 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 import uuid
-from app.models.response import StandardResponse
+from bili_common.models.response import StandardResponse
 from bili_common.models.response_code import ResponseCode
 from app.models.consts.enums import ConfigRunningModeEnum
 import traceback

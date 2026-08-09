@@ -13,6 +13,7 @@ from app.models.database.workflow.models import (
     ResourceReport,
     ResourceType,
     ReportReason,
+    ReportDecision,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
 
@@ -229,7 +230,7 @@ class CommunityCrudService:
 
     @staticmethod
     async def mark_report_invalid(
-        report_id: int, admin_mid: int
+        report_id: int, admin_mid: int, review_note: str = ""
     ) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
@@ -243,6 +244,8 @@ class CommunityCrudService:
                 return False
 
             report.is_valid = False
+            report.decision = ReportDecision.IGNORED
+            report.review_note = review_note
             report.reviewed_by_mid = admin_mid
             report.reviewed_at = datetime.now()
 
@@ -301,6 +304,89 @@ class CommunityCrudService:
 
             result = await session.exec(query)
             return result.one()
+
+
+    @staticmethod
+    async def _load_resource(session, resource_type: ResourceType, resource_id: int):
+        """按类型加载被举报资源（用于下架操作）"""
+        if resource_type == ResourceType.CUSTOM_ACTION:
+            result = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == resource_id)
+            )
+        elif resource_type == ResourceType.USER_WORKFLOW:
+            result = await session.exec(
+                select(UserWorkflow).where(UserWorkflow.id == resource_id)
+            )
+        elif resource_type == ResourceType.USER_PLUGIN:
+            result = await session.exec(
+                select(UserPlugin).where(UserPlugin.id == resource_id)
+            )
+        else:
+            return None
+        return result.first()
+
+    @staticmethod
+    async def _decrement_reports_count(session, resource) -> None:
+        """资源被下架时同步递减其举报计数"""
+        if isinstance(resource, CompositeActionModel):
+            await session.exec(
+                update(CompositeActionModel)
+                .where(CompositeActionModel.id == resource.id)
+                .values(reports_count=CompositeActionModel.reports_count - 1)
+            )
+        elif isinstance(resource, UserWorkflow):
+            await session.exec(
+                update(UserWorkflow)
+                .where(UserWorkflow.id == resource.id)
+                .values(reports_count=UserWorkflow.reports_count - 1)
+            )
+        elif isinstance(resource, UserPlugin):
+            await session.exec(
+                update(UserPlugin)
+                .where(UserPlugin.id == resource.id)
+                .values(reports_count=UserPlugin.reports_count - 1)
+            )
+
+    @staticmethod
+    async def review_report(
+        report_id: int,
+        admin_mid: int,
+        decision: ReportDecision,
+        review_note: str = "",
+    ) -> bool | None:
+        """审核举报：ignore / warn / takedown
+
+        - ignore:   标记无效，资源保持不变
+        - warn:     警告被举报人（通知待私信系统建成后接入）
+        - takedown: 下架资源（设为非公开，从社区隐藏）
+        返回：None=举报不存在；False=已被处理；True=成功
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ResourceReport).where(ResourceReport.id == report_id)
+            )
+            report = result.first()
+            if not report:
+                return None
+            if not report.is_valid:
+                return False
+
+            report.is_valid = False
+            report.decision = decision
+            report.review_note = review_note
+            report.reviewed_by_mid = admin_mid
+            report.reviewed_at = datetime.now()
+
+            if decision == ReportDecision.TAKEDOWN:
+                resource = await CommunityCrudService._load_resource(
+                    session, report.resource_type, report.resource_id
+                )
+                if resource is not None:
+                    resource.is_public = False
+                    await CommunityCrudService._decrement_reports_count(session, resource)
+
+            await session.commit()
+            return True
 
 
 community_crud_svr = CommunityCrudService()

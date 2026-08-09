@@ -10,7 +10,7 @@
 from fastapi import Depends
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import StandardResponse, success_response, error_response
 from bili_common.models.response_code import ResponseCode
 from app.models.database.browser.info import (
     UserBrowserDefaultSettingRequest,
