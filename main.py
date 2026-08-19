@@ -11,6 +11,7 @@ from app.utils.alembic_migration import run_alembic_upgrade_head, check_schemas
 import asyncio
 from loguru import logger
 from app.services.mq.rpc_client import rpc_client
+from app.services.mq.rpc_server import start_rpc_server, stop_rpc_server
 
 
 def _setup_windows_event_loop() -> None:
@@ -52,9 +53,13 @@ async def lifespan(app: FastAPI):
     # 连接 RabbitMQ RPC 客户端（HTTP 请求 Action 通过 RPC 调用 FastapiApp 业务方法）
     await rpc_client.connect()
 
+    # 启动 RPA 资源 RPC 服务端（2.18.0：供 be-message 获取资源详情）
+    await start_rpc_server()
+
     logger.info("lifespan complete!")
     yield
     await stop_background_tasks()
+    await stop_rpc_server()
     await rpc_client.close()
 
 

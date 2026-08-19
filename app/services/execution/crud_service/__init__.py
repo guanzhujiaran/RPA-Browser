@@ -6,7 +6,7 @@ CRUD 服务
 - plugin_crud: 插件 CRUD
 - workflow_crud: 工作流 CRUD
 - action_log_crud: 浏览器操作日志采集配置 + 日志记录 CRUD
-- community_crud: 社区功能（点赞、举报）
+- community_crud: 社区举报（点赞/收藏已迁移 be-message）
 """
 from app.services.execution.crud_service.action_crud import action_crud_svr, ActionCrudService
 from app.services.execution.crud_service.plugin_crud import plugin_crud_svr, PluginCrudService

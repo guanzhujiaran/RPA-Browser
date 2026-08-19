@@ -37,7 +37,7 @@ class PluginHookEnum(StrEnum):
 
 
 class ResourceType(IntEnum):
-    """资源类型枚举"""
+    """资源类型枚举（社区举报用）"""
     CUSTOM_ACTION = 1
     USER_WORKFLOW = 2
     USER_PLUGIN = 3
@@ -269,23 +269,8 @@ class UserWorkflow(CommunityResourceBase, table=True):
     )
 
 
-class ResourceLike(SQLModel, table=True):
-    """资源点赞表"""
-    __table_args__ = (
-        Index('idx_unique_like', 'mid', 'resource_type',
-              'resource_id', unique=True),
-        {"extend_existing": True},
-    )
-
-    id: int | None = Field(default=None, primary_key=True,)
-    mid: str = Field(max_length=255, index=True, description="点赞用户ID")
-    resource_type: ResourceType = Field(index=True, description="资源类型")
-    resource_id: int = Field(index=True, description="资源ID")
-    created_at: datetime = Field(default_factory=datetime.now)
-
-
 class ResourceReport(SQLModel, table=True):
-    """资源举报表"""
+    """资源举报表（社区举报归属各业务系统，此处为 RPA 资源举报）"""
     __table_args__ = (
         Index('idx_unique_report', 'mid', 'resource_type', 'resource_id'),
         {"extend_existing": True},

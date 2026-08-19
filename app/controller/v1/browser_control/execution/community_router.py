@@ -321,72 +321,6 @@ async def fork_community_plugin(
         return error_response(400, str(e))
 
 
-# ============ 点赞功能 ============
-
-
-@router.post("/community/action/{action_id}/like", summary="点赞/取消点赞自定义操作")
-async def like_action(
-    action_id: int,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[dict]:
-    """点赞或取消点赞自定义操作"""
-    result = await community_crud_svr.toggle_like(
-        mid=auth.mid,
-        resource_type=1,  # CustomAction
-        resource_id=action_id
-    )
-    
-    if result is None:
-        return error_response(404, "操作不存在")
-    
-    return success_response({
-        "liked": result,
-        "message": "点赞成功" if result else "取消点赞成功"
-    })
-
-
-@router.post("/community/workflow/{workflow_id}/like", summary="点赞/取消点赞工作流")
-async def like_workflow(
-    workflow_id: int,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[dict]:
-    """点赞或取消点赞工作流"""
-    result = await community_crud_svr.toggle_like(
-        mid=auth.mid,
-        resource_type=2,  # UserWorkflow
-        resource_id=workflow_id
-    )
-    
-    if result is None:
-        return error_response(404, "工作流不存在")
-    
-    return success_response({
-        "liked": result,
-        "message": "点赞成功" if result else "取消点赞成功"
-    })
-
-
-@router.post("/community/plugin/{plugin_id}/like", summary="点赞/取消点赞插件")
-async def like_plugin(
-    plugin_id: int,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[dict]:
-    """点赞或取消点赞插件"""
-    result = await community_crud_svr.toggle_like(
-        mid=auth.mid,
-        resource_type=3,  # UserPlugin
-        resource_id=plugin_id
-    )
-    
-    if result is None:
-        return error_response(404, "插件不存在")
-    
-    return success_response({
-        "liked": result,
-        "message": "点赞成功" if result else "取消点赞成功"
-    })
-
-
 # ============ 举报功能 ============
 
 
@@ -410,13 +344,13 @@ async def report_action(
         reason=request.reason,
         description=request.description
     )
-    
+
     if result is None:
         return error_response(404, "操作不存在")
-    
+
     if not result:
         return error_response(400, "您已举报过此操作")
-    
+
     return success_response({
         "message": "举报成功，感谢您的反馈"
     })
@@ -436,13 +370,13 @@ async def report_workflow(
         reason=request.reason,
         description=request.description
     )
-    
+
     if result is None:
         return error_response(404, "工作流不存在")
-    
+
     if not result:
         return error_response(400, "您已举报过此工作流")
-    
+
     return success_response({
         "message": "举报成功，感谢您的反馈"
     })
@@ -462,13 +396,13 @@ async def report_plugin(
         reason=request.reason,
         description=request.description
     )
-    
+
     if result is None:
         return error_response(404, "插件不存在")
-    
+
     if not result:
         return error_response(400, "您已举报过此插件")
-    
+
     return success_response({
         "message": "举报成功，感谢您的反馈"
     })
@@ -487,14 +421,14 @@ async def update_report(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
     """修改自己的举报内容（仅允许修改理由和描述）
-    
+
     Args:
         request: {
             "report_id": 举报记录ID,
             "reason": 新的举报理由（可选）,
             "description": 新的描述（可选）
         }
-    
+
     Note:
         - 只能修改自己的举报
         - 已被管理员标记为无效的举报不能修改
@@ -502,20 +436,23 @@ async def update_report(
     """
     if request.reason is None and request.description is None:
         return error_response(400, "至少需要修改举报理由或描述")
-    
+
     result = await community_crud_svr.update_report(
         report_id=request.report_id,
         mid=auth.mid,
         reason=request.reason,
         description=request.description
     )
-    
+
     if result is None:
         return error_response(404, "举报记录不存在")
-    
+
     if result is False:
         return error_response(403, "您只能修改自己的举报，或该举报已被管理员处理")
-    
+
     return success_response({
         "message": "举报内容已更新"
     })
+
+
+
