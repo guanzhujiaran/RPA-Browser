@@ -7,6 +7,7 @@ Base Action - 操作基类 (简化 OOP 设计)
 3. execute() 无需传参：所有属性在初始化时已赋值
 4. input_vars/output_vars：输入输出变量管理
 """
+from bili_common.models import StrEnumAutoDoc
 from sqlmodel import SQLModel
 from typing import TypeVar
 from typing import Generic
@@ -19,12 +20,11 @@ from botright.playwright_mock import Page
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, List, Dict
-from enum import Enum
 ParamsT = TypeVar("ParamsT", bound=SQLModel)
 DataT = TypeVar("DataT", default=Any)
 
 
-class ExecutionPhase(Enum):
+class ExecutionPhase(StrEnumAutoDoc):
     """执行阶段"""
     VALIDATION = "validation"
     PRE_EXECUTION = "pre_execution"
@@ -213,7 +213,7 @@ class BaseAction(ABC, Generic[ParamsT]):
         except Exception as e:
             raise ValueError(f"Invalid params: {e}") from e
 
-    def validate_params(self, params: Dict | None = None) -> tuple[bool, str | None]:
+    def validate_params(self, params: dict | None = None) -> tuple[bool, str | None]:
         """验证参数（execution_engine 调用接口）"""
         if params is None:
             return True, None

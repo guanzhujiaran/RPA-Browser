@@ -3,6 +3,7 @@ Core 模块 - 工作流数据库模型
 
 定义工作流、自定义操作、用户插件等数据库模型。
 """
+from bili_common.models import StrEnumAutoDoc
 from app.models.execution.action_params import WorkflowStep
 from app.models.execution.action_params import BuiltinActionType
 from typing import Any, Dict, List
@@ -10,24 +11,24 @@ from datetime import datetime
 from pydantic import field_validator
 from sqlalchemy import Column, JSON, Index
 from sqlmodel import SQLModel, Field
-from enum import StrEnum, IntEnum
+from bili_common.models import IntEnumAutoDoc
 
 
-class TriggerType(StrEnum):
+class TriggerType(StrEnumAutoDoc):
     """触发类型"""
     MANUAL = "manual"          # 手动触发
     SCHEDULED = "scheduled"    # 定时触发
     EVENT = "event"            # 事件触发
 
 
-class ErrorHandlingEnum(StrEnum):
+class ErrorHandlingEnum(StrEnumAutoDoc):
     """错误处理策略"""
     STOP = "stop"
     CONTINUE = "continue"
     ROLLBACK = "rollback"
 
 
-class PluginHookEnum(StrEnum):
+class PluginHookEnum(StrEnumAutoDoc):
     """插件钩子类型"""
     BEFORE_ACTION = "before_action"
     AFTER_ACTION = "after_action"
@@ -36,14 +37,14 @@ class PluginHookEnum(StrEnum):
     ON_TIMEOUT = "on_timeout"
 
 
-class ResourceType(IntEnum):
+class ResourceType(IntEnumAutoDoc):
     """资源类型枚举（社区举报用）"""
     CUSTOM_ACTION = 1
     USER_WORKFLOW = 2
     USER_PLUGIN = 3
 
 
-class ReportReason(IntEnum):
+class ReportReason(IntEnumAutoDoc):
     """举报理由枚举"""
     SPAM = 1
     INAPPROPRIATE = 2
@@ -52,7 +53,7 @@ class ReportReason(IntEnum):
     OTHER = 5
 
 
-class ReportDecision(StrEnum):
+class ReportDecision(StrEnumAutoDoc):
     """举报处理决策"""
     PENDING = "pending"
     IGNORED = "ignored"      # 标记无效/忽略，资源保持不变
@@ -60,7 +61,7 @@ class ReportDecision(StrEnum):
     TAKEDOWN = "takedown"    # 下架资源（设为非公开，从社区隐藏）
 
 
-class ExecutionStatus(StrEnum):
+class ExecutionStatus(StrEnumAutoDoc):
     """执行状态"""
     PENDING = "pending"
     RUNNING = "running"

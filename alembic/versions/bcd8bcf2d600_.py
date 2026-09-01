@@ -1,8 +1,8 @@
-"""init
+"""empty message
 
-Revision ID: 19ac53b7d4f0
+Revision ID: bcd8bcf2d600
 Revises: 
-Create Date: 2026-08-10 02:30:21.190671
+Create Date: 2026-08-25 22:38:01.151029
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = '19ac53b7d4f0'
+revision: str = 'bcd8bcf2d600'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -49,19 +49,17 @@ def upgrade() -> None:
     sa.Column('finished_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('actionlogrecord', schema=None) as batch_op:
-        batch_op.create_index('idx_action_log_execution_order', ['execution_id', 'id'], unique=False)
-        batch_op.create_index('idx_action_log_mid_started', ['mid', 'started_at'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_action_id'), ['action_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_browser_id'), ['browser_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_execution_id'), ['execution_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_log_id'), ['log_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_started_at'), ['started_at'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_status'), ['status'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_success'), ['success'], unique=False)
-        batch_op.create_index(batch_op.f('ix_actionlogrecord_workflow_id'), ['workflow_id'], unique=False)
-
+    op.create_index('idx_action_log_execution_order', 'actionlogrecord', ['execution_id', 'id'], unique=False)
+    op.create_index('idx_action_log_mid_started', 'actionlogrecord', ['mid', 'started_at'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_action_id'), 'actionlogrecord', ['action_id'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_browser_id'), 'actionlogrecord', ['browser_id'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_execution_id'), 'actionlogrecord', ['execution_id'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_log_id'), 'actionlogrecord', ['log_id'], unique=True)
+    op.create_index(op.f('ix_actionlogrecord_mid'), 'actionlogrecord', ['mid'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_started_at'), 'actionlogrecord', ['started_at'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_status'), 'actionlogrecord', ['status'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_success'), 'actionlogrecord', ['success'], unique=False)
+    op.create_index(op.f('ix_actionlogrecord_workflow_id'), 'actionlogrecord', ['workflow_id'], unique=False)
     op.create_table('admin_audit_log',
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('id', sa.Integer(), nullable=False),
@@ -73,9 +71,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('admin_audit_log', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_admin_audit_log_admin_mid'), ['admin_mid'], unique=False)
-
+    op.create_index(op.f('ix_admin_audit_log_admin_mid'), 'admin_audit_log', ['admin_mid'], unique=False)
     op.create_table('compositeactionmodel',
     sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
     sa.Column('original_mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
@@ -113,12 +109,10 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['forked_from_id'], ['compositeactionmodel.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('compositeactionmodel', schema=None) as batch_op:
-        batch_op.create_index('idx_user_action_name_unique', ['mid', 'name'], unique=True)
-        batch_op.create_index(batch_op.f('ix_compositeactionmodel_action_id'), ['action_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_compositeactionmodel_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_compositeactionmodel_original_mid'), ['original_mid'], unique=False)
-
+    op.create_index('idx_user_action_name_unique', 'compositeactionmodel', ['mid', 'name'], unique=True)
+    op.create_index(op.f('ix_compositeactionmodel_action_id'), 'compositeactionmodel', ['action_id'], unique=True)
+    op.create_index(op.f('ix_compositeactionmodel_mid'), 'compositeactionmodel', ['mid'], unique=False)
+    op.create_index(op.f('ix_compositeactionmodel_original_mid'), 'compositeactionmodel', ['original_mid'], unique=False)
     op.create_table('notificationconfig',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -197,26 +191,11 @@ def upgrade() -> None:
     sa.Column('wxpusher_topic_ids', sa.Text(), nullable=True),
     sa.Column('wxpusher_uids', sa.Text(), nullable=True),
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sqlite_autoincrement=True
     )
-    with op.batch_alter_table('notificationconfig', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_notificationconfig_browser_id'), ['browser_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_notificationconfig_mid'), ['mid'], unique=False)
-
-    op.create_table('resourcelike',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-    sa.Column('resource_type', sa.Enum('CUSTOM_ACTION', 'USER_WORKFLOW', 'USER_PLUGIN', name='resourcetype'), nullable=False),
-    sa.Column('resource_id', sa.Integer(), nullable=False),
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.PrimaryKeyConstraint('id')
-    )
-    with op.batch_alter_table('resourcelike', schema=None) as batch_op:
-        batch_op.create_index('idx_unique_like', ['mid', 'resource_type', 'resource_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_resourcelike_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_resourcelike_resource_id'), ['resource_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_resourcelike_resource_type'), ['resource_type'], unique=False)
-
+    op.create_index(op.f('ix_notificationconfig_browser_id'), 'notificationconfig', ['browser_id'], unique=False)
+    op.create_index(op.f('ix_notificationconfig_mid'), 'notificationconfig', ['mid'], unique=False)
     op.create_table('resourcereport',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
@@ -232,12 +211,10 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('resourcereport', schema=None) as batch_op:
-        batch_op.create_index('idx_unique_report', ['mid', 'resource_type', 'resource_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_resourcereport_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_resourcereport_resource_id'), ['resource_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_resourcereport_resource_type'), ['resource_type'], unique=False)
-
+    op.create_index('idx_unique_report', 'resourcereport', ['mid', 'resource_type', 'resource_id'], unique=False)
+    op.create_index(op.f('ix_resourcereport_mid'), 'resourcereport', ['mid'], unique=False)
+    op.create_index(op.f('ix_resourcereport_resource_id'), 'resourcereport', ['resource_id'], unique=False)
+    op.create_index(op.f('ix_resourcereport_resource_type'), 'resourcereport', ['resource_type'], unique=False)
     op.create_table('rpa_admin',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -249,9 +226,7 @@ def upgrade() -> None:
     sa.Column('note', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('rpa_admin', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_rpa_admin_mid'), ['mid'], unique=True)
-
+    op.create_index(op.f('ix_rpa_admin_mid'), 'rpa_admin', ['mid'], unique=True)
     op.create_table('rpa_approval',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -269,10 +244,8 @@ def upgrade() -> None:
     sa.Column('expires_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('rpa_approval', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_rpa_approval_status'), ['status'], unique=False)
-        batch_op.create_index(batch_op.f('ix_rpa_approval_submitter_mid'), ['submitter_mid'], unique=False)
-
+    op.create_index(op.f('ix_rpa_approval_status'), 'rpa_approval', ['status'], unique=False)
+    op.create_index(op.f('ix_rpa_approval_submitter_mid'), 'rpa_approval', ['submitter_mid'], unique=False)
     op.create_table('rpa_certification',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -283,10 +256,8 @@ def upgrade() -> None:
     sa.Column('note', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('rpa_certification', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_rpa_certification_target_id'), ['target_id'], unique=True)
-        batch_op.create_index(batch_op.f('ix_rpa_certification_target_type'), ['target_type'], unique=False)
-
+    op.create_index(op.f('ix_rpa_certification_target_id'), 'rpa_certification', ['target_id'], unique=True)
+    op.create_index(op.f('ix_rpa_certification_target_type'), 'rpa_certification', ['target_type'], unique=False)
     op.create_table('rpa_tag',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -308,9 +279,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('tag_id', 'target_type', 'target_id', name='uq_tag_rel_target')
     )
-    with op.batch_alter_table('rpa_tag_rel', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_rpa_tag_rel_tag_id'), ['tag_id'], unique=False)
-
+    op.create_index(op.f('ix_rpa_tag_rel_tag_id'), 'rpa_tag_rel', ['tag_id'], unique=False)
     op.create_table('rpa_user_ban',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -329,21 +298,17 @@ def upgrade() -> None:
     sa.Column('note', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('rpa_user_ban', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_rpa_user_ban_banned_by'), ['banned_by'], unique=False)
-        batch_op.create_index(batch_op.f('ix_rpa_user_ban_expired_at'), ['expired_at'], unique=False)
-        batch_op.create_index(batch_op.f('ix_rpa_user_ban_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_rpa_user_ban_scope'), ['scope'], unique=False)
-        batch_op.create_index(batch_op.f('ix_rpa_user_ban_status'), ['status'], unique=False)
-
+    op.create_index(op.f('ix_rpa_user_ban_banned_by'), 'rpa_user_ban', ['banned_by'], unique=False)
+    op.create_index(op.f('ix_rpa_user_ban_expired_at'), 'rpa_user_ban', ['expired_at'], unique=False)
+    op.create_index(op.f('ix_rpa_user_ban_mid'), 'rpa_user_ban', ['mid'], unique=False)
+    op.create_index(op.f('ix_rpa_user_ban_scope'), 'rpa_user_ban', ['scope'], unique=False)
+    op.create_index(op.f('ix_rpa_user_ban_status'), 'rpa_user_ban', ['status'], unique=False)
     op.create_table('tagmodel',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('tagmodel', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_tagmodel_name'), ['name'], unique=True)
-
+    op.create_index(op.f('ix_tagmodel_name'), 'tagmodel', ['name'], unique=True)
     op.create_table('userbrowserdefaultsetting',
     sa.Column('browser_id', sa.BIGINT(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
@@ -359,9 +324,7 @@ def upgrade() -> None:
     sa.Column('default_timeout', sa.Integer(), nullable=True),
     sa.PrimaryKeyConstraint('browser_id')
     )
-    with op.batch_alter_table('userbrowserdefaultsetting', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_userbrowserdefaultsetting_mid'), ['mid'], unique=False)
-
+    op.create_index(op.f('ix_userbrowserdefaultsetting_mid'), 'userbrowserdefaultsetting', ['mid'], unique=False)
     op.create_table('userbrowserinfo',
     sa.Column('fingerprint', sa.Integer(), nullable=False),
     sa.Column('fingerprint_platform', sa.Enum('windows', 'linux', 'macos', name='platformenum'), nullable=True),
@@ -390,9 +353,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('fingerprint'),
     sa.UniqueConstraint('mid', 'custom_name', name='uq_mid_custom_name')
     )
-    with op.batch_alter_table('userbrowserinfo', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_userbrowserinfo_mid'), ['mid'], unique=False)
-
+    op.create_index(op.f('ix_userbrowserinfo_mid'), 'userbrowserinfo', ['mid'], unique=False)
     op.create_table('userplugin',
     sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
     sa.Column('original_mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
@@ -415,12 +376,10 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['forked_from_id'], ['userplugin.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('userplugin', schema=None) as batch_op:
-        batch_op.create_index('idx_user_plugin_name_unique', ['mid', 'name'], unique=True)
-        batch_op.create_index(batch_op.f('ix_userplugin_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_userplugin_original_mid'), ['original_mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_userplugin_plugin_id'), ['plugin_id'], unique=True)
-
+    op.create_index('idx_user_plugin_name_unique', 'userplugin', ['mid', 'name'], unique=True)
+    op.create_index(op.f('ix_userplugin_mid'), 'userplugin', ['mid'], unique=False)
+    op.create_index(op.f('ix_userplugin_original_mid'), 'userplugin', ['original_mid'], unique=False)
+    op.create_index(op.f('ix_userplugin_plugin_id'), 'userplugin', ['plugin_id'], unique=True)
     op.create_table('userworkflow',
     sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
     sa.Column('original_mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
@@ -443,13 +402,11 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['forked_from_id'], ['userworkflow.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('userworkflow', schema=None) as batch_op:
-        batch_op.create_index('idx_user_workflow_name_unique', ['mid', 'name'], unique=True)
-        batch_op.create_index(batch_op.f('ix_userworkflow_custom_action_id'), ['custom_action_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_userworkflow_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_userworkflow_original_mid'), ['original_mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_userworkflow_workflow_id'), ['workflow_id'], unique=True)
-
+    op.create_index('idx_user_workflow_name_unique', 'userworkflow', ['mid', 'name'], unique=True)
+    op.create_index(op.f('ix_userworkflow_custom_action_id'), 'userworkflow', ['custom_action_id'], unique=False)
+    op.create_index(op.f('ix_userworkflow_mid'), 'userworkflow', ['mid'], unique=False)
+    op.create_index(op.f('ix_userworkflow_original_mid'), 'userworkflow', ['original_mid'], unique=False)
+    op.create_index(op.f('ix_userworkflow_workflow_id'), 'userworkflow', ['workflow_id'], unique=True)
     op.create_table('workflowrecord',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('workflow_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
@@ -480,11 +437,9 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['forked_from_id'], ['workflowrecord.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('workflowrecord', schema=None) as batch_op:
-        batch_op.create_index('idx_workflow_user_name_unique', ['mid', 'name'], unique=True)
-        batch_op.create_index(batch_op.f('ix_workflowrecord_mid'), ['mid'], unique=False)
-        batch_op.create_index(batch_op.f('ix_workflowrecord_workflow_id'), ['workflow_id'], unique=True)
-
+    op.create_index('idx_workflow_user_name_unique', 'workflowrecord', ['mid', 'name'], unique=True)
+    op.create_index(op.f('ix_workflowrecord_mid'), 'workflowrecord', ['mid'], unique=False)
+    op.create_index(op.f('ix_workflowrecord_workflow_id'), 'workflowrecord', ['workflow_id'], unique=True)
     op.create_table('compositeactiontaglink',
     sa.Column('composite_action_id', sa.Integer(), nullable=False),
     sa.Column('tag_id', sa.Integer(), nullable=False),
@@ -501,124 +456,81 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['workflow_id'], ['userworkflow.workflow_id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    with op.batch_alter_table('workflowpluginrelation', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_workflowpluginrelation_plugin_id'), ['plugin_id'], unique=False)
-        batch_op.create_index(batch_op.f('ix_workflowpluginrelation_workflow_id'), ['workflow_id'], unique=False)
-
+    op.create_index(op.f('ix_workflowpluginrelation_plugin_id'), 'workflowpluginrelation', ['plugin_id'], unique=False)
+    op.create_index(op.f('ix_workflowpluginrelation_workflow_id'), 'workflowpluginrelation', ['workflow_id'], unique=False)
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
-    with op.batch_alter_table('workflowpluginrelation', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_workflowpluginrelation_workflow_id'))
-        batch_op.drop_index(batch_op.f('ix_workflowpluginrelation_plugin_id'))
-
+    op.drop_index(op.f('ix_workflowpluginrelation_workflow_id'), table_name='workflowpluginrelation')
+    op.drop_index(op.f('ix_workflowpluginrelation_plugin_id'), table_name='workflowpluginrelation')
     op.drop_table('workflowpluginrelation')
     op.drop_table('compositeactiontaglink')
-    with op.batch_alter_table('workflowrecord', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_workflowrecord_workflow_id'))
-        batch_op.drop_index(batch_op.f('ix_workflowrecord_mid'))
-        batch_op.drop_index('idx_workflow_user_name_unique')
-
+    op.drop_index(op.f('ix_workflowrecord_workflow_id'), table_name='workflowrecord')
+    op.drop_index(op.f('ix_workflowrecord_mid'), table_name='workflowrecord')
+    op.drop_index('idx_workflow_user_name_unique', table_name='workflowrecord')
     op.drop_table('workflowrecord')
-    with op.batch_alter_table('userworkflow', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_userworkflow_workflow_id'))
-        batch_op.drop_index(batch_op.f('ix_userworkflow_original_mid'))
-        batch_op.drop_index(batch_op.f('ix_userworkflow_mid'))
-        batch_op.drop_index(batch_op.f('ix_userworkflow_custom_action_id'))
-        batch_op.drop_index('idx_user_workflow_name_unique')
-
+    op.drop_index(op.f('ix_userworkflow_workflow_id'), table_name='userworkflow')
+    op.drop_index(op.f('ix_userworkflow_original_mid'), table_name='userworkflow')
+    op.drop_index(op.f('ix_userworkflow_mid'), table_name='userworkflow')
+    op.drop_index(op.f('ix_userworkflow_custom_action_id'), table_name='userworkflow')
+    op.drop_index('idx_user_workflow_name_unique', table_name='userworkflow')
     op.drop_table('userworkflow')
-    with op.batch_alter_table('userplugin', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_userplugin_plugin_id'))
-        batch_op.drop_index(batch_op.f('ix_userplugin_original_mid'))
-        batch_op.drop_index(batch_op.f('ix_userplugin_mid'))
-        batch_op.drop_index('idx_user_plugin_name_unique')
-
+    op.drop_index(op.f('ix_userplugin_plugin_id'), table_name='userplugin')
+    op.drop_index(op.f('ix_userplugin_original_mid'), table_name='userplugin')
+    op.drop_index(op.f('ix_userplugin_mid'), table_name='userplugin')
+    op.drop_index('idx_user_plugin_name_unique', table_name='userplugin')
     op.drop_table('userplugin')
-    with op.batch_alter_table('userbrowserinfo', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_userbrowserinfo_mid'))
-
+    op.drop_index(op.f('ix_userbrowserinfo_mid'), table_name='userbrowserinfo')
     op.drop_table('userbrowserinfo')
-    with op.batch_alter_table('userbrowserdefaultsetting', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_userbrowserdefaultsetting_mid'))
-
+    op.drop_index(op.f('ix_userbrowserdefaultsetting_mid'), table_name='userbrowserdefaultsetting')
     op.drop_table('userbrowserdefaultsetting')
-    with op.batch_alter_table('tagmodel', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_tagmodel_name'))
-
+    op.drop_index(op.f('ix_tagmodel_name'), table_name='tagmodel')
     op.drop_table('tagmodel')
-    with op.batch_alter_table('rpa_user_ban', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_rpa_user_ban_status'))
-        batch_op.drop_index(batch_op.f('ix_rpa_user_ban_scope'))
-        batch_op.drop_index(batch_op.f('ix_rpa_user_ban_mid'))
-        batch_op.drop_index(batch_op.f('ix_rpa_user_ban_expired_at'))
-        batch_op.drop_index(batch_op.f('ix_rpa_user_ban_banned_by'))
-
+    op.drop_index(op.f('ix_rpa_user_ban_status'), table_name='rpa_user_ban')
+    op.drop_index(op.f('ix_rpa_user_ban_scope'), table_name='rpa_user_ban')
+    op.drop_index(op.f('ix_rpa_user_ban_mid'), table_name='rpa_user_ban')
+    op.drop_index(op.f('ix_rpa_user_ban_expired_at'), table_name='rpa_user_ban')
+    op.drop_index(op.f('ix_rpa_user_ban_banned_by'), table_name='rpa_user_ban')
     op.drop_table('rpa_user_ban')
-    with op.batch_alter_table('rpa_tag_rel', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_rpa_tag_rel_tag_id'))
-
+    op.drop_index(op.f('ix_rpa_tag_rel_tag_id'), table_name='rpa_tag_rel')
     op.drop_table('rpa_tag_rel')
     op.drop_table('rpa_tag')
-    with op.batch_alter_table('rpa_certification', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_rpa_certification_target_type'))
-        batch_op.drop_index(batch_op.f('ix_rpa_certification_target_id'))
-
+    op.drop_index(op.f('ix_rpa_certification_target_type'), table_name='rpa_certification')
+    op.drop_index(op.f('ix_rpa_certification_target_id'), table_name='rpa_certification')
     op.drop_table('rpa_certification')
-    with op.batch_alter_table('rpa_approval', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_rpa_approval_submitter_mid'))
-        batch_op.drop_index(batch_op.f('ix_rpa_approval_status'))
-
+    op.drop_index(op.f('ix_rpa_approval_submitter_mid'), table_name='rpa_approval')
+    op.drop_index(op.f('ix_rpa_approval_status'), table_name='rpa_approval')
     op.drop_table('rpa_approval')
-    with op.batch_alter_table('rpa_admin', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_rpa_admin_mid'))
-
+    op.drop_index(op.f('ix_rpa_admin_mid'), table_name='rpa_admin')
     op.drop_table('rpa_admin')
-    with op.batch_alter_table('resourcereport', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_resourcereport_resource_type'))
-        batch_op.drop_index(batch_op.f('ix_resourcereport_resource_id'))
-        batch_op.drop_index(batch_op.f('ix_resourcereport_mid'))
-        batch_op.drop_index('idx_unique_report')
-
+    op.drop_index(op.f('ix_resourcereport_resource_type'), table_name='resourcereport')
+    op.drop_index(op.f('ix_resourcereport_resource_id'), table_name='resourcereport')
+    op.drop_index(op.f('ix_resourcereport_mid'), table_name='resourcereport')
+    op.drop_index('idx_unique_report', table_name='resourcereport')
     op.drop_table('resourcereport')
-    with op.batch_alter_table('resourcelike', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_resourcelike_resource_type'))
-        batch_op.drop_index(batch_op.f('ix_resourcelike_resource_id'))
-        batch_op.drop_index(batch_op.f('ix_resourcelike_mid'))
-        batch_op.drop_index('idx_unique_like')
-
-    op.drop_table('resourcelike')
-    with op.batch_alter_table('notificationconfig', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_notificationconfig_mid'))
-        batch_op.drop_index(batch_op.f('ix_notificationconfig_browser_id'))
-
+    op.drop_index(op.f('ix_notificationconfig_mid'), table_name='notificationconfig')
+    op.drop_index(op.f('ix_notificationconfig_browser_id'), table_name='notificationconfig')
     op.drop_table('notificationconfig')
-    with op.batch_alter_table('compositeactionmodel', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_compositeactionmodel_original_mid'))
-        batch_op.drop_index(batch_op.f('ix_compositeactionmodel_mid'))
-        batch_op.drop_index(batch_op.f('ix_compositeactionmodel_action_id'))
-        batch_op.drop_index('idx_user_action_name_unique')
-
+    op.drop_index(op.f('ix_compositeactionmodel_original_mid'), table_name='compositeactionmodel')
+    op.drop_index(op.f('ix_compositeactionmodel_mid'), table_name='compositeactionmodel')
+    op.drop_index(op.f('ix_compositeactionmodel_action_id'), table_name='compositeactionmodel')
+    op.drop_index('idx_user_action_name_unique', table_name='compositeactionmodel')
     op.drop_table('compositeactionmodel')
-    with op.batch_alter_table('admin_audit_log', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_admin_audit_log_admin_mid'))
-
+    op.drop_index(op.f('ix_admin_audit_log_admin_mid'), table_name='admin_audit_log')
     op.drop_table('admin_audit_log')
-    with op.batch_alter_table('actionlogrecord', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_workflow_id'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_success'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_status'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_started_at'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_mid'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_log_id'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_execution_id'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_browser_id'))
-        batch_op.drop_index(batch_op.f('ix_actionlogrecord_action_id'))
-        batch_op.drop_index('idx_action_log_mid_started')
-        batch_op.drop_index('idx_action_log_execution_order')
-
+    op.drop_index(op.f('ix_actionlogrecord_workflow_id'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_success'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_status'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_started_at'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_mid'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_log_id'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_execution_id'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_browser_id'), table_name='actionlogrecord')
+    op.drop_index(op.f('ix_actionlogrecord_action_id'), table_name='actionlogrecord')
+    op.drop_index('idx_action_log_mid_started', table_name='actionlogrecord')
+    op.drop_index('idx_action_log_execution_order', table_name='actionlogrecord')
     op.drop_table('actionlogrecord')
     # ### end Alembic commands ###

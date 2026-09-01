@@ -8,22 +8,22 @@ Database 模块 - 浏览器操作日志模型
     - 自定义操作（CompositeActionModel）带 log_enabled / log_record_* 等字段
     - 内置操作无独立配置，回落到服务端 settings.action_log_default_enabled
 """
+from bili_common.models import StrEnumAutoDoc
 from datetime import datetime
-from enum import StrEnum
-from typing import Dict, List
+from typing import List
 
 from sqlalchemy import Column, Index, JSON
 from sqlmodel import Field, SQLModel
 
 
-class ActionLogStatusEnum(StrEnum):
+class ActionLogStatusEnum(StrEnumAutoDoc):
     """操作日志状态"""
     SUCCESS = "success"
     FAILED = "failed"
     TIMEOUT = "timeout"
 
 
-class ActionLogSourceEnum(StrEnum):
+class ActionLogSourceEnum(StrEnumAutoDoc):
     """操作日志来源"""
     ACTION = "action"      # 单个操作执行
     WORKFLOW = "workflow"  # 工作流步骤执行
@@ -64,11 +64,11 @@ class ActionLogRecord(SQLModel, table=True):
         default=ActionLogStatusEnum.SUCCESS, index=True, description="执行状态")
     success: bool = Field(default=False, index=True, description="是否成功")
 
-    params: Dict | None = Field(
+    params: dict | None = Field(
         default=None, sa_column=Column(JSON), description="变量替换后的入参")
-    result_data: Dict | None = Field(
+    result_data: dict | None = Field(
         default=None, sa_column=Column(JSON), description="执行返回结果")
-    variables: Dict | None = Field(
+    variables: dict | None = Field(
         default=None, sa_column=Column(JSON), description="变量池快照")
     logs: List[str] = Field(
         default_factory=list, sa_column=Column(JSON), description="执行过程日志")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from bili_common.models import StrEnumAutoDoc
 import contextlib
-from enum import StrEnum
 from typing import Any, Dict, Generic, Literal, Type, TypeVar
 from pydantic import Field, TypeAdapter, ValidationError, field_validator, model_validator
 from sqlmodel import SQLModel
@@ -28,14 +28,14 @@ from app.models.execution.rpc_method_params import (
 )
 
 
-class OnErrorEnum(StrEnum):
+class OnErrorEnum(StrEnumAutoDoc):
     """步骤失败时的处理策略"""
     STOP = "stop"          # 停止执行
     CONTINUE = "continue"  # 忽略错误继续
     RETRY = "retry"        # 重试后停止
 
 
-class BuiltinActionDesc(StrEnum):
+class BuiltinActionDesc(StrEnumAutoDoc):
     """内置操作描述"""
     CLICK = "点击元素"
     INPUT = "输入文本"
@@ -56,7 +56,7 @@ class BuiltinActionDesc(StrEnum):
     COMPOSITE = "执行复合操作"
 
 
-class BuiltinActionName(StrEnum):
+class BuiltinActionName(StrEnumAutoDoc):
     """内置操作名称"""
     CLICK = "点击"
     INPUT = "输入"
@@ -76,7 +76,7 @@ class BuiltinActionName(StrEnum):
     PRINT = "打印参数"
 
 
-class BuiltinActionType(StrEnum):
+class BuiltinActionType(StrEnumAutoDoc):
     """内置操作类型"""
     CLICK = "click"
     INPUT = "input"

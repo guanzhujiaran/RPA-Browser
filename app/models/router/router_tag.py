@@ -1,7 +1,7 @@
+from bili_common.models import StrEnumAutoDoc
 import sys
-from enum import StrEnum, IntEnum
 
-class RouterTag(StrEnum):
+class RouterTag(StrEnumAutoDoc):
     # === 浏览器配置管理 ===
     browser_fingerprint = "浏览器指纹管理"  # 指纹的 CRUD
     browser_notification = "通知配置管理"  # 通知渠道配置
@@ -24,5 +24,5 @@ class RouterTag(StrEnum):
     admin_management = "管理员管理"  # 超级管理员功能
 
 
-class VersionTag(StrEnum):
+class VersionTag(StrEnumAutoDoc):
     v1 = "v1"

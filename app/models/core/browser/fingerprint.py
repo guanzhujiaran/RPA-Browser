@@ -4,6 +4,7 @@ Core 模块 - 浏览器指纹模型
 定义浏览器指纹相关的枚举和参数模型。
 """
 
+from bili_common.models import StrEnumAutoDoc
 from typing import Annotated
 from sqlmodel import Field, SQLModel, Column, JSON
 from browserforge.fingerprints import (
@@ -16,12 +17,11 @@ from dacite import from_dict
 from playwright.async_api import ViewportSize
 from pydantic import model_validator,computed_field, field_validator
 import sys
-from enum import StrEnum
 
 Int32 = Annotated[int, Field(ge=-2147483648, le=2147483647)]
 
 
-class PlatformEnum(StrEnum):
+class PlatformEnum(StrEnumAutoDoc):
     """操作系统平台枚举"""
 
     windows = "windows"
@@ -29,7 +29,7 @@ class PlatformEnum(StrEnum):
     macos = "macos"
 
 
-class BrowserEnum(StrEnum):
+class BrowserEnum(StrEnumAutoDoc):
     """浏览器类型枚举"""
 
     chrome = "chrome"
@@ -38,7 +38,7 @@ class BrowserEnum(StrEnum):
     Vivaldi = "Vivaldi"
 
 
-class LogPluginLogLevelEnum(StrEnum):
+class LogPluginLogLevelEnum(StrEnumAutoDoc):
     """日志插件日志级别枚举"""
 
     DEBUG = "DEBUG"

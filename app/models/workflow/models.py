@@ -3,6 +3,7 @@ Workflow 模块 - 工作流请求/响应模型
 
 定义工作流相关的 API 请求/响应模型（非数据库表模型）。
 """
+from bili_common.models import StrEnumAutoDoc
 from app.models.database.workflow.models import BuiltinActionType
 from app.models.execution.action_params import PluginConfig
 from app.models.execution.condition_models import ConditionRule
@@ -11,10 +12,9 @@ from datetime import datetime
 from sqlmodel import SQLModel
 from pydantic import Field
 from app.models.base.base_sqlmodel import BasePaginationReq
-from enum import StrEnum
 
 
-class FilterType(StrEnum):
+class FilterType(StrEnumAutoDoc):
     ALL = "all"
     PRIVATE = "private"
     PUBLIC = "public"
@@ -22,7 +22,7 @@ class FilterType(StrEnum):
     VERIFIED = "verified"
 
 
-class SortBy(StrEnum):
+class SortBy(StrEnumAutoDoc):
     UPDATED_AT = "updated_at"
     LIKES_COUNT = "likes_count"
     FORKS_COUNT = "forks_count"
@@ -30,7 +30,7 @@ class SortBy(StrEnum):
     NAME = "name"
 
 
-class SortOrder(StrEnum):
+class SortOrder(StrEnumAutoDoc):
     DESC = "desc"
     ASC = "asc"
 

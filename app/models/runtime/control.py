@@ -1,20 +1,17 @@
-from pydantic import computed_field
-import sys
-from enum import StrEnum, IntEnum
-
 """
 Runtime 模块 - 实时控制模型
 
 定义浏览器实时控制相关的枚举、请求和响应模型。
 """
-
+from bili_common.models import StrEnumAutoDoc
+from pydantic import computed_field
 from sqlmodel import SQLModel, Field
 from typing import Any, Dict, Optional
 import time
 from app.config import settings
 
 
-class BrowserStatusEnum(StrEnum):
+class BrowserStatusEnum(StrEnumAutoDoc):
     """浏览器状态枚举"""
 
     RUNNING = "running"  # 正常运行中
@@ -24,7 +21,7 @@ class BrowserStatusEnum(StrEnum):
     ERROR = "error"  # 错误状态
 
 
-class OperationPriority(StrEnum):
+class OperationPriority(StrEnumAutoDoc):
     """操作优先级"""
 
     LOW = "low"  # 低优先级，可被中断
@@ -83,7 +80,7 @@ class BrowserCleanupPolicy(SQLModel):
         default_factory=lambda: settings.browser_session_cleanup_interval, description="清理检查间隔（秒）")
 
 
-class SessionLifecycleState(StrEnum):
+class SessionLifecycleState(StrEnumAutoDoc):
     """会话生命周期状态"""
 
     INITIALIZING = "initializing"

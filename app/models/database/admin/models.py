@@ -9,8 +9,8 @@ System 模块 - RPA 管理相关数据库模型
 - Certification:     官方认证标注
 - UserBan:           用户封禁记录（永久 / 临时）
 """
+from bili_common.models import StrEnumAutoDoc
 from datetime import datetime
-from enum import StrEnum
 from typing import List, Optional
 
 from sqlalchemy import JSON, UniqueConstraint
@@ -131,14 +131,14 @@ class AdminAuditLog(BaseSQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class BanType(StrEnum):
+class BanType(StrEnumAutoDoc):
     """封禁时长类型"""
 
     PERMANENT = "permanent"  # 永久封禁
     TEMPORARY = "temporary"  # 临时封禁（到 expired_at 自动解封）
 
 
-class BanStatus(StrEnum):
+class BanStatus(StrEnumAutoDoc):
     """封禁记录状态"""
 
     ACTIVE = "active"  # 封禁生效中

@@ -1,11 +1,10 @@
-import sys
-from enum import StrEnum, IntEnum
 """
 Router 模块 - 路由标签定义
 """
+from bili_common.models import StrEnumAutoDoc
+import sys
 
-
-class RouterTag(StrEnum):
+class RouterTag(StrEnumAutoDoc):
     # === 浏览器配置管理 ===
     browser_fingerprint = "浏览器指纹管理"
     browser_plugin = "浏览器插件管理"
@@ -31,7 +30,7 @@ class RouterTag(StrEnum):
     admin_management = "管理员管理"
 
 
-class VersionTag(StrEnum):
+class VersionTag(StrEnumAutoDoc):
     v1 = "v1"
 
 

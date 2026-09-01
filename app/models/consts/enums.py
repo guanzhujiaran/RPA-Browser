@@ -1,7 +1,6 @@
+from bili_common.models import StrEnumAutoDoc
 import sys
 
-from enum import StrEnum, IntEnum
-
-class ConfigRunningModeEnum(StrEnum):
+class ConfigRunningModeEnum(StrEnumAutoDoc):
     DEV = "dev"
     PROD = "prod"

@@ -1,10 +1,10 @@
 """
 执行模块枚举定义
 """
-from enum import StrEnum
+from bili_common.models import StrEnumAutoDoc
 
 
-class WaitUntilEnum(StrEnum):
+class WaitUntilEnum(StrEnumAutoDoc):
     """导航等待条件枚举"""
     LOAD = "load"
     DOMCONTENTLOADED = "domcontentloaded"
@@ -12,14 +12,14 @@ class WaitUntilEnum(StrEnum):
     COMMIT = "commit"
 
 
-class MouseButtonEnum(StrEnum):
+class MouseButtonEnum(StrEnumAutoDoc):
     """鼠标按钮枚举"""
     LEFT = "left"
     RIGHT = "right"
     MIDDLE = "middle"
 
 
-class ElementStateEnum(StrEnum):
+class ElementStateEnum(StrEnumAutoDoc):
     """元素状态枚举"""
     VISIBLE = "visible"
     HIDDEN = "hidden"
@@ -27,13 +27,13 @@ class ElementStateEnum(StrEnum):
     DETACHED = "detached"
 
 
-class ScreenshotTypeEnum(StrEnum):
+class ScreenshotTypeEnum(StrEnumAutoDoc):
     """截图格式枚举"""
     PNG = "png"
     JPEG = "jpeg"
 
 
-class KeyboardModifierEnum(StrEnum):
+class KeyboardModifierEnum(StrEnumAutoDoc):
     """键盘修饰键枚举 - 对应 Playwright modifiers 参数"""
     ALT = "Alt"
     CONTROL = "Control"
@@ -41,7 +41,7 @@ class KeyboardModifierEnum(StrEnum):
     SHIFT = "Shift"
 
 
-class HttpMethodEnum(StrEnum):
+class HttpMethodEnum(StrEnumAutoDoc):
     """HTTP 请求方法枚举"""
     GET = "GET"
     POST = "POST"
@@ -52,7 +52,7 @@ class HttpMethodEnum(StrEnum):
     OPTIONS = "OPTIONS"
 
 
-class HttpBodyTypeEnum(StrEnum):
+class HttpBodyTypeEnum(StrEnumAutoDoc):
     """HTTP 请求体类型枚举"""
     NONE = "none"
     JSON = "json"

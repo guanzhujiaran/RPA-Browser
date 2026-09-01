@@ -3,14 +3,14 @@ WebRTC 视频流核心模型
 
 定义 WebRTC 视频流相关的枚举、数据类和配置模型。
 """
+from bili_common.models import StrEnumAutoDoc
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Optional
 import time
 
 
-class WebRTCStreamState(Enum):
+class WebRTCStreamState(StrEnumAutoDoc):
     """WebRTC 视频流状态枚举"""
     INITIALIZING = "initializing"  # 初始化中
     ACTIVE = "active"  # 活跃状态

@@ -6,22 +6,22 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Union, List, Optional
+from bili_common.models import StrEnumAutoDoc
+from typing import  List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 # ---- 枚举 ----
 
-class ConditionValueType(StrEnum):
+class ConditionValueType(StrEnumAutoDoc):
     """条件值类型 —— 限制用户只能使用这三种类型做判断"""
     BOOLEAN = "BOOLEAN"  # True / False
     NULL = "NULL"        # None
     STRING = "STRING"    # 字符串精确匹配
 
 
-class LogicOperator(StrEnum):
+class LogicOperator(StrEnumAutoDoc):
     """逻辑运算符 —— 支持 AND / OR / NOT 组合多个原子条件"""
     AND = "AND"
     OR = "OR"
@@ -29,7 +29,7 @@ class LogicOperator(StrEnum):
 
 
 # ---- 条件值类型别名 ----
-ConditionValue = Union[bool, None, str]
+ConditionValue = bool| None| str
 
 
 # ---- 原子条件 ----

@@ -1,8 +1,8 @@
-from enum import StrEnum
+from bili_common.models import StrEnumAutoDoc
 from app.config import settings
 
 
-class RouterPrefix(StrEnum):
+class RouterPrefix(StrEnumAutoDoc):
     # === 核心资源层 ===
     BROWSER = "/browser"  # 浏览器指纹/插件/通知配置管理
     BROWSER_SESSION = "/browser/session"  # 浏览器会话管理（动态实例）
@@ -15,7 +15,7 @@ class RouterPrefix(StrEnum):
     SYSTEM = "/system"  # 系统级接口（健康检查等）
 
 
-class BrowserFingerprintRouterPath(StrEnum):
+class BrowserFingerprintRouterPath(StrEnumAutoDoc):
     """浏览器指纹管理路由路径 - prefix: /browser"""
 
     gen_rand_fingerprint = "/gen_rand_fingerprint"
@@ -27,7 +27,7 @@ class BrowserFingerprintRouterPath(StrEnum):
     rename_fingerprint = "/rename_fingerprint"
 
 
-class BrowserSessionRouterPath(StrEnum):
+class BrowserSessionRouterPath(StrEnumAutoDoc):
     """会话管理路由路径 - prefix: /browser/session"""
 
     create = "/create"
@@ -35,7 +35,7 @@ class BrowserSessionRouterPath(StrEnum):
     close = "/close"
 
 
-class BrowserControlRouterPath(StrEnum):
+class BrowserControlRouterPath(StrEnumAutoDoc):
     # === 浏览器操作信息 ===
     browser_info = "/browser/info"
 
@@ -91,7 +91,7 @@ class BrowserControlRouterPath(StrEnum):
     webrtc_status = "/webrtc/status"
     webrtc_close = "/webrtc/close"
 
-class UserBrowserDefaultSettingRouterPath(StrEnum):
+class UserBrowserDefaultSettingRouterPath(StrEnumAutoDoc):
     """用户浏览器默认设置路由路径 - prefix: /browser"""
 
     get_settings = "/default-settings/get"
@@ -100,7 +100,7 @@ class UserBrowserDefaultSettingRouterPath(StrEnum):
     apply_settings = "/default-settings/apply"
     get_server_user_setting_defaults = "/default-settings/server-defaults/get"
 
-class NotifyRouterPath(StrEnum):
+class NotifyRouterPath(StrEnumAutoDoc):
     """通知管理路由路径 - prefix: /browser"""
 
     upsert_notify_config = "/notify/conf/upsert"
