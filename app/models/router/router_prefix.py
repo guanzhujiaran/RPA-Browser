@@ -68,11 +68,6 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     workflows_execute = "/workflows/execute"
     workflows_execute_step = "/workflows/execute-step"
 
-    # === 社区互动 ===
-    community_actions_list = "/community/actions/list"
-    community_workflows_list = "/community/workflows/list"
-    community_plugins_list = "/community/plugins/list"
-
     # === 操作日志查询 ===
     action_logs_list = "/action-logs/list"
     action_logs_get = "/action-logs/get"

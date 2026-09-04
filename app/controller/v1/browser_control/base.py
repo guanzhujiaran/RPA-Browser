@@ -7,7 +7,6 @@ from app.models.router.all_routes import (
     browser_control_operation_router,
     browser_control_session_router,
     browser_control_webrtc_router,
-    browser_control_community_router,
     browser_control_execution_router,
     browser_control_action_log_router,
 )
@@ -41,11 +40,6 @@ def new_session_router(dependencies=None) -> APIRouter:
 def new_webrtc_router(dependencies=None) -> APIRouter:
     """WebRTC 视频流路由"""
     return gen_api_router(browser_control_webrtc_router, dependencies)
-
-
-def new_community_router(dependencies=None) -> APIRouter:
-    """社区互动路由"""
-    return gen_api_router(browser_control_community_router, dependencies)
 
 
 def new_execution_router(dependencies=None) -> APIRouter:

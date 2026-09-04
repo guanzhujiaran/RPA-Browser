@@ -23,7 +23,6 @@ class RouterTag(StrEnumAutoDoc):
     security_control = "安全控制"
     system_control = "系统管理"
     session_control = "会话操作"
-    community_management = "社区互动管理"
 
     # === 系统管理 ===
     system_management = "系统管理"

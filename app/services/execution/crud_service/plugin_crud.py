@@ -5,7 +5,7 @@ from app.models.workflow.models import FilterType, SortBy, SortOrder
 from typing import List
 from datetime import datetime
 import uuid
-from sqlmodel import select, update
+from sqlmodel import select
 from sqlalchemy import true, false
 
 from app.models.database.workflow.models import CompositeActionModel, UserPlugin
@@ -268,26 +268,6 @@ class PluginCrudService:
             await session.exec(
                 update(UserPlugin).where(UserPlugin.id == id).values(
                     is_enabled=False, updated_at=datetime.now())
-            )
-            await session.commit()
-            return True
-
-    @staticmethod
-    async def increment_likes(id: int) -> bool:
-        async with DatabaseSessionManager.async_session() as session:
-            await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(
-                    likes_count=UserPlugin.likes_count + 1)
-            )
-            await session.commit()
-            return True
-
-    @staticmethod
-    async def increment_reports(id: int) -> bool:
-        async with DatabaseSessionManager.async_session() as session:
-            await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(
-                    reports_count=UserPlugin.reports_count + 1)
             )
             await session.commit()
             return True

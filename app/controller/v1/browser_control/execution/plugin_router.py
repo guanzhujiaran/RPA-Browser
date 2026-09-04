@@ -20,6 +20,7 @@ from app.models.workflow.models import (
 )
 from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
+from app.utils.depends.admin_depends import assert_approved
 from app.services.execution.crud_service import plugin_crud_svr, action_crud_svr, workflow_crud_svr
 from app.models.base.base_sqlmodel import BasePaginationResp
 from ..base import new_plugin_router
@@ -134,6 +135,9 @@ async def update_plugin(
         return error_response(404, "插件配置不存在")
 
     try:
+        # publish 审批强制：把插件公开到社区前，需已通过对应 publish 审批单（未通过保持 private）
+        if request.is_public is True and not model.is_public:
+            await assert_approved("plugin", str(model.plugin_id), "publish")
         await plugin_crud_svr.update(
             id=request.id,
             name=request.name,

@@ -9,6 +9,7 @@ import uuid
 from bili_common.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
+from app.utils.depends.admin_depends import assert_approved
 from fastapi import Depends
 from app.services.RPA_browser.session.live_service import live_service
 from app.services.execution.crud_service import workflow_crud_svr
@@ -202,6 +203,14 @@ async def update_workflow(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDetailResponse]:
     """更新工作流"""
+    # publish 审批强制：把工作流公开到社区前，需已通过对应 publish 审批单（未通过保持 private）
+    if request.is_public is True:
+        existing = await workflow_crud_svr.get_by_id(request.id)
+        if not existing or str(existing.mid) != str(auth.mid):
+            return error_response(404, "工作流不存在或无权限")
+        if not existing.is_public:
+            await assert_approved("workflow", existing.workflow_id, "publish")
+
     model = await workflow_crud_svr.update(
         id=request.id,
         name=request.name,

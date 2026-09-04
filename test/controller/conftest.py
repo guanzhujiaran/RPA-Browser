@@ -70,14 +70,13 @@ async def _cleanup_db():
     yield
     from sqlmodel import delete
     from app.models.database.workflow.models import (
-        ResourceReport, ResourceLike,
+        ResourceLike,
         UserPlugin, UserWorkflow, CompositeActionModel,
     )
 
     async with DatabaseSessionManager.async_session() as session:
         # 按外键依赖倒序删除：先删子表（引用表），再删父表（被引用表）
         for model in [
-            ResourceReport,          # 引用 ResourceLike 以外的各资源
             ResourceLike,            # 引用各资源
             UserPlugin,              # 引用 CompositeActionModel
             UserWorkflow,            # 引用 CompositeActionModel

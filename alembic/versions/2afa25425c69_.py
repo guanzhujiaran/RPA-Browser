@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: bcd8bcf2d600
+Revision ID: 2afa25425c69
 Revises: 
-Create Date: 2026-08-25 22:38:01.151029
+Create Date: 2026-09-05 00:29:31.777651
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'bcd8bcf2d600'
+revision: str = '2afa25425c69'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -196,25 +196,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_notificationconfig_browser_id'), 'notificationconfig', ['browser_id'], unique=False)
     op.create_index(op.f('ix_notificationconfig_mid'), 'notificationconfig', ['mid'], unique=False)
-    op.create_table('resourcereport',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-    sa.Column('resource_type', sa.Enum('CUSTOM_ACTION', 'USER_WORKFLOW', 'USER_PLUGIN', name='resourcetype'), nullable=False),
-    sa.Column('resource_id', sa.Integer(), nullable=False),
-    sa.Column('reason', sa.Enum('SPAM', 'INAPPROPRIATE', 'VIOLATION', 'PLAGIARISM', 'OTHER', name='reportreason'), nullable=False),
-    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
-    sa.Column('is_valid', sa.Boolean(), nullable=False),
-    sa.Column('reviewed_by_mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
-    sa.Column('reviewed_at', sa.DateTime(), nullable=True),
-    sa.Column('decision', sa.Enum('PENDING', 'IGNORED', 'WARNED', 'TAKEDOWN', name='reportdecision'), nullable=False),
-    sa.Column('review_note', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index('idx_unique_report', 'resourcereport', ['mid', 'resource_type', 'resource_id'], unique=False)
-    op.create_index(op.f('ix_resourcereport_mid'), 'resourcereport', ['mid'], unique=False)
-    op.create_index(op.f('ix_resourcereport_resource_id'), 'resourcereport', ['resource_id'], unique=False)
-    op.create_index(op.f('ix_resourcereport_resource_type'), 'resourcereport', ['resource_type'], unique=False)
     op.create_table('rpa_admin',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -506,11 +487,6 @@ def downgrade() -> None:
     op.drop_table('rpa_approval')
     op.drop_index(op.f('ix_rpa_admin_mid'), table_name='rpa_admin')
     op.drop_table('rpa_admin')
-    op.drop_index(op.f('ix_resourcereport_resource_type'), table_name='resourcereport')
-    op.drop_index(op.f('ix_resourcereport_resource_id'), table_name='resourcereport')
-    op.drop_index(op.f('ix_resourcereport_mid'), table_name='resourcereport')
-    op.drop_index('idx_unique_report', table_name='resourcereport')
-    op.drop_table('resourcereport')
     op.drop_index(op.f('ix_notificationconfig_mid'), table_name='notificationconfig')
     op.drop_index(op.f('ix_notificationconfig_browser_id'), table_name='notificationconfig')
     op.drop_table('notificationconfig')

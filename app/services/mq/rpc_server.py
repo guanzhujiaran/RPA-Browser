@@ -25,6 +25,8 @@ from bili_common.rpc.base import rpa_rpc_routing_key_for
 from bili_common.rpc.rpa import (
     GetResourceDetailParams,
     GetResourceDetailResult,
+    HideResourceParams,
+    HideResourceResult,
     RpaRpcMethodName,
     ResourceDetail,
 )
@@ -129,6 +131,53 @@ async def rpc_get_resource_detail(
     )
 
 
+@broker.subscriber(rpa_rpc_routing_key_for(RpaRpcMethodName.HIDE_RESOURCE))
+@rpc_safe
+async def rpc_hide_resource(
+    params: HideResourceParams,
+) -> StandardResponse:
+    """举报处置：下架 RPA 本地资源（hide_resource，2.39.0）。
+
+    Args:
+        params: HideResourceParams{bizType, bizId, operatorMid, reason}
+
+    说明：
+        - lottery 归属 be-bilibili-crawler，本服务端不处理，返回 success=False；
+        - rpa_action / rpa_workflow / rpa_plugin：置 ``is_public=False``，退出社区公开；
+        - rpa_browser 为运行态浏览器实例（无 is_public 公开语义），不支持下架。
+
+    Returns:
+        StandardResponse data=HideResourceResult{success, message}
+    """
+    biz_type = params.bizType
+    if biz_type not in ("rpa_action", "rpa_workflow", "rpa_plugin"):
+        return success_response(
+            data=HideResourceResult(
+                success=False,
+                message=f"hide_resource 不处理类型 {biz_type}（lottery 归属 be-bilibili-crawler）",
+            )
+        )
+    model = {
+        "rpa_action": CompositeActionModel,
+        "rpa_workflow": UserWorkflow,
+        "rpa_plugin": UserPlugin,
+    }[biz_type]
+    async with DatabaseSessionManager.async_session() as session:
+        row = await session.exec(select(model).where(model.id == params.bizId))
+        resource = row.first()
+        if resource is None:
+            return success_response(
+                data=HideResourceResult(success=False, message="资源不存在")
+            )
+        resource.is_public = False
+        await session.commit()
+    logger.info(
+        f"[RpaRpcServer] hide_resource 已下架: bizType={biz_type} bizId={params.bizId} "
+        f"operatorMid={params.operatorMid} reason={params.reason}"
+    )
+    return success_response(data=HideResourceResult(success=True))
+
+
 # ---------------------------------------------------------------------------
 # 生命周期（供 main.py lifespan 调用）
 # ---------------------------------------------------------------------------
@@ -152,4 +201,5 @@ __all__ = [
     "start_rpc_server",
     "stop_rpc_server",
     "rpc_get_resource_detail",
+    "rpc_hide_resource",
 ]

@@ -13,9 +13,6 @@ from app.controller.v1.browser_control.execution.workflow_router import (
 from app.controller.v1.browser_control.execution.plugin_router import (
     router as plugin_sub_router,
 )
-from app.controller.v1.browser_control.execution.community_router import (
-    router as community_sub_router,
-)
 from app.controller.v1.browser_control.execution.action_log_router import (
     router as action_log_sub_router,
 )
@@ -25,6 +22,5 @@ router.include_router(action_sub_router)
 router.include_router(execution_sub_router)
 router.include_router(workflow_sub_router)
 router.include_router(plugin_sub_router)
-router.include_router(community_sub_router)
 router.include_router(action_log_sub_router)
 __all__ = ["router"]

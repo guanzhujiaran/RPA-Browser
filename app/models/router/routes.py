@@ -113,13 +113,6 @@ browser_control_session_router = RouterInfo(
     description="会话管理 - 健康检查、统计、清理",
 )
 
-browser_control_community_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.community_management,
-    router_prefix=RouterPrefix.BROWSER_CONTROL,
-    description="社区互动管理 - 点赞、举报、Fork等社区功能",
-)
-
 # ====== 系统管理模块 ======
 
 admin_router = RouterInfo(
@@ -148,7 +141,6 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_action_router,      # 自定义操作管理
     browser_control_workflow_router,    # 工作流管理
     browser_control_plugin_router,      # 插件挂载管理
-    browser_control_community_router,   # 社区互动管理
 ]
 
 # 系统管理相关路由
@@ -200,7 +192,6 @@ __all__ = [
     "browser_control_plugin_router",
     "browser_control_webrtc_router",
     "browser_control_session_router",
-    "browser_control_community_router",
     "admin_router",
     "BROWSER_CONFIG_ROUTERS",
     "BROWSER_RUNTIME_ROUTERS",

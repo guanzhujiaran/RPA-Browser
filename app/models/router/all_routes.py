@@ -111,13 +111,6 @@ browser_control_session_router = RouterInfo(
     description="浏览器会话管理",
 )
 
-browser_control_community_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.community_management,
-    router_prefix=RouterPrefix.BROWSER_CONTROL,
-    description="社区互动 - 公开资源浏览、点赞、举报、Fork 等功能",
-)
-
 browser_control_execution_router = RouterInfo(
     version_tag=DEFAULT_VERSION,
     router_tag=RouterTag.execution_engine,
@@ -161,7 +154,6 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_plugin_router,      # 插件挂载管理
     browser_control_webrtc_router,  # WebRTC 视频流
     browser_control_session_router,
-    browser_control_community_router,   # 社区互动
     browser_control_action_log_router,  # 操作日志管理
 ]
 

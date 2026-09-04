@@ -160,8 +160,13 @@ class Settings(BaseSettings):
 
     admin_base_path: str = "/api/admin/rpa"
 
-    # 是否强制要求执行操作前已通过对应审批单（默认关闭，治理成熟后开启）
+    # 是否强制要求执行操作（execute，如执行工作流/定时计划）前已通过对应审批单
+    # 与 publish 分开管控：默认关闭，治理成熟后开启，避免连带阻断社区发布
     require_approval_enabled: bool = False
+
+    # 是否强制要求「公开到社区」的发布动作已通过 publish 审批单
+    # （未通过则资源保持 is_public=false，一直 private）
+    require_publish_approval_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=(

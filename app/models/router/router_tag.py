@@ -19,8 +19,6 @@ class RouterTag(StrEnumAutoDoc):
     execution_engine = "执行引擎"  # 提供浏览器操作的执行
     action_log_management = "操作日志管理"  # 浏览器操作日志采集配置与查询
     # === 系统管理 ===
-    community_management = "社区互动管理"  # 公开资源浏览、点赞、举报、Fork
-    # === 系统管理 ===
     admin_management = "管理员管理"  # 超级管理员功能
 
 

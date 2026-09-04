@@ -11,7 +11,6 @@ from datetime import datetime
 from pydantic import field_validator
 from sqlalchemy import Column, JSON, Index
 from sqlmodel import SQLModel, Field
-from bili_common.models import IntEnumAutoDoc
 
 
 class TriggerType(StrEnumAutoDoc):
@@ -35,30 +34,6 @@ class PluginHookEnum(StrEnumAutoDoc):
     ON_SUCCESS = "on_success"
     ON_ERROR = "on_error"
     ON_TIMEOUT = "on_timeout"
-
-
-class ResourceType(IntEnumAutoDoc):
-    """资源类型枚举（社区举报用）"""
-    CUSTOM_ACTION = 1
-    USER_WORKFLOW = 2
-    USER_PLUGIN = 3
-
-
-class ReportReason(IntEnumAutoDoc):
-    """举报理由枚举"""
-    SPAM = 1
-    INAPPROPRIATE = 2
-    VIOLATION = 3
-    PLAGIARISM = 4
-    OTHER = 5
-
-
-class ReportDecision(StrEnumAutoDoc):
-    """举报处理决策"""
-    PENDING = "pending"
-    IGNORED = "ignored"      # 标记无效/忽略，资源保持不变
-    WARNED = "warned"        # 警告被举报人（通知待私信系统建成后接入）
-    TAKEDOWN = "takedown"    # 下架资源（设为非公开，从社区隐藏）
 
 
 class ExecutionStatus(StrEnumAutoDoc):
@@ -268,29 +243,6 @@ class UserWorkflow(CommunityResourceBase, table=True):
         sa_column=Column(JSON),
         description="触发配置"
     )
-
-
-class ResourceReport(SQLModel, table=True):
-    """资源举报表（社区举报归属各业务系统，此处为 RPA 资源举报）"""
-    __table_args__ = (
-        Index('idx_unique_report', 'mid', 'resource_type', 'resource_id'),
-        {"extend_existing": True},
-    )
-
-    id: int | None = Field(primary_key=True,)
-    mid: str = Field(max_length=255, index=True, description="举报用户ID")
-    resource_type: ResourceType = Field(index=True, description="资源类型")
-    resource_id: int = Field(index=True, description="资源ID")
-    reason: ReportReason = Field(description="举报理由")
-    description: str = Field(default="", max_length=500, description="详细描述")
-    is_valid: bool = Field(default=True, description="是否有效")
-    reviewed_by_mid: str | None = Field(
-        default=None, max_length=255, description="审核管理员ID")
-    reviewed_at: datetime | None = Field(default=None, description="审核时间")
-    decision: ReportDecision = Field(
-        default=ReportDecision.PENDING, description="处理决策：pending/ignored/warned/takedown")
-    review_note: str = Field(default="", max_length=500, description="审核备注")
-    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class WorkflowRecord(SQLModel, table=True):

@@ -4,7 +4,7 @@
 from typing import Any, Dict, List
 from datetime import datetime
 import uuid
-from sqlmodel import select, update
+from sqlmodel import select
 from sqlalchemy import true, false
 
 from app.models.database.workflow.models import UserWorkflow, WorkflowPluginRelation, CompositeActionModel, UserPlugin
@@ -335,24 +335,6 @@ class WorkflowCrudService:
             await session.commit()
             await session.refresh(new_model)
             return new_model
-
-    @staticmethod
-    async def increment_likes(id: int) -> bool:
-        async with DatabaseSessionManager.async_session() as session:
-            await session.exec(
-                update(UserWorkflow).where(UserWorkflow.id == id).values(likes_count=UserWorkflow.likes_count + 1)
-            )
-            await session.commit()
-            return True
-
-    @staticmethod
-    async def increment_reports(id: int) -> bool:
-        async with DatabaseSessionManager.async_session() as session:
-            await session.exec(
-                update(UserWorkflow).where(UserWorkflow.id == id).values(reports_count=UserWorkflow.reports_count + 1)
-            )
-            await session.commit()
-            return True
 
     @staticmethod
     async def list_forks(workflow_id: int, skip: int = 0, limit: int = 50) -> List[UserWorkflow]:

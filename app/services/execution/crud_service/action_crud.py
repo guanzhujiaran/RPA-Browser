@@ -5,7 +5,7 @@ from sqlalchemy import or_, and_, true
 from typing import Any, Dict, List
 from datetime import datetime
 import uuid
-from sqlmodel import select, update, delete
+from sqlmodel import select, delete
 
 from app.models.database.workflow.models import CompositeActionModel, BuiltinActionType, TagModel, CompositeActionTagLink
 from app.models.execution.action_params import BaseWorkflowStep
@@ -537,24 +537,6 @@ class ActionCrudService:
                 return False
             model.is_enabled = False
             model.updated_at = datetime.now()
-            await session.commit()
-            return True
-
-    @staticmethod
-    async def increment_likes(id: int) -> bool:
-        async with DatabaseSessionManager.async_session() as session:
-            stmt = update(CompositeActionModel).where(CompositeActionModel.id == id).values(
-                likes_count=CompositeActionModel.likes_count + 1)
-            await session.exec(stmt)
-            await session.commit()
-            return True
-
-    @staticmethod
-    async def increment_reports(id: int) -> bool:
-        async with DatabaseSessionManager.async_session() as session:
-            stmt = update(CompositeActionModel).where(CompositeActionModel.id == id).values(
-                reports_count=CompositeActionModel.reports_count + 1)
-            await session.exec(stmt)
             await session.commit()
             return True
 

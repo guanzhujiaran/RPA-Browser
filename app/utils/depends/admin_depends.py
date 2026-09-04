@@ -118,12 +118,19 @@ async def get_admin_status(
 async def assert_approved(resource_type: str, resource_id: str, action: str) -> None:
     """校验是否存在「已通过且未过期」的审批单，否则抛 ApprovalRequiredException。
 
-    仅当 settings.require_approval_enabled 为 True 时生效（灰度/过渡期可关闭）。
+    生效开关按 action 维度拆分：
+    - action == "publish"：由 settings.require_publish_approval_enabled 控制（发布到社区）。
+    - 其它 action（如 execute）：由 settings.require_approval_enabled 控制。
+    默认 execute 关闭、publish 开启，互不影响。
     资源维度校验：只认 (resource_type, resource_id, action) 上存在 approved 审批单，
     不绑定提交人，即「该资源已获批准」即可执行。
     """
-    if not settings.require_approval_enabled:
-        return
+    if action == "publish":
+        if not settings.require_publish_approval_enabled:
+            return
+    else:
+        if not settings.require_approval_enabled:
+            return
     from app.models.database.admin.models import ApprovalRequest
 
     async with DatabaseSessionManager.async_session() as session:

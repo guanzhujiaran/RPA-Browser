@@ -8,6 +8,7 @@ import uuid
 from bili_common.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
+from app.utils.depends.admin_depends import assert_approved
 from fastapi import Depends
 from app.services.execution.crud_service import action_crud_svr
 from app.services.execution.crud_service.action_crud import ActionCrudService
@@ -313,6 +314,10 @@ async def update_custom_action(
             for var in request.input_vars
         ]
 
+    # publish 审批强制：把操作公开到社区前，需已通过对应 publish 审批单（未通过保持 private）
+    if request.is_public is True and not existing.is_public:
+        await assert_approved("action", request.action_id, "publish")
+
     model = await action_crud_svr.update(
         id=existing.id,
         name=request.name,
@@ -321,6 +326,7 @@ async def update_custom_action(
         tags=request.tags,
         input_vars=input_vars_dicts,
         output_vars=request.output_vars,
+        is_public=request.is_public,
         timeout=request.timeout,
         retry_on_error=request.retry_on_error,
         retry_times=request.retry_times,
