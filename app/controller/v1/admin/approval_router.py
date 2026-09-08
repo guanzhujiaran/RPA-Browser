@@ -18,7 +18,13 @@ from app.models.system.rpa_admin import (
     ApprovalListRequest,
     ApprovalListResponse,
     ReviewApprovalRequest,
+    ApprovalCancelRequest,
+    ApprovalDeleteRequest,
+    ResourceSearchRequest,
+    ResourceSearchItemResp,
+    ResourceSearchResponse,
 )
+from app.models.database.workflow.models import CompositeActionModel, UserWorkflow, UserPlugin
 from app.utils.depends.admin_depends import require_admin, get_admin_status
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.services.admin_audit import log_admin_action
@@ -69,8 +75,8 @@ async def list_approvals(
     try:
         async with DatabaseSessionManager.async_session() as session:
             stmt = select(ApprovalRequest)
-            # 普通用户只能看自己的；管理员看全部
-            if not status_obj.is_admin:
+            # 仅查看本人申请：only_mine 强制只看当前请求人；非管理员本身就只能看自己
+            if request.only_mine or not status_obj.is_admin:
                 stmt = stmt.where(ApprovalRequest.submitter_mid == status_obj.mid)
             if request.status:
                 stmt = stmt.where(ApprovalRequest.status == request.status)
@@ -79,7 +85,7 @@ async def list_approvals(
 
             # 带相同过滤条件的计数
             count_stmt = select(func.count()).select_from(ApprovalRequest)
-            if not status_obj.is_admin:
+            if request.only_mine or not status_obj.is_admin:
                 count_stmt = count_stmt.where(ApprovalRequest.submitter_mid == status_obj.mid)
             if request.status:
                 count_stmt = count_stmt.where(ApprovalRequest.status == request.status)
@@ -133,6 +139,95 @@ async def review_approval(
     except Exception as e:
         logger.error(f"❌ 审核审批失败: {e}")
         return error_response(msg=f"审核失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
+
+
+@router.post("/approval/cancel", response_model=StandardResponse[ApprovalItemResp])
+async def cancel_approval(
+    request: ApprovalCancelRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+):
+    """撤回审批（仅可撤回自己提交且仍为待审核的审批）"""
+    try:
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ApprovalRequest).where(ApprovalRequest.id == request.approval_id)
+            )
+            approval = result.first()
+            if approval is None:
+                return error_response(msg="审批单不存在", code=ResponseCode.NOT_FOUND)
+            if approval.submitter_mid != auth.mid:
+                return error_response(msg="只能撤回自己提交的审批", code=ResponseCode.FORBIDDEN)
+            if approval.status != "pending":
+                return error_response(msg="仅待审核的审批可撤回", code=ResponseCode.CONFLICT)
+            await session.delete(approval)
+            await session.commit()
+            logger.info(f"↩️ 用户({auth.mid}) 撤回审批 #{request.approval_id}")
+            return success_response(data=_to_approval_item(approval), msg="审批已撤回")
+    except Exception as e:
+        logger.error(f"❌ 撤回审批失败: {e}")
+        return error_response(msg=f"撤回失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
+
+
+@router.post("/approval/delete", response_model=StandardResponse[ApprovalItemResp])
+async def delete_approval(
+    request: ApprovalDeleteRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+):
+    """删除自己的审批记录（待审核、已通过、已驳回均可删除）"""
+    try:
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ApprovalRequest).where(ApprovalRequest.id == request.approval_id)
+            )
+            approval = result.first()
+            if approval is None:
+                return error_response(msg="审批单不存在", code=ResponseCode.NOT_FOUND)
+            if approval.submitter_mid != auth.mid:
+                return error_response(msg="只能删除自己提交的审批", code=ResponseCode.FORBIDDEN)
+            await session.delete(approval)
+            await session.commit()
+            logger.info(f"🗑️ 用户({auth.mid}) 删除审批 #{request.approval_id}")
+            return success_response(data=_to_approval_item(approval), msg="审批已删除")
+    except Exception as e:
+        logger.error(f"❌ 删除审批失败: {e}")
+        return error_response(msg=f"删除失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
+
+
+@router.post("/approval/resources", response_model=StandardResponse[ResourceSearchResponse])
+async def search_resources(
+    request: ResourceSearchRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+):
+    """按名称搜索当前用户自己的资源，用于审批提交时的下拉选择"""
+    model_map = {
+        "action": (CompositeActionModel, "action_id"),
+        "workflow": (UserWorkflow, "workflow_id"),
+        "plugin": (UserPlugin, "plugin_id"),
+    }
+    if request.resource_type not in model_map:
+        return error_response(msg="不支持的资源类型", code=ResponseCode.BAD_REQUEST)
+    try:
+        model_class, id_field = model_map[request.resource_type]
+        keyword = (request.keyword or "").strip()
+        stmt = select(model_class).where(model_class.mid == str(auth.mid))
+        if keyword:
+            stmt = stmt.where(func.lower(model_class.name).like(f"%{keyword.lower()}%"))
+        stmt = stmt.order_by(model_class.created_at.desc()).limit(request.per_page)
+        async with DatabaseSessionManager.async_session() as session:
+            rows = (await session.exec(stmt)).all()
+        items = [
+            ResourceSearchItemResp(
+                resource_type=request.resource_type,
+                resource_id=getattr(r, id_field),
+                name=r.name,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ]
+        return success_response(data=ResourceSearchResponse(items=items))
+    except Exception as e:
+        logger.error(f"❌ 查询资源失败: {e}")
+        return error_response(msg=f"查询资源失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
 
 
 def _to_approval_item(a: ApprovalRequest) -> ApprovalItemResp:

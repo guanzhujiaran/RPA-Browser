@@ -92,6 +92,8 @@ class ApprovalListRequest(BasePaginationReq):
 
     status: Optional[str] = Field(default=None, description="按状态过滤：pending/approved/rejected")
     resource_type: Optional[str] = Field(default=None, description="按资源类型过滤")
+    only_mine: bool = Field(
+        default=False, description="仅查看当前请求用户自己的申请（优先级高于管理员可看全部），用于「我的申请」")
 
 
 class ApprovalListResponse(BasePaginationResp[ApprovalItemResp]):
@@ -104,6 +106,41 @@ class ReviewApprovalRequest(SQLModel):
     approval_id: int = Field(description="审批单 ID")
     status: str = Field(description="审核结果：approved / rejected")
     review_note: str = Field(default="", description="审核意见")
+
+
+class ApprovalCancelRequest(SQLModel):
+    """撤回审批请求：仅可撤回自己提交且仍处于待审核状态的审批"""
+
+    approval_id: int = Field(description="审批单 ID")
+
+
+class ApprovalDeleteRequest(SQLModel):
+    """删除审批请求：删除自己提交的审批记录"""
+
+    approval_id: int = Field(description="审批单 ID")
+
+
+class ResourceSearchRequest(SQLModel):
+    """按名称搜索当前用户自己的资源，用于审批提交时的下拉选择"""
+
+    resource_type: str = Field(description="资源类型：action / workflow / plugin")
+    keyword: str = Field(default="", description="按资源名称模糊搜索（可为空，返回自己的全部资源）")
+    per_page: int = Field(default=50, ge=1, le=200, description="最多返回条数")
+
+
+class ResourceSearchItemResp(SQLModel):
+    """资源搜索结果项"""
+
+    resource_type: str = Field(description="资源类型：action / workflow / plugin")
+    resource_id: str = Field(description="资源业务 ID（提交审批时作为 resource_id）")
+    name: str = Field(default="", description="资源名称")
+    created_at: Optional[datetime] = Field(default=None, description="资源创建时间")
+
+
+class ResourceSearchResponse(SQLModel):
+    """资源搜索结果"""
+
+    items: List[ResourceSearchItemResp] = Field(default_factory=list)
 
 
 # ===================== 标签管理 =====================

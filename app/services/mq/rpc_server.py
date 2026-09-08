@@ -20,6 +20,8 @@ from faststream.rabbit import RabbitBroker
 from loguru import logger
 from sqlalchemy import select
 
+from datetime import datetime
+
 from bili_common.models.response import StandardResponse, error_response, success_response
 from bili_common.rpc.base import rpa_rpc_routing_key_for
 from bili_common.rpc.rpa import (
@@ -27,12 +29,15 @@ from bili_common.rpc.rpa import (
     GetResourceDetailResult,
     HideResourceParams,
     HideResourceResult,
-    RpaRpcMethodName,
     ResourceDetail,
+    ReviewResourceParams,
+    ReviewResourceResult,
+    RpaRpcMethodName,
 )
 from bili_common.rpc.safe import rpc_safe
 
 from app.config import settings
+from app.models.database.admin.models import ApprovalRequest
 from app.models.database.browser.info import UserBrowserInfo
 from app.models.database.workflow.models import (
     CompositeActionModel,
@@ -179,6 +184,97 @@ async def rpc_hide_resource(
 
 
 # ---------------------------------------------------------------------------
+# RPA 资源审核（review_resource）：把「发布到社区审批单」置通过/驳回
+# ---------------------------------------------------------------------------
+
+# bizType -> (资源模型, 资源业务 id 字段, 审批单 resource_type)
+_REVIEW_RESOURCE_MAP: dict[str, tuple[type, str, str]] = {
+    "rpa_action": (CompositeActionModel, "action_id", "action"),
+    "rpa_workflow": (UserWorkflow, "workflow_id", "workflow"),
+    "rpa_plugin": (UserPlugin, "plugin_id", "plugin"),
+}
+
+
+@broker.subscriber(rpa_rpc_routing_key_for(RpaRpcMethodName.REVIEW_RESOURCE))
+@rpc_safe
+async def rpc_review_resource(
+    params: ReviewResourceParams,
+) -> StandardResponse:
+    """审核 RPA 资源：对其「发布到社区审批单(rpa_approval, action=publish)」置通过/驳回。
+
+    Args:
+        params: ReviewResourceParams{bizType, bizId, decision, operatorMid, note}
+
+    说明：
+        - 仅处理 rpa_action / rpa_workflow / rpa_plugin；lottery / rpa_browser 不处理。
+        - 按 bizId(int 表主键) 查资源取业务 id(action_id / workflow_id / plugin_id)，
+          再匹配 rpa_approval 中 (resource_type, resource_id=业务id, action=publish,
+          status=pending) 的审批单（多条取 id 最新一条），置 decision。
+        - 只改审批单状态，不动资源 is_public（公开/私有保持现状）。
+
+    Returns:
+        StandardResponse data=ReviewResourceResult{success, message, approvalId}
+    """
+    biz_type = params.bizType
+    mapping = _REVIEW_RESOURCE_MAP.get(biz_type)
+    if mapping is None:
+        return success_response(
+            data=ReviewResourceResult(
+                success=False,
+                message=f"review_resource 不处理类型 {biz_type}",
+            )
+        )
+    if params.decision not in ("approved", "rejected"):
+        return success_response(
+            data=ReviewResourceResult(success=False, message="decision 必须为 approved / rejected")
+        )
+    model, biz_id_field, resource_type = mapping
+    async with DatabaseSessionManager.async_session() as session:
+        resource = (
+            await session.exec(select(model).where(model.id == params.bizId))
+        ).first()
+        if resource is None:
+            return success_response(
+                data=ReviewResourceResult(success=False, message="资源不存在")
+            )
+        biz_resource_id = str(getattr(resource, biz_id_field))
+        # 取该资源发布到社区的待审单（id 倒序取最新一条）
+        approval = (
+            await session.exec(
+                select(ApprovalRequest)
+                .where(
+                    ApprovalRequest.resource_type == resource_type,
+                    ApprovalRequest.resource_id == biz_resource_id,
+                    ApprovalRequest.action == "publish",
+                    ApprovalRequest.status == "pending",
+                )
+                .order_by(ApprovalRequest.id.desc())
+            )
+        ).first()
+        if approval is None:
+            return success_response(
+                data=ReviewResourceResult(
+                    success=False,
+                    message="未找到该资源的待审核发布审批单",
+                )
+            )
+        approval.status = params.decision
+        approval.reviewer_mid = params.operatorMid
+        approval.review_note = params.note or approval.review_note
+        approval.reviewed_at = datetime.now()
+        await session.commit()
+        await session.refresh(approval)
+    logger.info(
+        f"[RpaRpcServer] review_resource {params.decision}: bizType={biz_type} "
+        f"bizId={params.bizId} resource_id={biz_resource_id} approvalId={approval.id} "
+        f"operatorMid={params.operatorMid}"
+    )
+    return success_response(
+        data=ReviewResourceResult(success=True, approvalId=approval.id)
+    )
+
+
+# ---------------------------------------------------------------------------
 # 生命周期（供 main.py lifespan 调用）
 # ---------------------------------------------------------------------------
 
@@ -202,4 +298,5 @@ __all__ = [
     "stop_rpc_server",
     "rpc_get_resource_detail",
     "rpc_hide_resource",
+    "rpc_review_resource",
 ]
