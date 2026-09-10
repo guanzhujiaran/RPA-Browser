@@ -1,6 +1,6 @@
 """用户封禁管理 API
 
-权限：root 或持有 `user:ban`（封禁/解封）、`user:ban-view`（查看）权限的 RPA 管理员。
+权限：root 或 be-message 授予 `user` 资源域 BAN（封禁/解封）、VIEW（查看）权限的管理员。
 生效范围：仅 RPA 服务（被封禁用户访问 RPA 接口时由中间件拦截），不影响评论/私信服务。
 """
 
@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends
 from sqlmodel import select, func
 
 from bili_common.deps.auth import AuthInfo
-from bili_common.deps.permissions import UserPermission
+from bili_common.deps.permissions import BizPermOp
+from bili_common.models.interaction import InteractionBizTypeEnum
 from bili_common.models.response_code import ResponseCode
 from bili_common.models.response import (
     StandardResponse,
@@ -17,7 +18,6 @@ from bili_common.models.response import (
     error_response,
 )
 
-from app.models.router.router_tag import RouterTag
 from app.models.database.admin.models import UserBan
 from app.models.system.user_ban import (
     BanUserRequest,
@@ -33,7 +33,7 @@ from app.services.admin_audit import log_admin_action
 from app.utils.depends.admin_depends import require_permission
 from app.utils.depends.session_manager import DatabaseSessionManager
 
-router = APIRouter(tags=[RouterTag.admin_management])
+router = APIRouter()  # tag 由 admin/__init__.py 聚合父路由统一提供
 
 
 def _to_item(ban: UserBan) -> UserBanItemResp:
@@ -57,9 +57,11 @@ def _to_item(ban: UserBan) -> UserBanItemResp:
 @router.post("/ban/create", response_model=StandardResponse[UserBanItemResp])
 async def ban_user(
     request: BanUserRequest,
-    auth: AuthInfo = Depends(require_permission(UserPermission.USER_BAN)),
+    auth: AuthInfo = Depends(
+        require_permission(InteractionBizTypeEnum.USER, BizPermOp.BAN)
+    ),
 ):
-    """封禁用户（永久 / 临时），需 root 或 user:ban 权限"""
+    """封禁用户（永久 / 临时），需 root 或 user 资源域 BAN 权限"""
     try:
         if request.mid == auth.mid:
             return error_response(msg="不能封禁自己", code=ResponseCode.BAD_REQUEST)
@@ -91,9 +93,11 @@ async def ban_user(
 @router.post("/ban/lift", response_model=StandardResponse[UserBanItemResp])
 async def lift_user_ban(
     request: LiftBanRequest,
-    auth: AuthInfo = Depends(require_permission(UserPermission.USER_BAN)),
+    auth: AuthInfo = Depends(
+        require_permission(InteractionBizTypeEnum.USER, BizPermOp.BAN)
+    ),
 ):
-    """解封用户，需 root 或 user:ban 权限"""
+    """解封用户，需 root 或 user 资源域 BAN 权限"""
     try:
         ban = await ban_service.lift_ban(
             mid=request.mid, operator_mid=auth.mid, reason=request.reason
@@ -113,10 +117,12 @@ async def lift_user_ban(
 async def list_bans(
     request: BanListRequest,
     auth: AuthInfo = Depends(
-        require_permission(UserPermission.USER_BAN, UserPermission.USER_BAN_VIEW)
+        require_permission(
+            InteractionBizTypeEnum.USER, BizPermOp.BAN | BizPermOp.VIEW
+        )
     ),
 ):
-    """分页查询封禁记录，需 root 或 user:ban / user:ban-view 权限"""
+    """分页查询封禁记录，需 root 或 user 资源域 BAN / VIEW 权限"""
     try:
         async with DatabaseSessionManager.async_session() as session:
             conditions = []
@@ -158,7 +164,9 @@ async def list_bans(
 async def get_ban_status(
     request: BanStatusRequest,
     auth: AuthInfo = Depends(
-        require_permission(UserPermission.USER_BAN, UserPermission.USER_BAN_VIEW)
+        require_permission(
+            InteractionBizTypeEnum.USER, BizPermOp.BAN | BizPermOp.VIEW
+        )
     ),
 ):
     """查询指定用户当前封禁状态（临时封禁到期会自动置为失效）"""

@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends
 from bili_common.deps.auth import AuthInfo, get_auth_info_from_header
 from bili_common.models.response_code import ResponseCode
 from bili_common.models.response import StandardResponse, success_response, error_response
-from app.models.router.router_tag import RouterTag
 from app.models.system.rpa_admin import (
     SubmitApprovalRequest,
     ApprovalItemResp,
@@ -31,7 +30,15 @@ from app.services.admin_audit import log_admin_action
 from app.models.database.admin.models import ApprovalRequest
 from sqlmodel import select, func
 
-router = APIRouter(tags=[RouterTag.admin_management])
+router = APIRouter()  # tag 由 admin/__init__.py 聚合父路由统一提供
+
+# 审批单状态机：pending → approved/rejected；approved → rejected（过审核准撤回）；
+# rejected → approved（驳回恢复）。与 be-message 动态审核的「撤回 / 恢复」语义对齐。
+_APPROVAL_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"approved", "rejected"},
+    "approved": {"rejected"},
+    "rejected": {"approved"},
+}
 
 
 @router.post("/approval/submit", response_model=StandardResponse[ApprovalItemResp])
@@ -114,7 +121,13 @@ async def review_approval(
     request: ReviewApprovalRequest,
     auth: AuthInfo = Depends(require_admin),
 ):
-    """审核审批（仅管理员/root）"""
+    """审核审批（仅管理员/root）
+
+    状态机（对齐 be-message 动态审核「撤回 / 恢复」语义）：
+    - pending  → approved / rejected（首次审核）
+    - approved → rejected（过审核准撤回）
+    - rejected → approved（驳回恢复）
+    """
     try:
         if request.status not in ("approved", "rejected"):
             return error_response(msg="status 必须为 approved 或 rejected", code=ResponseCode.BAD_REQUEST)
@@ -126,8 +139,12 @@ async def review_approval(
             approval = result.first()
             if approval is None:
                 return error_response(msg="审批单不存在", code=ResponseCode.NOT_FOUND)
-            if approval.status != "pending":
-                return error_response(msg="该审批单已处理", code=ResponseCode.CONFLICT)
+            allowed = _APPROVAL_TRANSITIONS.get(approval.status, set())
+            if request.status not in allowed:
+                return error_response(
+                    msg=f"当前状态 {approval.status} 不允许变更为 {request.status}",
+                    code=ResponseCode.CONFLICT,
+                )
             approval.status = request.status
             approval.reviewer_mid = auth.mid
             approval.review_note = request.review_note

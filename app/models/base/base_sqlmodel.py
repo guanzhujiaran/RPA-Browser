@@ -1,59 +1,14 @@
-from pydantic import computed_field
-from datetime import datetime
-from typing import Generic
-
-from sqlmodel import SQLModel, Field as SField
-from pydantic import Field
-
-from bili_common.models.response import DataT
+from bili_common.models.db import BaseTimestamp
+from bili_common.models.pagination import BasePaginationReq, BasePaginationResp
 
 
-class BaseSQLModel(SQLModel):
-    created_at: datetime = SField(default_factory=datetime.now, nullable=False)
-    updated_at: datetime = SField(
-        default_factory=datetime.now,
-        nullable=False,
-        sa_column_kwargs={"onupdate": datetime.now},
-    )
+class BaseSQLModel(BaseTimestamp):
+    """RPA 表模型公共基类：统一 created_at/updated_at（继承 bili_common.BaseTimestamp）。
+
+    `created_at` 带 index，`updated_at` 由 SQLAlchemy 自动刷新（onupdate）。
+    """
 
 
-class BasePaginationReq(SQLModel):
-    page: int = Field(default=1)
-    per_page: int = Field(default=10)
-
-
-class BasePaginationResp(SQLModel, Generic[DataT]):
-    page: int = Field(default=1)
-    per_page: int = Field(default=10)
-    total: int = Field(default=0)
-    items: list[DataT] = Field(default_factory=list)
-
-    @computed_field
-    @property
-    def pages(self) -> int:
-        return self.total // self.per_page + (
-            1 if self.total % self.per_page > 0 else 0
-        )
-
-    @computed_field
-    @property
-    def has_next(self) -> bool:
-        return self.page < self.pages
-
-    @computed_field
-    @property
-    def has_prev(self) -> bool:
-        return self.page > 1
-
-    @computed_field
-    @property
-    def next_page(self) -> int:
-        return self.page + 1 if self.has_next else self.page
-
-    @computed_field
-    @property
-    def prev_page(self) -> int:
-        return self.page - 1 if self.has_prev else self.page
-
-
+# 分页请求/响应模型已统一抽入 bili_common.models.pagination（page/per_page 约定），
+# 此处仅做再导出，保持 RPA 各服务原有导入路径不变。
 __all__ = ["BaseSQLModel", "BasePaginationReq", "BasePaginationResp"]

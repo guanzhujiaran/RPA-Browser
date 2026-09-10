@@ -5,6 +5,8 @@ from bili_common.models.response_code import ResponseCode
 class BaseException(Exception):
     code: int | None = None
     msg: str | None = None
+    # 对外 HTTP 状态码；None = 按 code 推导（见 bili_common.exceptions.http_status_for_code）
+    http_status: int | None = None
 
 
 class BrowserNotifyConfNotFoundException(BaseException):
@@ -26,7 +28,7 @@ class BrowserIdNotBeloneToUserException(BaseException):
 
 
 # 注意：未登录异常已统一收敛到 bili_common.exceptions.NotLoggedInException
-# （业务码 -101，HTTP 200），本项目不再自定义，避免与公共包产生码值/HTTP 状态分歧。
+# （业务码 -101 + HTTP 401），本项目不再自定义，避免与公共包产生码值/HTTP 状态分歧。
 
 
 class InvalidUIDException(BaseException):

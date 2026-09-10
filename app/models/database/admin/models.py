@@ -2,12 +2,15 @@
 System 模块 - RPA 管理相关数据库模型
 
 包含：
-- RpaAdmin:          RPA 管理员（由 root 授予，持久化存储）
 - ApprovalRequest:   RPA 操作审批单
 - ResourceTag:       资源标签
 - ResourceTagRel:    资源-标签关联
 - Certification:     官方认证标注
+- AdminAuditLog:     管理员操作审计日志
 - UserBan:           用户封禁记录（永久 / 临时）
+
+注：RPA 管理员身份（RpaAdmin 表）已迁移至 be-message 的 `msg_admin` 表，
+RPA 侧不再持久化管理员身份。
 """
 from bili_common.models import StrEnumAutoDoc
 from datetime import datetime
@@ -17,28 +20,6 @@ from sqlalchemy import JSON, UniqueConstraint
 from sqlmodel import Field
 
 from app.models.base.base_sqlmodel import BaseSQLModel
-
-
-class RpaAdmin(BaseSQLModel, table=True):
-    """RPA 管理员表
-
-    root 用户可将指定 mid 设为 RPA 管理员，管理员拥有审批、标注官方认证、
-    管理标签等特权。该表为管理员身份的持久化来源（请求头中的 role 仅区分
-    root / normal，admin 身份必须查库）。
-    """
-
-    __tablename__ = "rpa_admin"
-
-    id: int | None = Field(default=None, primary_key=True)
-    mid: int = Field(index=True, unique=True, description="被设为管理员的用户 mid")
-    role: str = Field(default="admin", description="管理员角色，目前固定为 admin")
-    granted_by: int = Field(description="授予者 mid（root 的 mid）")
-    permissions: List[str] = Field(
-        default_factory=lambda: ["*"],
-        sa_type=JSON,
-        description="管理员权限列表，'*' 表示全部权限",
-    )
-    note: str = Field(default="", description="备注")
 
 
 class ApprovalRequest(BaseSQLModel, table=True):
@@ -69,7 +50,11 @@ class ApprovalRequest(BaseSQLModel, table=True):
 
 
 class ResourceTag(BaseSQLModel, table=True):
-    """资源标签"""
+    """资源标签（共享池 + 审核）
+
+    标签由登录用户创建，默认进入 ``auditing``；经 be-message 审核通过（回落到本表置为
+    ``normal`` 并写 ``pub_time``）后才对外可用；驳回为 ``rejected``（隐藏）。
+    """
 
     __tablename__ = "rpa_tag"
 
@@ -77,6 +62,12 @@ class ResourceTag(BaseSQLModel, table=True):
     name: str = Field(unique=True, description="标签名称（唯一）")
     color: str = Field(default="#409EFF", description="标签颜色（十六进制）")
     created_by: int = Field(description="创建者 mid")
+    audit_status: str = Field(
+        default="auditing", index=True, description="审核状态：auditing / normal / rejected"
+    )
+    pub_time: Optional[datetime] = Field(
+        default=None, description="审核通过上架时间（审核通过前为 NULL）"
+    )
 
 
 class ResourceTagRel(BaseSQLModel, table=True):
@@ -185,7 +176,6 @@ class UserBan(BaseSQLModel, table=True):
 
 
 __all__ = [
-    "RpaAdmin",
     "ApprovalRequest",
     "ResourceTag",
     "ResourceTagRel",

@@ -24,6 +24,7 @@ from app.models.base.base_sqlmodel import BasePaginationResp
 from app.services.broswer_fingerprint.fingerprint_gen import (
     gen_from_browserforge_fingerprint,
 )
+from app.utils.snow_flake_gen import generate_browser_id
 from bili_common.models.response_code import ResponseCode
 from app.config import CONF
 from app.models.common.exceptions.base_exception import (
@@ -81,8 +82,12 @@ class BrowserFingerprintService:
                 )
             )
 
-            # 创建浏览器信息对象
-            browser_info = UserBrowserInfo(mid=mid, **fingerprint_data.model_dump())
+            # 创建浏览器信息对象（browser_id 由应用层雪花生成器显式生成，非自增）
+            browser_info = UserBrowserInfo(
+                mid=mid,
+                browser_id=await generate_browser_id(),
+                **fingerprint_data.model_dump(),
+            )
 
             # 如果有额外的更新参数，应用它们
             update_data = params.model_dump(
@@ -92,6 +97,19 @@ class BrowserFingerprintService:
 
         # 检查 custom_name 是否重复
         custom_name = update_data.get("custom_name")
+        if params.browser_id is None and (custom_name is None or not custom_name.strip()):
+            # 创建场景：名称为空时生成默认名称（同一用户下唯一）
+            custom_name = f"浏览器_{browser_info.browser_id}"
+            update_data["custom_name"] = custom_name
+        elif (
+            params.browser_id is not None
+            and custom_name is not None
+            and not custom_name.strip()
+        ):
+            # 更新场景：传入空名称时不覆盖原有名称
+            update_data.pop("custom_name", None)
+            custom_name = None
+
         if custom_name is not None:
             duplicate_stmt = select(UserBrowserInfo).where(
                 and_(
@@ -139,8 +157,12 @@ class BrowserFingerprintService:
             )
         )
 
-        # 创建浏览器信息对象
-        browser_info = UserBrowserInfo(mid=mid, **fingerprint_data.model_dump())
+        # 创建浏览器信息对象（browser_id 由应用层雪花生成器显式生成，非自增）
+        browser_info = UserBrowserInfo(
+            mid=mid,
+            browser_id=await generate_browser_id(),
+            **fingerprint_data.model_dump(),
+        )
 
         # 先将browser_info提交到数据库，确保外键引用存在
         session.add(browser_info)
@@ -393,8 +415,12 @@ class BrowserFingerprintService:
             update_data = request.model_dump(exclude_unset=True)
             settings_to_save = existing_settings
         else:
-            # 创建新设置
-            new_settings = UserBrowserDefaultSetting(mid=mid, **request.model_dump())
+            # 创建新设置（browser_id 为继承来的主键，同样由应用层雪花生成器显式生成）
+            new_settings = UserBrowserDefaultSetting(
+                mid=mid,
+                browser_id=await generate_browser_id(),
+                **request.model_dump(),
+            )
             settings_to_save = new_settings
             update_data = {}
 

@@ -3,8 +3,14 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse, Response
 import uuid
+from bili_common.exceptions import http_status_for_code
 from bili_common.models.response import StandardResponse
 from bili_common.models.response_code import ResponseCode
+
+
+def _status_for_biz_code(code: int | None) -> int:
+    """业务码 → 对外 HTTP 状态码（失败一律非 200，HTTP 状态无需与业务码同值）。"""
+    return http_status_for_code(code)
 from app.models.consts.enums import ConfigRunningModeEnum
 import traceback
 from app.config import settings
@@ -57,14 +63,18 @@ async def validation_exception_handler(
 async def custom_exception_handler(
     _: Request, exc: CustomBaseException
 ) -> Response:
-    """处理自定义业务异常"""
+    """处理自定义业务异常（HTTP 状态码非 200，按业务码推导）"""
+    code = exc.code or ResponseCode.INTERNAL_ERROR
     response = StandardResponse(
-        code=exc.code or ResponseCode.INTERNAL_ERROR,
+        code=code,
         data=None,
         msg=exc.msg or "Error occurred",
     )
 
-    return JSONResponse(content=response.model_dump(), status_code=200)
+    return JSONResponse(
+        content=response.model_dump(),
+        status_code=getattr(exc, "http_status", None) or _status_for_biz_code(code),
+    )
 
 
 async def global_exception_handler(_: Request, exc: Exception) -> Response:
@@ -104,9 +114,10 @@ async def global_exception_handler(_: Request, exc: Exception) -> Response:
         response_code = ResponseCode.SERVICE_UNAVAILABLE
         logger.warning(f"Database connection lost (ID: {error_id}): {exc}\n{error_details['traceback']}")
     elif is_custom_exception:
-        # 自定义业务异常，使用异常中定义的 code 和 msg
+        # 自定义业务异常，使用异常中定义的 code 和 msg；HTTP 状态码按业务码推导（非 200）
         response_code = exc_code
         error_message = exc_msg
+        status_code = _status_for_biz_code(exc_code)
         logger.info(
             f"Custom exception (ID: {error_id}): {error_details['error_type']}: {error_message}"
         )

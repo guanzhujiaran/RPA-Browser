@@ -38,7 +38,7 @@ router = new_fingerprint_router()
     response_model=StandardResponse[BaseFingerprintBrowserInitParams],
     response_model_by_alias=False,
 )
-async def gen_rand_fingerprint_router(params: BrowserFingerprintCreateParams | None = BrowserFingerprintCreateParams()):
+async def gen_rand_fingerprint_router(params: BrowserFingerprintCreateParams = BrowserFingerprintCreateParams()):
     """
     生成随机浏览器指纹信息（不保存到数据库）
 
@@ -68,7 +68,7 @@ async def gen_rand_fingerprint_router(params: BrowserFingerprintCreateParams | N
 async def upsert_fingerprint_router(
     params: BrowserFingerprintUpsertParams,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
+    session: AsyncSession = Depends(DatabaseSessionManager.get_db_session),
     _fingerprint_limit_check: AuthInfo = Depends(verify_fingerprint_limit),
 ):
     """
@@ -102,7 +102,7 @@ async def upsert_fingerprint_router(
     response_model_by_alias=False,
 )
 async def read_fingerprint_router(
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
+    session: AsyncSession = Depends(DatabaseSessionManager.get_db_session),
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
@@ -122,7 +122,7 @@ async def read_fingerprint_router(
     Note:
         只能查询属于当前用户的浏览器指纹信息
     """
-    result = await BrowserFingerprintService.read_fingerprint(browser_info.browser_id, browser_info.auth_info.mid, session)
+    result = await BrowserFingerprintService.read_fingerprint(int(browser_info.browser_id), browser_info.auth_info.mid, session)
     return success_response(data=result)
 
 
@@ -132,7 +132,7 @@ async def read_fingerprint_router(
 )
 async def delete_fingerprint_router(
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
+    session: AsyncSession = Depends(DatabaseSessionManager.get_db_session),
 ):
     """
     删除指定的浏览器指纹信息
@@ -151,7 +151,7 @@ async def delete_fingerprint_router(
         删除操作不可恢复，请确保不再需要该指纹信息后再执行删除操作
     """
     await BrowserFingerprintService.delete_fingerprint(
-        BrowserFingerprintDeleteParams(id=browser_info.browser_id),
+        BrowserFingerprintDeleteParams(browser_id=browser_info.browser_id),
         browser_info.auth_info.mid,
         session,
     )
@@ -168,7 +168,7 @@ async def delete_fingerprint_router(
 )
 async def count_fingerprint_router(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
+    session: AsyncSession = Depends(DatabaseSessionManager.get_db_session),
 ):
     """
     统计当前用户的浏览器指纹数量
@@ -197,7 +197,7 @@ async def count_fingerprint_router(
 async def list_fingerprint_router(
     params: BrowserFingerprintListParams,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
+    session: AsyncSession = Depends(DatabaseSessionManager.get_db_session),
 ):
     """
     分页列表显示当前用户的浏览器指纹信息
@@ -227,7 +227,7 @@ async def list_fingerprint_router(
 async def rename_fingerprint_router(
     params: BrowserFingerprintRenameParams,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
-    session: AsyncSession = DatabaseSessionManager.get_dependency(),
+    session: AsyncSession = Depends(DatabaseSessionManager.get_db_session),
 ):
     """
     重命名浏览器指纹
@@ -247,5 +247,5 @@ async def rename_fingerprint_router(
         只能修改属于当前用户的浏览器指纹信息
         设置 custom_name 为 null 可清除名称
     """
-    result = await BrowserFingerprintService.rename_fingerprint(params, browser_info.browser_id, session)
+    result = await BrowserFingerprintService.rename_fingerprint(params, int(browser_info.browser_id), session)
     return success_response(data=result)

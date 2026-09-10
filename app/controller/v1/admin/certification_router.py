@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends
 from bili_common.deps.auth import AuthInfo, get_auth_info_from_header
 from bili_common.models.response_code import ResponseCode
 from bili_common.models.response import StandardResponse, success_response, error_response
-from app.models.router.router_tag import RouterTag
 from app.models.base.base_sqlmodel import BasePaginationReq
 from app.models.system.rpa_admin import (
     CertifyRequest,
@@ -19,7 +18,7 @@ from app.services.admin_audit import log_admin_action
 from app.models.database.admin.models import Certification
 from sqlmodel import select, func
 
-router = APIRouter(tags=[RouterTag.admin_management])
+router = APIRouter()  # tag 由 admin/__init__.py 聚合父路由统一提供
 
 
 @router.post("/certification/certify", response_model=StandardResponse[CertificationItemResp])

@@ -1,5 +1,8 @@
 """
 System 模块 - RPA 管理相关请求/响应模型（非表模型）
+
+注：管理员身份与授权已迁移至 be-message 的 `msg_admin` 表，
+本模块不再包含管理员角色管理模型。
 """
 from datetime import datetime
 from typing import List, Optional
@@ -9,50 +12,10 @@ from sqlmodel import Field, SQLModel
 from bili_common.models import AdminStatusResponse
 from app.models.base.base_sqlmodel import BasePaginationReq, BasePaginationResp
 from app.models.database.admin.models import (
-    RpaAdmin,
     ApprovalRequest,
     ResourceTag,
     Certification,
 )
-
-
-# ===================== 管理员角色管理 =====================
-
-class RpaAdminItemResp(SQLModel):
-    """管理员信息响应"""
-
-    id: int
-    mid: int
-    role: str
-    granted_by: int
-    permissions: List[str] = Field(default_factory=list)
-    note: str = ""
-    created_at: Optional[datetime] = None
-
-
-class GrantAdminRequest(SQLModel):
-    """授予管理员请求（仅 root）"""
-
-    mid: int = Field(description="目标用户 mid")
-    note: str = Field(default="", description="备注")
-    permissions: List[str] = Field(default_factory=lambda: ["*"], description="权限列表")
-
-
-class RevokeAdminRequest(SQLModel):
-    """撤销管理员请求（仅 root）"""
-
-    mid: int = Field(description="目标用户 mid")
-
-
-class AdminListRequest(BasePaginationReq):
-    """管理员列表请求（仅 root）"""
-
-
-class AdminListResponse(BasePaginationResp[RpaAdminItemResp]):
-    """管理员列表响应"""
-
-
-# (AdminStatusResponse 已迁移至 bili-common，统一由 RPA 与 message 服务共用)
 
 
 # ===================== 审批 =====================
@@ -165,7 +128,17 @@ class TagItemResp(SQLModel):
     name: str
     color: str
     created_by: int
+    audit_status: str = "auditing"
+    pub_time: Optional[datetime] = None
     created_at: Optional[datetime] = None
+
+
+class ListTagRequest(BasePaginationReq):
+    """标签列表请求（用户侧默认仅看 normal；显式传 audit_status 可过滤指定状态给管理端复用）"""
+
+    audit_status: Optional[str] = Field(
+        default=None, description="审核状态过滤：auditing / normal / rejected；不传默认 normal"
+    )
 
 
 class TagListResponse(BasePaginationResp[TagItemResp]):
@@ -216,11 +189,6 @@ class CertificationListResponse(BasePaginationResp[CertificationItemResp]):
 
 
 __all__ = [
-    "RpaAdminItemResp",
-    "GrantAdminRequest",
-    "RevokeAdminRequest",
-    "AdminListRequest",
-    "AdminListResponse",
     "AdminStatusResponse",
     "SubmitApprovalRequest",
     "ApprovalItemResp",
@@ -232,6 +200,7 @@ __all__ = [
     "DeleteTagRequest",
     "TagItemResp",
     "TagListResponse",
+    "ListTagRequest",
     "AttachTagRequest",
     "DetachTagRequest",
     "ListTagByTargetRequest",

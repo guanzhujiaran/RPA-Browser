@@ -7,13 +7,12 @@ from sqlmodel import SQLModel, Field, select, func
 
 from bili_common.deps.auth import AuthInfo
 from bili_common.models.response import StandardResponse, success_response
-from app.models.router.router_tag import RouterTag
 from app.models.base.base_sqlmodel import BasePaginationResp
 from app.utils.depends.admin_depends import require_admin
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.models.database.admin.models import AdminAuditLog
 
-router = APIRouter(tags=[RouterTag.admin_management])
+router = APIRouter()  # tag 由 admin/__init__.py 聚合父路由统一提供，避免 tags 重复
 
 
 class AuditListItemResponse(SQLModel):

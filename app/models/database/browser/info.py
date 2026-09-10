@@ -16,7 +16,6 @@ from app.models.core.browser.fingerprint import (
     BrowserEnum,
 )
 from app.models.base.base_sqlmodel import BaseSQLModel
-from app.utils.snow_flake_gen import browser_id_gen
 
 
 
@@ -34,10 +33,15 @@ class UserBrowserUserId(BaseSQLModel):
 class UserBrowserInfoBase(UserBrowserUserId,BaseBrowserId):
     """用户浏览器信息基础模型"""
 
+    # 对外发布 ID 一律雪花 ID（见规则 snowflake-id.mdc）：主键由应用层
+    # `await generate_browser_id()` 生成后显式写入，非数据库自增。
+    # default=None 仅为兼容「非持久化的服务端默认值」内存实例
+    # （如 UserBrowserServerSideDefaultSetting(mid=-1)）；持久化路径必须显式传值。
     browser_id: int = Field(
+        default=None,
         sa_type=BIGINT,
-        default_factory=lambda: next(browser_id_gen),
         primary_key=True,
+        sa_column_kwargs={"autoincrement": False},
     )
 
 

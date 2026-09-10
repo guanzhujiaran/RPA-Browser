@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: 2afa25425c69
+Revision ID: f12701ed6cc4
 Revises: 
-Create Date: 2026-09-05 00:29:31.777651
+Create Date: 2026-09-10 16:03:53.445788
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = '2afa25425c69'
+revision: str = 'f12701ed6cc4'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -195,19 +195,8 @@ def upgrade() -> None:
     sqlite_autoincrement=True
     )
     op.create_index(op.f('ix_notificationconfig_browser_id'), 'notificationconfig', ['browser_id'], unique=False)
+    op.create_index(op.f('ix_notificationconfig_created_at'), 'notificationconfig', ['created_at'], unique=False)
     op.create_index(op.f('ix_notificationconfig_mid'), 'notificationconfig', ['mid'], unique=False)
-    op.create_table('rpa_admin',
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('mid', sa.Integer(), nullable=False),
-    sa.Column('role', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('granted_by', sa.Integer(), nullable=False),
-    sa.Column('permissions', sa.JSON(), nullable=False),
-    sa.Column('note', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_rpa_admin_mid'), 'rpa_admin', ['mid'], unique=True)
     op.create_table('rpa_approval',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -225,6 +214,7 @@ def upgrade() -> None:
     sa.Column('expires_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_index(op.f('ix_rpa_approval_created_at'), 'rpa_approval', ['created_at'], unique=False)
     op.create_index(op.f('ix_rpa_approval_status'), 'rpa_approval', ['status'], unique=False)
     op.create_index(op.f('ix_rpa_approval_submitter_mid'), 'rpa_approval', ['submitter_mid'], unique=False)
     op.create_table('rpa_certification',
@@ -237,6 +227,7 @@ def upgrade() -> None:
     sa.Column('note', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_index(op.f('ix_rpa_certification_created_at'), 'rpa_certification', ['created_at'], unique=False)
     op.create_index(op.f('ix_rpa_certification_target_id'), 'rpa_certification', ['target_id'], unique=True)
     op.create_index(op.f('ix_rpa_certification_target_type'), 'rpa_certification', ['target_type'], unique=False)
     op.create_table('rpa_tag',
@@ -246,9 +237,13 @@ def upgrade() -> None:
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('color', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('created_by', sa.Integer(), nullable=False),
+    sa.Column('audit_status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.Column('pub_time', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('name')
     )
+    op.create_index(op.f('ix_rpa_tag_audit_status'), 'rpa_tag', ['audit_status'], unique=False)
+    op.create_index(op.f('ix_rpa_tag_created_at'), 'rpa_tag', ['created_at'], unique=False)
     op.create_table('rpa_tag_rel',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -260,6 +255,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('tag_id', 'target_type', 'target_id', name='uq_tag_rel_target')
     )
+    op.create_index(op.f('ix_rpa_tag_rel_created_at'), 'rpa_tag_rel', ['created_at'], unique=False)
     op.create_index(op.f('ix_rpa_tag_rel_tag_id'), 'rpa_tag_rel', ['tag_id'], unique=False)
     op.create_table('rpa_user_ban',
     sa.Column('created_at', sa.DateTime(), nullable=False),
@@ -280,6 +276,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_rpa_user_ban_banned_by'), 'rpa_user_ban', ['banned_by'], unique=False)
+    op.create_index(op.f('ix_rpa_user_ban_created_at'), 'rpa_user_ban', ['created_at'], unique=False)
     op.create_index(op.f('ix_rpa_user_ban_expired_at'), 'rpa_user_ban', ['expired_at'], unique=False)
     op.create_index(op.f('ix_rpa_user_ban_mid'), 'rpa_user_ban', ['mid'], unique=False)
     op.create_index(op.f('ix_rpa_user_ban_scope'), 'rpa_user_ban', ['scope'], unique=False)
@@ -291,7 +288,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_tagmodel_name'), 'tagmodel', ['name'], unique=True)
     op.create_table('userbrowserdefaultsetting',
-    sa.Column('browser_id', sa.BIGINT(), nullable=False),
+    sa.Column('browser_id', sa.BIGINT(), autoincrement=False, nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
@@ -305,6 +302,7 @@ def upgrade() -> None:
     sa.Column('default_timeout', sa.Integer(), nullable=True),
     sa.PrimaryKeyConstraint('browser_id')
     )
+    op.create_index(op.f('ix_userbrowserdefaultsetting_created_at'), 'userbrowserdefaultsetting', ['created_at'], unique=False)
     op.create_index(op.f('ix_userbrowserdefaultsetting_mid'), 'userbrowserdefaultsetting', ['mid'], unique=False)
     op.create_table('userbrowserinfo',
     sa.Column('fingerprint', sa.Integer(), nullable=False),
@@ -325,7 +323,7 @@ def upgrade() -> None:
     sa.Column('patchright_viewport_height', sa.Integer(), nullable=False),
     sa.Column('patchright_fingerprint_dict', sa.JSON(), nullable=True),
     sa.Column('patchright_browser_ua', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-    sa.Column('browser_id', sa.BIGINT(), nullable=False),
+    sa.Column('browser_id', sa.BIGINT(), autoincrement=False, nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.Column('mid', sa.BIGINT(), nullable=False),
@@ -334,6 +332,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('fingerprint'),
     sa.UniqueConstraint('mid', 'custom_name', name='uq_mid_custom_name')
     )
+    op.create_index(op.f('ix_userbrowserinfo_created_at'), 'userbrowserinfo', ['created_at'], unique=False)
     op.create_index(op.f('ix_userbrowserinfo_mid'), 'userbrowserinfo', ['mid'], unique=False)
     op.create_table('userplugin',
     sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
@@ -465,8 +464,10 @@ def downgrade() -> None:
     op.drop_index('idx_user_plugin_name_unique', table_name='userplugin')
     op.drop_table('userplugin')
     op.drop_index(op.f('ix_userbrowserinfo_mid'), table_name='userbrowserinfo')
+    op.drop_index(op.f('ix_userbrowserinfo_created_at'), table_name='userbrowserinfo')
     op.drop_table('userbrowserinfo')
     op.drop_index(op.f('ix_userbrowserdefaultsetting_mid'), table_name='userbrowserdefaultsetting')
+    op.drop_index(op.f('ix_userbrowserdefaultsetting_created_at'), table_name='userbrowserdefaultsetting')
     op.drop_table('userbrowserdefaultsetting')
     op.drop_index(op.f('ix_tagmodel_name'), table_name='tagmodel')
     op.drop_table('tagmodel')
@@ -474,20 +475,25 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_rpa_user_ban_scope'), table_name='rpa_user_ban')
     op.drop_index(op.f('ix_rpa_user_ban_mid'), table_name='rpa_user_ban')
     op.drop_index(op.f('ix_rpa_user_ban_expired_at'), table_name='rpa_user_ban')
+    op.drop_index(op.f('ix_rpa_user_ban_created_at'), table_name='rpa_user_ban')
     op.drop_index(op.f('ix_rpa_user_ban_banned_by'), table_name='rpa_user_ban')
     op.drop_table('rpa_user_ban')
     op.drop_index(op.f('ix_rpa_tag_rel_tag_id'), table_name='rpa_tag_rel')
+    op.drop_index(op.f('ix_rpa_tag_rel_created_at'), table_name='rpa_tag_rel')
     op.drop_table('rpa_tag_rel')
+    op.drop_index(op.f('ix_rpa_tag_created_at'), table_name='rpa_tag')
+    op.drop_index(op.f('ix_rpa_tag_audit_status'), table_name='rpa_tag')
     op.drop_table('rpa_tag')
     op.drop_index(op.f('ix_rpa_certification_target_type'), table_name='rpa_certification')
     op.drop_index(op.f('ix_rpa_certification_target_id'), table_name='rpa_certification')
+    op.drop_index(op.f('ix_rpa_certification_created_at'), table_name='rpa_certification')
     op.drop_table('rpa_certification')
     op.drop_index(op.f('ix_rpa_approval_submitter_mid'), table_name='rpa_approval')
     op.drop_index(op.f('ix_rpa_approval_status'), table_name='rpa_approval')
+    op.drop_index(op.f('ix_rpa_approval_created_at'), table_name='rpa_approval')
     op.drop_table('rpa_approval')
-    op.drop_index(op.f('ix_rpa_admin_mid'), table_name='rpa_admin')
-    op.drop_table('rpa_admin')
     op.drop_index(op.f('ix_notificationconfig_mid'), table_name='notificationconfig')
+    op.drop_index(op.f('ix_notificationconfig_created_at'), table_name='notificationconfig')
     op.drop_index(op.f('ix_notificationconfig_browser_id'), table_name='notificationconfig')
     op.drop_table('notificationconfig')
     op.drop_index(op.f('ix_compositeactionmodel_original_mid'), table_name='compositeactionmodel')

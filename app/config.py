@@ -158,6 +158,11 @@ class Settings(BaseSettings):
     # heartbeat=180：与服务端保持一致，避免 handler 执行时间较长时 heartbeat 超时导致连接关闭
     rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/?heartbeat=180"
 
+    # be-message 服务地址：管理员身份判定（GET /api/v1/message/admin/me）统一由
+    # be-message 裁决（权限数据存于其 msg_admin 表），RPA 不再持有独立 RpaAdmin 表。
+    # 默认指向 docker-compose 内部服务名；本地开发在 .env.dev 覆盖为 127.0.0.1。
+    message_service_url: str = "http://be-message-service:18739"
+
     admin_base_path: str = "/api/admin/rpa"
 
     # 是否强制要求执行操作（execute，如执行工作流/定时计划）前已通过对应审批单
@@ -190,7 +195,23 @@ class Settings(BaseSettings):
     default_proxy_server: str = (
         ""  # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128
     )
-    snowflake_id: int = 1
+
+    # ==================== browser_id（短雪花 ID，分钟步进）====================
+    # 对外发布 ID 统一收敛到 bili_common 的分钟级短雪花（见规则 snowflake-id.mdc）：
+    # 总位数恒 39 bits，初始 7~8 位十进制，取代原先第三方 snowflake-id 包的
+    # 毫秒级 63 bits（18~19 位）实现。
+    #
+    # browser_id epoch（秒级时间戳）：默认 2026-01-01 00:00:00 UTC+8，
+    # 可通过环境变量 BROWSER_ID_EPOCH_SEC 覆盖
+    browser_id_epoch_sec: int = 1767196800
+    # browser_id worker 编号（0~15），通过环境变量 BROWSER_ID_WORKER_ID 设置。
+    # 多实例部署时必须互不相同；且需与 uid(1)/moment_id(2)/topic_id(3) 错开，
+    # 避免跨实体在共用列（如 be-message 的 bizId）上碰撞
+    browser_id_worker_id: int = 4
+    # browser_id 序列号位宽（默认 4 = 每 worker 每分钟最多 16 个，总位数恒 39 bits）。
+    # 开发/测试环境可放宽（如 7 = 每分钟 128 个）；⚠️ 变更位宽会改变对外 ID 数值
+    # 空间、与已发布 ID 可能重叠，仅限清库重建的环境启用，生产保持默认 4。
+    browser_id_sequence_bits: int = 4
 
     # 浏览器会话默认配置
     browser_session_auto_cleanup: bool = True  # 是否启用自动清理

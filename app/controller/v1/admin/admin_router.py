@@ -1,11 +1,14 @@
 """管理员 API - 查看所有系统状态"""
-from loguru import logger
-from fastapi import APIRouter
-import time
-from app.config import settings
+from bili_common.models.response import (
+    StandardResponse,
+    error_response,
+    success_response,
+)
 from bili_common.models.response_code import ResponseCode
-from bili_common.models.response import StandardResponse, success_response, error_response
-from app.models.router.router_tag import RouterTag
+from fastapi import APIRouter
+from loguru import logger
+
+from app.config import settings
 from app.models.system.admin import (
     AdminAllSessionsResponse,
     BrowserSessionConfigResponse,
@@ -13,7 +16,7 @@ from app.models.system.admin import (
 )
 from app.services.RPA_browser.session.live_service import LiveService
 
-router = APIRouter(tags=[RouterTag.admin_management])
+router = APIRouter()  # tag 由 admin/__init__.py 聚合父路由统一提供
 
 
 @router.post("/sessions/all", response_model=StandardResponse[AdminAllSessionsResponse])

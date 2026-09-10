@@ -15,6 +15,7 @@ from app.exceptions.handlers import (
 )
 from app.utils.middlewares.ban_guard import BanGuardMiddleware
 from bili_common.exceptions import register_business_exception_handlers
+from bili_common.middlewares import add_error_status_middleware
 
 
 def setup_routes(app: FastAPI):
@@ -41,7 +42,11 @@ def setup_routes(app: FastAPI):
     app.add_exception_handler(DisconnectionError, database_connection_handler)
     app.add_exception_handler(Exception, global_exception_handler)
 
-    # 接入 bili_common 统一业务异常（如未登录 code=-101，HTTP 200）。
+    # 接入 bili_common 统一业务异常（如未登录 code=-101 → HTTP 401）。
     # 注意：RPA 自行处理 StarletteHTTPException / RequestValidationError，
     # 因此仅注册业务异常处理器，避免覆盖既有 handler。
     register_business_exception_handlers(app)
+
+    # 兜底中间件：业务代码里「HTTP 200 + 非 0 业务码」的响应统一改写成非 200 状态码，
+    # 保证失败响应与异常路径表现一致（映射见 bili_common.exceptions.http_status_for_code）。
+    add_error_status_middleware(app)
