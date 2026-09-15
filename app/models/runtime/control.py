@@ -102,6 +102,14 @@ class BrowserSessionStatus(SQLModel):
     manual_mode: bool = Field(default=False, description="是否为手动模式")
     created_at: int = Field(description="会话创建时间")
     expires_at: int | None = Field(None, description="会话过期时间")
+    # 闲置生命周期（见 docs/be-message-统一计划书.md §5.15）：
+    # 必须落在本「响应模型」上；若只加在内部 BrowserSessionStatusData，
+    # FastAPI 按 response_model 序列化时会把这些字段丢弃，前端拿不到。
+    idle_seconds: int = Field(default=0, description="闲置时长（秒）")
+    is_pinned: bool = Field(default=False, description="是否被自动化任务占用（pin，占用期间不回收）")
+    pending_termination_at: int | None = Field(
+        default=None, description="待关闭的宽限截止时间戳（闲置超时进入宽限期后非空）"
+    )
 
 
 class CreateSessionResponse(SQLModel):
@@ -454,6 +462,12 @@ class BrowserSessionStatusData(SQLModel):
     screen_height: int = Field(description="屏幕高度")
     viewport_width: int = Field(description="视口宽度")
     viewport_height: int = Field(description="视口高度")
+    # 闲置生命周期（见 §5.15）
+    idle_seconds: int = Field(0, description="闲置时长（秒）")
+    is_pinned: bool = Field(False, description="是否被自动化任务占用（pin，占用期间不回收）")
+    pending_termination_at: int | None = Field(
+        None, description="待关闭的宽限截止时间戳（闲置超时进入宽限期后非空）"
+    )
 
 
 class JavaScriptExecutionResult(SQLModel):

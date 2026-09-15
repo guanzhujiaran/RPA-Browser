@@ -12,7 +12,7 @@ from bili_common.models.response import success_response, error_response
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.services.RPA_browser.session.live_service import LiveService
-from app.utils.depends.security_depends import verify_browser_ownership
+from app.utils.depends.security_depends import verify_browser_ownership_or_admin
 from bili_common.models.depends import BrowserReqAuthInfo
 from ..base import new_webrtc_router
 from pydantic import BaseModel
@@ -62,7 +62,7 @@ def _get_webrtc_manager(browser_req: BrowserReqAuthInfo):
 @router.post(BrowserControlRouterPath.webrtc_offer, summary="创建 WebRTC Offer")
 async def create_webrtc_offer(
     req: WebRTCOfferRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
 ):
     """
     创建 WebRTC Offer 以开始视频流传输。
@@ -105,7 +105,7 @@ async def create_webrtc_offer(
 @router.post(BrowserControlRouterPath.webrtc_answer, summary="处理 WebRTC Answer")
 async def handle_webrtc_answer(
     req: WebRTCAnswerRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
 ):
     """处理客户端返回的 SDP Answer（O(1) 流查找）"""
     try:
@@ -130,6 +130,9 @@ async def handle_webrtc_answer(
 
         logger.info(f"找到流: {stream.stream_key}, 状态: {stream.state.value}")
         await stream.handle_answer(req.sdp, req.type)
+        await live_service.touch(
+            browser_req.auth_info.mid, browser_req.browser_id, source="webrtc_answer"
+        )
         logger.info(f"WebRTC Answer 处理成功: {stream.stream_key}")
         return success_response(msg="WebRTC Answer 已处理")
 
@@ -145,7 +148,7 @@ async def handle_webrtc_answer(
 )
 async def add_ice_candidate(
     req: WebRTCIceCandidateRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
 ):
     """添加 ICE Candidate（O(1) 流查找）"""
     try:
@@ -165,6 +168,9 @@ async def add_ice_candidate(
         await stream.add_ice_candidate(
             req.candidate, req.sdpMid, req.sdpMLineIndex
         )
+        await live_service.touch(
+            browser_req.auth_info.mid, browser_req.browser_id, source="webrtc_ice"
+        )
         return success_response(msg="ICE Candidate 已添加")
 
     except Exception as e:
@@ -177,7 +183,7 @@ async def add_ice_candidate(
 @router.post(BrowserControlRouterPath.webrtc_close, summary="关闭 WebRTC 流")
 async def close_webrtc_stream(
     req: WebRTCCloseRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
 ):
     """关闭指定的 WebRTC 视频流（O(1) 查找 + 自动清理双索引）"""
     try:
@@ -202,14 +208,17 @@ async def close_webrtc_stream(
     BrowserControlRouterPath.webrtc_status, summary="获取 WebRTC 流状态"
 )
 async def get_webrtc_status(
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
 ):
     """获取当前浏览器会话的 WebRTC 流状态信息"""
     try:
         webrtc_mgr, session_key = _get_webrtc_manager(browser_req)
         if webrtc_mgr is None:
-            return error_response(
-                code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在"
+            # 只读状态查询：「尚未建立会话 / 流已关闭」是正常状态而非错误，
+            # 返回空流列表（否则业务码 1006 会被错误状态中间件回写成 HTTP 400）
+            return success_response(
+                data={"enabled": False, "active_streams": [], "total_streams": 0},
+                msg="会话不存在或暂无 WebRTC 流",
             )
 
         streams_info = []

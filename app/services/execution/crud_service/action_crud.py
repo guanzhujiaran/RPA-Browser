@@ -214,6 +214,8 @@ class ActionCrudService:
         input_vars: list[Dict] | None = None,
         output_vars: list[str] | None = None,
         is_public: bool = False,
+        icon_series: int = 0,
+        icon_id: int = 0,
         timeout: int = 30000,
         retry_on_error: bool = False,
         retry_times: int = 0,
@@ -260,6 +262,8 @@ class ActionCrudService:
                 name=name,
                 action_type=action_type,
                 description=description,
+                icon_series=icon_series,
+                icon_id=icon_id,
                 mid=mid,
                 original_mid=mid,
                 timeout=timeout,
@@ -422,6 +426,8 @@ class ActionCrudService:
         retry_times: int | None = None,
         retry_delay: float | None = None,
         is_public: bool | None = None,
+        icon_series: int | None = None,
+        icon_id: int | None = None,
         log_enabled: bool | None = None,
         log_record_params: bool | None = None,
         log_record_result: bool | None = None,
@@ -472,6 +478,10 @@ class ActionCrudService:
                 model.retry_delay = retry_delay
             if is_public is not None:
                 model.is_public = is_public
+            if icon_series is not None:
+                model.icon_series = icon_series
+            if icon_id is not None:
+                model.icon_id = icon_id
             if log_enabled is not None:
                 model.log_enabled = log_enabled
             if log_record_params is not None:
@@ -583,6 +593,8 @@ class ActionCrudService:
                 description=f"Forked from: {original.name}",
                 mid=target_mid,
                 original_mid=original.original_mid,
+                icon_series=original.icon_series,
+                icon_id=original.icon_id,
                 timeout=original.timeout,
                 is_composite=original.is_composite,
                 parameters_schema=original.parameters_schema.copy(

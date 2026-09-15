@@ -49,15 +49,20 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
     返回精简版 Action 元数据，仅包含 action_id 和 json_schema
     """
     from app.models.execution.action_params import BuiltinActionType
-    response_actions = [
-        ActionMetadataResponse(
-            action_id=action_type.value,
-            action_type=action_type,
-            name=action_type.nameDisplay,
-            json_schema=action_type.metadata.json_schema or {},
+    response_actions = []
+    for action_type in BuiltinActionType:
+        meta = action_type.metadata
+        response_actions.append(
+            ActionMetadataResponse(
+                action_id=action_type.value,
+                action_type=action_type,
+                name=action_type.nameDisplay,
+                # 内置操作的默认展示图标（由后端统一分配系列/编号，图库缺失时前端回落到内置图标）
+                icon_series=meta.icon_series,
+                icon_id=meta.icon_id,
+                json_schema=meta.json_schema or {},
+            )
         )
-        for action_type in BuiltinActionType
-    ]
     return success_response(response_actions)
 
 
@@ -92,6 +97,8 @@ async def create_custom_action(
         tags=request.tags or [],
         input_vars=input_vars_dicts,
         output_vars=request.output_vars,
+        icon_series=request.icon_series,
+        icon_id=request.icon_id,
         timeout=request.timeout,
         retry_on_error=request.retry_on_error,
         retry_times=request.retry_times,
@@ -122,6 +129,8 @@ async def create_custom_action(
             version=model.version,
             action_type=model.action_type,
             description=model.description,
+            icon_series=model.icon_series,
+            icon_id=model.icon_id,
             mid=model.mid,
             parameters_schema=model.parameters_schema,
             steps=_convert_steps(model.steps),
@@ -195,6 +204,8 @@ async def list_custom_actions(
             name=model.name,
             action_type=model.action_type,
             description=model.description,
+            icon_series=model.icon_series,
+            icon_id=model.icon_id,
             steps_count=len(model.steps) if model.steps else 0,
             tags=tags_map.get(model.id, []),
             is_enabled=model.is_enabled,
@@ -265,6 +276,8 @@ async def get_custom_action(
             version=model.version,
             action_type=model.action_type,
             description=model.description,
+            icon_series=model.icon_series,
+            icon_id=model.icon_id,
             mid=model.mid,
             parameters_schema=model.parameters_schema,
             steps=steps_data,
@@ -327,6 +340,8 @@ async def update_custom_action(
         input_vars=input_vars_dicts,
         output_vars=request.output_vars,
         is_public=request.is_public,
+        icon_series=request.icon_series,
+        icon_id=request.icon_id,
         timeout=request.timeout,
         retry_on_error=request.retry_on_error,
         retry_times=request.retry_times,
@@ -359,6 +374,8 @@ async def update_custom_action(
             version=model.version,
             action_type=model.action_type,
             description=model.description,
+            icon_series=model.icon_series,
+            icon_id=model.icon_id,
             mid=model.mid,
             parameters_schema=model.parameters_schema,
             steps=_convert_steps(model.steps),
@@ -506,6 +523,8 @@ async def get_action_forks(
             name=f.name,
             action_type=f.action_type,
             description=f.description,
+            icon_series=f.icon_series,
+            icon_id=f.icon_id,
             steps_count=len(f.steps) if f.steps else 0,
             is_enabled=f.is_enabled,
             is_public=f.is_public,

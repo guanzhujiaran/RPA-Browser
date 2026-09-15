@@ -36,6 +36,16 @@ from pathlib import Path
 import asyncio
 import shutil
 
+from loguru import logger
+
+
+def _rmdir_if_empty(path: Path) -> None:
+    """目录为空时删除；非空（同一 mid 下还有其他指纹）或删除失败则静默忽略。"""
+    try:
+        path.rmdir()
+    except OSError:
+        pass
+
 
 class BrowserFingerprintService:
     @staticmethod
@@ -61,9 +71,11 @@ class BrowserFingerprintService:
             if browser_info is None:
                 raise BrowserFingerprintNotFoundException()
 
-            # 只更新提供的字段
+            # 只更新提供的字段（exclude_none：空值=未提供，不覆盖原有值）
             update_data = params.model_dump(
-                exclude_unset=True, exclude={"browser_id", "browser_id_str"}
+                exclude_unset=True,
+                exclude_none=True,
+                exclude={"browser_id", "browser_id_str"},
             )
         else:
             # 创建新记录
@@ -90,8 +102,11 @@ class BrowserFingerprintService:
             )
 
             # 如果有额外的更新参数，应用它们
+            # exclude_none：空字符串已在入参层归一为 None，此处再跳过 None，
+            # 保证「未填写」的字段不会覆盖指纹生成器/默认设置填好的值
             update_data = params.model_dump(
                 exclude_unset=True,
+                exclude_none=True,
                 exclude={"browser_id", "browser_id_str", "fingerprint_int"},
             )
 
@@ -218,7 +233,9 @@ class BrowserFingerprintService:
         if browser_info is None:
             raise BrowserFingerprintNotFoundException()
 
-        update_data = params.model_dump(exclude_unset=True, exclude={"id"})
+        update_data = params.model_dump(
+            exclude_unset=True, exclude_none=True, exclude={"id"}
+        )
         for key, value in update_data.items():
             setattr(browser_info, key, value)
 
@@ -243,14 +260,41 @@ class BrowserFingerprintService:
         if browser_info is None:
             raise BrowserFingerprintNotFoundException()
 
-        # 异步删除对应的 user_data_dir
-        user_data_dir_path = (
-            Path(CONF.Path.user_data_dir) / str(mid) / str(params.browser_id)
-        )
+        # 删除前先关闭该指纹对应的浏览器实例（关闭会话 + 从会话池释放），
+        # 否则 profile 仍被占用：既可能删不干净，也可能被运行中的浏览器重建。
+        # 注意：live_service 的导入链反向依赖本模块（session_pool_model 引用本服务），
+        # 故必须函数内延迟导入，避免循环导入。
+        try:
+            from app.services.RPA_browser.session.live_service import live_service
+
+            released = await live_service.release_browser_session(
+                mid, int(params.browser_id)
+            )
+            if not released:
+                logger.warning(
+                    f"关闭浏览器实例失败，仍继续删除指纹: mid={mid}, "
+                    f"browser_id={params.browser_id}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"关闭浏览器实例异常，仍继续删除指纹: mid={mid}, "
+                f"browser_id={params.browser_id}, error={e}"
+            )
+
+        # 异步删除对应的 user_data_dir（含 browser_id 目录本身）
+        mid_dir_path = Path(CONF.Path.user_data_dir) / str(mid)
+        user_data_dir_path = mid_dir_path / str(params.browser_id)
         if user_data_dir_path.exists():
             await asyncio.to_thread(
                 shutil.rmtree, user_data_dir_path, ignore_errors=True
             )
+            if user_data_dir_path.exists():
+                # 例如浏览器实例仍在运行占用 profile 时可能删不干净，留日志便于排查
+                logger.warning(f"user_data 目录未完全删除: {user_data_dir_path}")
+
+        # browser_id 目录删除后，{mid} 目录若已空则一并删除，避免残留空目录
+        if mid_dir_path.exists():
+            await asyncio.to_thread(_rmdir_if_empty, mid_dir_path)
 
         await session.delete(browser_info)
         await session.commit()

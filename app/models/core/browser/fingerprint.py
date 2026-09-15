@@ -5,7 +5,7 @@ Core 模块 - 浏览器指纹模型
 """
 
 from bili_common.models import StrEnumAutoDoc
-from typing import Annotated
+from typing import Annotated, ClassVar
 from sqlmodel import Field, SQLModel, Column, JSON
 from browserforge.fingerprints import (
     Fingerprint,
@@ -214,6 +214,10 @@ class BaseFingerprintBrowserInitParams(SQLModel):
             "height": self.patchright_screen_height,
         }
 
+    # 这些字段是给 playwright launch kwargs 用的（见 base_engines.launch_browser_span），
+    # 不是 chromium 命令行开关，不能进入 args，否则会注入 --viewport={'width': ...} 这类非法参数
+    NON_CLI_ARG_KEYS: ClassVar[frozenset[str]] = frozenset({"viewport", "screen"})
+
     def fp_2_args_list(self) -> list[str]:
         """将指纹参数转换为浏览器启动参数列表"""
         if not sys.platform.startswith(
@@ -221,12 +225,16 @@ class BaseFingerprintBrowserInitParams(SQLModel):
         ):  # WebGL 元数据：修改 GPU 供应商和显卡型号（暂时只支持 Linux）
             self.fingerprint_gpu_vendor = None
             self.fingerprint_gpu_renderer = None
-        filtered_params = {
-            k: v
-            for k, v in self.model_dump(exclude_none=True, by_alias=True).items()
-            if v and not k.startswith("patchright")
-        }
-        return [f"--{k}={v}".replace("_", "-") for k, v in filtered_params.items()]
+        filtered_params = {}
+        for k, v in self.model_dump(exclude_none=True, by_alias=True).items():
+            # 别名本身已带 "--" 前缀（如 --fingerprint-platform），需先去掉再判断
+            normalized_key = k.lstrip("-")
+            if not v or normalized_key.startswith("patchright"):
+                continue
+            if normalized_key in self.NON_CLI_ARG_KEYS:
+                continue
+            filtered_params[normalized_key] = v
+        return [f"--{k.replace('_', '-')}={v}" for k, v in filtered_params.items()]
 
     @model_validator(mode="after")
     def check_browser_and_brand_version_consistency(self):

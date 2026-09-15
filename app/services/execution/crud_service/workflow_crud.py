@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from datetime import datetime
 import uuid
 from sqlmodel import select
-from sqlalchemy import true, false
+from sqlalchemy import true, false, update
 
 from app.models.database.workflow.models import UserWorkflow, WorkflowPluginRelation, CompositeActionModel, UserPlugin
 from app.models.execution.action_params import PluginConfig
@@ -23,6 +23,7 @@ class WorkflowCrudService:
         name: str,
         custom_action_id: str,
         description: str = "",
+        browser_id: int | None = None,
         trigger_type: str = "manual",
         trigger_config: Dict | None = None,
         is_public: bool = False,
@@ -42,6 +43,7 @@ class WorkflowCrudService:
                 name=name,
                 custom_action_id=custom_action_id,
                 description=description,
+                browser_id=browser_id,
                 mid=mid,
                 original_mid=mid,
                 trigger_type=trigger_type,
@@ -163,6 +165,7 @@ class WorkflowCrudService:
         name: str | None = None,
         description: str | None = None,
         custom_action_id: str | None = None,
+        browser_id: int | None = None,
         trigger_type: str | None = None,
         trigger_config: Dict | None = None,
         is_enabled: bool | None = None,
@@ -191,6 +194,8 @@ class WorkflowCrudService:
                 model.description = description
             if custom_action_id is not None:
                 model.custom_action_id = custom_action_id
+            if browser_id is not None:
+                model.browser_id = browser_id
             if trigger_type is not None:
                 model.trigger_type = trigger_type
             if trigger_config is not None:
@@ -319,6 +324,8 @@ class WorkflowCrudService:
                 mid=target_mid,
                 original_mid=original.original_mid,
                 custom_action_id=original.custom_action_id,
+                # 浏览器是用户私有资源，Fork 后不继承（避免指向他人浏览器）；定时触发需重新选择
+                browser_id=None,
                 trigger_type=original.trigger_type,
                 trigger_config=original.trigger_config,
                 is_public=False,
@@ -347,6 +354,46 @@ class WorkflowCrudService:
                 .limit(limit)
             )
             return result.all()
+
+    # ============ 调度外壳：定时任务重建 & 运行状态 ============
+
+    @staticmethod
+    async def list_scheduling() -> List[UserWorkflow]:
+        """列出所有需要注册定时任务的工作流（启用 + cron 触发 + 已指定浏览器）"""
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(UserWorkflow).where(
+                    (UserWorkflow.is_enabled == true()) &
+                    (UserWorkflow.trigger_type == "cron") &
+                    (UserWorkflow.browser_id.is_not(None))
+                )
+            )
+            return result.all()
+
+    @staticmethod
+    async def update_run_state(
+        id: int,
+        status: str | None = None,
+        last_run_at: datetime | None = None,
+        next_run_at: datetime | None = None,
+    ) -> bool:
+        """更新工作流的运行状态（定时调度与手动运行共用）"""
+        values: Dict[str, Any] = {}
+        if status is not None:
+            values["last_run_status"] = status
+        if last_run_at is not None:
+            values["last_run_at"] = last_run_at
+        if next_run_at is not None:
+            values["next_run_at"] = next_run_at
+        if not values:
+            return False
+
+        async with DatabaseSessionManager.async_session() as session:
+            await session.exec(
+                update(UserWorkflow).where(UserWorkflow.id == id).values(**values)
+            )
+            await session.commit()
+            return True
 
 
 workflow_crud_svr = WorkflowCrudService()

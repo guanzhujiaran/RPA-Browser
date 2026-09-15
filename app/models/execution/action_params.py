@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bili_common.models import StrEnumAutoDoc
+from bili_common.models import IntEnumAutoDoc, StrEnumAutoDoc
 import contextlib
 from typing import Any, Dict, Generic, Literal, Type, TypeVar
 from pydantic import Field, TypeAdapter, ValidationError, field_validator, model_validator
@@ -76,6 +76,37 @@ class BuiltinActionName(StrEnumAutoDoc):
     PRINT = "打印参数"
 
 
+class BuiltinActionIconId(IntEnumAutoDoc):
+    """内置操作的默认展示图标编号（系列统一见 BUILTIN_ACTION_ICON_SERIES）
+
+    每个内置操作一个独立编号，前端按
+    `src/assets/action-icons/{分类}/s_{系列}_{系列名}/i_{编号}_{名称}.{ext}` 映射为实际图标；
+    图库中缺少对应资源时前端回落到内置图标，因此此处只声明编号，不校验资源是否存在。
+    """
+    CLICK = 1
+    INPUT = 2
+    WAIT = 3
+    SCROLL = 4
+    NAVIGATE = 5
+    SCREENSHOT = 6
+    LLM = 7
+    HOVER = 8
+    NEW_PAGE = 9
+    GET_TEXT = 10
+    GET_WINDOW = 11
+    FETCH_EXTERNAL_DATA = 12
+    PRINT = 13
+    LOOP = 14
+    COMPOSITE = 15
+    IF_ELSE = 16
+
+
+# 内置操作默认图标的系列编号：**复用现有图库系列** `FGO头像/s_1_saber`
+# （不再保留 101 这类专属号，避免占用/阻塞图库的全局连续编号）；
+# 编号仍由 BuiltinActionIconId（1~16）分配，即对应 `s_1` 的 `i_1~i_16`。
+BUILTIN_ACTION_ICON_SERIES = 1
+
+
 class BuiltinActionType(StrEnumAutoDoc):
     """内置操作类型"""
     CLICK = "click"
@@ -105,6 +136,15 @@ class BuiltinActionType(StrEnumAutoDoc):
         return BuiltinActionDesc[self.name]
 
     @property
+    def icon(self) -> tuple[int, int]:
+        """该内置操作的默认展示图标 (icon_series, icon_id)
+
+        未登记编号时返回 (101, 0)，由前端回落到内置图标。
+        """
+        icon_id = BuiltinActionIconId.__members__.get(self.name)
+        return BUILTIN_ACTION_ICON_SERIES, int(icon_id) if icon_id is not None else 0
+
+    @property
     def params_model(self) -> Type[AllActionParams]:
         return BUILTIN_ACTION_PARAMS_MAP.get(self.value, CompositeParams)
 
@@ -128,6 +168,7 @@ class BuiltinActionType(StrEnumAutoDoc):
                         name=prop_name,
                         json_schema=prop_schema,
                     ))
+        icon_series, icon_id = self.icon
         return ActionMetadata(
             id=self,
             name=self.nameDisplay,
@@ -135,6 +176,8 @@ class BuiltinActionType(StrEnumAutoDoc):
             description=self.descDisplay,
             parameters=parameters,
             json_schema=json_schema,
+            icon_series=icon_series,
+            icon_id=icon_id,
         )
 
 
@@ -150,6 +193,10 @@ class ActionMetadata(SQLModel):
     name: str = Field(description="操作名称")
     type: BuiltinActionType = Field(description="操作类型")
     description: str = Field(default="", description="操作描述")
+    icon_series: int = Field(
+        default=0, description="默认展示图标系列编号（0 表示由前端内置图标兜底）")
+    icon_id: int = Field(
+        default=0, description="默认展示图标在系列内的编号（0 表示由前端内置图标兜底）")
     parameters: list[ActionParameter] = Field(
         default_factory=list, description="参数列表")
     json_schema: Dict | None = Field(
@@ -166,6 +213,10 @@ class ActionMetadataResponse(SQLModel):
     action_id: str = Field(description="预设操作ID")
     action_type: BuiltinActionType = Field(description="操作类型")
     name: str = Field(default="", description="操作中文名")
+    icon_series: int = Field(
+        default=0, description="默认展示图标系列编号（0 表示前端内置图标兜底）")
+    icon_id: int = Field(
+        default=0, description="默认展示图标在系列内的编号（0 表示前端内置图标兜底）")
     json_schema: Dict = Field(description="完整的 JSON Schema")
 
 

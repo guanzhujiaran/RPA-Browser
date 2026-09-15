@@ -67,6 +67,9 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     workflows_duplicate = "/workflows/duplicate"
     workflows_execute = "/workflows/execute"
     workflows_execute_step = "/workflows/execute-step"
+    workflows_run = "/workflows/run"
+    workflows_runs = "/workflows/runs"
+    workflows_runs_get = "/workflows/runs/get"
 
     # === 操作日志查询 ===
     action_logs_list = "/action-logs/list"

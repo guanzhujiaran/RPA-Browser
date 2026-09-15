@@ -113,18 +113,18 @@ async def browser_session_status(
         int(browser_info.browser_id)
     )
 
-    # 确定状态码
-    if not status_data.session_exists:
-        code = ResponseCode.SESSION_NOT_FOUND
-        msg = "浏览器会话不存在"
-    elif not status_data.browser_running:
-        code = ResponseCode.BROWSER_NOT_STARTED
-        msg = "浏览器会话存在但未运行"
-    else:
-        code = ResponseCode.SUCCESS
-        msg = "获取会话状态成功"
-
-    return StandardResponse(code=code, msg=msg, data=status_data)
+    # 会话状态查询是**只读语义**：「会话不存在」「浏览器未运行」都是正常状态，不是错误。
+    # 状态完全由 data 的 session_exists / browser_running / lifecycle_state / status 表达，
+    # 因此这里恒返回成功码，不再用错误码表达状态。
+    #
+    # 历史问题：此前返回 SESSION_NOT_FOUND(1006) / BROWSER_NOT_STARTED(1007)，
+    # 而 add_error_status_middleware 会把业务码回写成 HTTP 状态
+    # （http_status_for_code 对 1000+ 自定义码兜底为 400），于是「尚未建立会话」这个
+    # 高频正常轮询结果变成了 HTTP 400，前端与日志都会按失败处理。
+    return success_response(
+        data=status_data,
+        msg=status_data.message or "获取会话状态成功",
+    )
 
 
 @router.post(

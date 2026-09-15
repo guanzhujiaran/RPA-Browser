@@ -46,6 +46,19 @@ class ExecutionStatus(StrEnumAutoDoc):
     CANCELLED = "cancelled"
 
 
+class WorkflowRunStatusEnum(StrEnumAutoDoc):
+    """工作流运行状态"""
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+class WorkflowRunTriggerEnum(StrEnumAutoDoc):
+    """工作流运行触发来源"""
+    MANUAL = "manual"       # 用户点击「立即运行」
+    SCHEDULE = "schedule"   # 定时调度触发
+
+
 # region ============ 社区资源基类 ============
 
 
@@ -123,6 +136,21 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     )
     is_composite: bool = Field(default=True, description="是否为组合动作")
     description: str = Field(default="", max_length=500, description="动作描述")
+    # === 展示图标（后端只存两个 int，语义与映射完全由前端决定） ===
+    # 约定：icon_series=0 或 icon_id=0 表示「默认图标」；
+    # 前端遇到未支持的系列/编号一律回落到默认图标，后端不做语义校验。
+    icon_series: int = Field(
+        default=0,
+        ge=0,
+        le=999999,
+        description="图标系列编号（0 表示默认图标；仅做 int 范围兜底，语义由前端决定）"
+    )
+    icon_id: int = Field(
+        default=0,
+        ge=0,
+        le=99999999,
+        description="图标在系列内的编号（0 表示默认图标；仅做 int 范围兜底，语义由前端决定）"
+    )
     input_vars: List[Dict] = Field(
         default_factory=list,
         sa_column=Column(JSON),
@@ -210,7 +238,11 @@ class UserPlugin(CommunityResourceBase, table=True):
 
 
 class UserWorkflow(CommunityResourceBase, table=True):
-    """用户工作流表 - 定时任务调度配置"""
+    """用户工作流表 - 定时任务调度配置
+
+    工作流是「调度外壳」：只持有一个 custom_action_id（引用共享的复合操作）、
+    触发配置与执行目标浏览器，不持有步骤（步骤在 CompositeActionModel.steps）。
+    """
     __table_args__ = (
         Index('idx_user_workflow_name_unique', 'mid', 'name', unique=True),
     )
@@ -228,7 +260,7 @@ class UserWorkflow(CommunityResourceBase, table=True):
         default=None,
         max_length=100,
         index=True,
-        description="要执行的自定义动作ID"
+        description="要执行的自定义动作ID（多对一共享，工作流不得改写该动作）"
     )
     description: str = Field(default="", max_length=500)
     forked_from_id: int | None = Field(
@@ -236,13 +268,64 @@ class UserWorkflow(CommunityResourceBase, table=True):
         foreign_key="userworkflow.id",
         description="Fork 来源的工作流ID"
     )
+    browser_id: int | None = Field(
+        default=None,
+        index=True,
+        description="执行目标浏览器ID（定时触发必填）"
+    )
     trigger_type: str = Field(
-        default="manual", max_length=50, description="触发类型")
+        default="manual", max_length=50, description="触发类型: manual/cron")
     trigger_config: Dict = Field(
         default_factory=dict,
         sa_column=Column(JSON),
-        description="触发配置"
+        description="触发配置，cron 触发时为 {\"cron\": \"*/5 * * * *\"}"
     )
+    last_run_at: datetime | None = Field(
+        default=None, description="上次运行结束时间")
+    last_run_status: str | None = Field(
+        default=None, max_length=20, description="上次运行状态: running/success/failed")
+    next_run_at: datetime | None = Field(
+        default=None, description="下次计划运行时间（由 cron 推导，仅供展示）")
+
+
+class WorkflowRunRecord(SQLModel, table=True):
+    """工作流运行记录 - 一次运行的聚合视图
+
+    步骤级明细仍落在 ActionLogRecord（source=workflow + workflow_id，
+    由 ExecutionEngine.execute_steps 自动写入，可经 execution_id 下钻）；
+    本表只记录「一次运行」的汇总，不依赖 action 的 log_enabled 配置。
+    """
+    __table_args__ = (
+        Index("idx_workflow_run_workflow_started", "workflow_id", "started_at"),
+        Index("idx_workflow_run_mid_started", "mid", "started_at"),
+        {"extend_existing": True},
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: str = Field(
+        max_length=64, unique=True, index=True, description="运行唯一标识")
+    workflow_id: str = Field(
+        max_length=100, index=True, description="关联工作流ID")
+    mid: str = Field(max_length=255, index=True, description="触发者用户ID")
+    browser_id: str = Field(
+        default="", max_length=100, index=True, description="执行目标浏览器ID")
+    trigger_source: WorkflowRunTriggerEnum = Field(
+        default=WorkflowRunTriggerEnum.MANUAL, description="触发来源")
+    status: WorkflowRunStatusEnum = Field(
+        default=WorkflowRunStatusEnum.RUNNING, index=True, description="运行状态")
+    total: int = Field(default=0, description="步骤总数")
+    success_count: int = Field(default=0, description="成功步骤数")
+    failed_count: int = Field(default=0, description="失败步骤数")
+    execution_id: str = Field(
+        default="", max_length=64, index=True,
+        description="关联执行批次ID，可下钻 ActionLogRecord 步骤日志")
+    error_message: str | None = Field(
+        default=None, max_length=2000, description="失败原因")
+    duration_ms: float = Field(default=0.0, description="总耗时(毫秒)")
+    started_at: datetime = Field(
+        default_factory=datetime.now, index=True, description="开始时间")
+    finished_at: datetime | None = Field(default=None, description="结束时间")
+    notified: bool = Field(default=False, description="失败通知是否已发送")
 
 
 class WorkflowRecord(SQLModel, table=True):

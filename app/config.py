@@ -142,16 +142,137 @@ class Settings(BaseSettings):
     RUNNING_MODE: ConfigRunningModeEnum
     controller_base_path: str | None = "/api"
     chromium_executable_dir: str | None = os.path.join(current_dir, "chrome")
+    # 有头(headful)模式是反自动化检测的关键，但服务器没有物理显示器，
+    # 因此用 Xvfb 提供虚拟屏幕：浏览器仍是完整有头模式，只是不真的显示出来
+    xvfb_enabled: bool = True
+    xvfb_display: str = ":99"
+    xvfb_screen: str = "1920x1080x24"
     jwt_algorithm: str = "HS256"  # JWT算法
     jwt_expire_minutes: int = 7 * 24 * 60  # JWT过期时间（分钟），默认30分钟
     proxy_server_url: str = "http://127.0.0.1:10809"  # 可以访问外网的代理地址
-    github_proxy_urls: list[str] = Field(
-        default_factory=lambda: ["https://gh.llkk.cc/",
-                                 "https://ghproxy.cn/",
-                                 "https://ghproxy.net/",
-                                 "https://gitproxy.click/",
-                                 "https://github.tbedu.top/",
-                                 "https://github.moeyy.xyz/"])
+    github_proxy_urls: list[str | None] = Field(
+        default_factory=lambda: [
+            None,
+            "https://gh-proxy.com/",
+            "https://gh-proxy.org/",
+            "https://ghproxy.net/",
+            "https://gh.b52m.cn/",
+            "https://github.xxlab.tech/",
+            "https://ghproxy.053000.xyz/",
+            "https://proxy.yaoyaoling.net/",
+            "https://gh.aaa.team/",
+            "https://g.blfrp.cn/",
+            "https://github.chenc.dev/",
+            "https://github.dpik.top/",
+            "https://gh-proxy.com/",
+            "https://github.cnxiaobai.com/",
+            "https://gh.padao.fun/",
+            "https://ghproxy.sakuramoe.dev/",
+            "https://30006000.xyz/",
+            "https://gh.monlor.com/",
+            "https://ghp.keleyaa.com/",
+            "https://ghproxy.mirror.skybyte.me/",
+            "https://fastgit.cc/",
+            "https://xiaomo-station.top/",
+            "https://github-proxy.lixxing.top/",
+            "https://gh.shiina-rimo.cafe/",
+            "https://gh.idayer.com/",
+            "https://gh.996986.xyz/",
+            "https://gitproxy.mrhjx.cn/",
+            "https://getgit.love8yun.eu.org/",
+            "https://ghm.078465.xyz/",
+            "https://gh.ddlc.top/",
+            "https://git.yylx.win/",
+            "https://gh.198962.xyz/",
+            "https://proxy.baguoyuyan.com/",
+            "https://ghproxy.imciel.com/",
+            "https://jiashu.1win.eu.org/",
+            "https://git.820828.xyz/",
+            "https://gh.1k.ink/",
+            "https://ghproxy.net/",
+            "https://github.ihnic.com/",
+            "https://ghpxy.hwinzniej.top/",
+            "https://github.mlmle.cn/",
+            "https://gp.871201.xyz/",
+            "https://github.zzrbk.xyz/",
+            "https://ghproxy.cxkpro.top/",
+            "https://gh.catmak.name/",
+            "https://ghproxy.xzhouqd.com/",
+            "https://hub.ddayh.com/",
+            "https://kenyu.ggff.net/",
+            "https://gh.halonice.com/",
+            "https://gh.nxnow.top/",
+            "https://github.boringhex.top/",
+            "https://github.crdz.eu.org/",
+            "https://github.lsdfxdk.nyc.mn/",
+            "https://github.ednovas.xyz/",
+            "https://tvv.tw/",
+            "https://ggg.clwap.dpdns.org/",
+            "https://github.788787.xyz/",
+            "https://github.tianrld.top/",
+            "https://gh.chjina.com/",
+            "https://github.1ms.xx.kg/",
+            "https://git.951959483.xyz/",
+            "https://github.880824.xyz/",
+            "https://gh.chalin.tk/",
+            "https://gh.noki.icu/",
+            "https://www.5555.cab/",
+            "https://ghf.无名氏.top/",
+            "https://y.whereisdoge.work/",
+            "https://gh.xxooo.cf/",
+            "https://github-proxy.memory-echoes.cn/",
+            "https://free.cn.eu.org/",
+            "https://github.geekery.cn/",
+            "https://ghps.cc/",
+            "https://gitproxy.127731.xyz/",
+            "https://gh.con.sh/",
+            "https://gh.dpik.top/",
+            "https://down.npee.cn/",
+            "https://git.669966.xyz/",
+            "https://ghfile.geekertao.top/",
+            "https://ghproxy.cn/",
+            "https://git.40609891.xyz/",
+            "https://ghproxy.monkeyray.net/",
+            "https://gitproxy1.127731.xyz/",
+            "https://hub.gitmirror.com/",
+            "https://ghproxy.xiaopa.cc/",
+            "https://ghproxy.cfd/",
+            "https://github.tbedu.top/",
+            "https://ghproxy.vansour.top/",
+            "https://gh.wsmdn.dpdns.org/",
+            "https://gh.bugdey.us.kg/",
+            "https://github.bullb.net/",
+            "https://github.ruojian.space/",
+            "https://code-hub-hk.freexy.top/",
+            "https://gitproxy.197545.xyz/",
+            "https://ghproxy.mf-dust.dpdns.org/",
+            "https://gh.jasonzeng.dev/",
+            "https://j.1lin.dpdns.org/",
+            "https://j.1win.ggff.net/",
+            "https://git.zeas.cc/",
+            "https://gh.echofree.xyz/",
+            "https://github.kkproxy.dpdns.org/",
+            "https://ghb.nilive.top/",
+            "https://github.cn86.dev/",
+            "https://github.oterea.top/",
+            "https://ghproxy.fangkuai.fun/",
+            "https://gh-proxy.net/",
+            "https://gitproxy.click/",
+            "https://ghproxy.cc/",
+            "https://cf.ghproxy.cc/",
+            "https://proxy.atoposs.com/",
+            "https://github-proxy.com/",
+            "https://github.zjzzy.cloudns.org/",
+            "https://ghfast.top/",
+            "https://gp.zkitefly.eu.org/",
+            "https://gh.jdck.fun/",
+            "https://git.tangbai.cc/",
+            "https://ghproxy.1888866.xyz/",
+            "https://github.limoruirui.com/",
+            "https://gh.llkk.cc/",
+            "https://gh.39.al/",
+        ]
+    )
 
     # RabbitMQ 连接地址，用于 HTTP 请求 Action 通过 RPC 调用 FastapiApp 内部业务方法
     # 后端定时执行工作流时通过 RabbitMQ RPC 调用系统接口，不经过网关、不依赖 JWT
@@ -215,9 +336,17 @@ class Settings(BaseSettings):
 
     # 浏览器会话默认配置
     browser_session_auto_cleanup: bool = True  # 是否启用自动清理
-    browser_session_max_idle_time: int = 1800  # 最大闲置时间（秒）
-    browser_session_cleanup_interval: int = 300  # 清理检查间隔（秒）
-    browser_session_expiration_time: int | None = None  # 会话过期时间（秒），None表示不过期
+    browser_session_max_idle_time: int = 1800  # 最大闲置时间（秒）→ 超过后关实例出池
+    browser_session_cleanup_interval: int = 60  # 清理检查间隔（秒）
+    browser_session_expiration_time: int | None = (
+        None  # 会话过期时间（秒），None表示不过期
+    )
+    # ── 会话闲置三级软着陆（详见 docs/be-message-统一计划书.md §5.15）──
+    # 活跃时间戳统一由 LiveService.touch() 刷新；三级阈值须满足
+    # degrade_after < suspend_after < max_idle_time
+    browser_stream_degrade_after: int = 120  # 闲置降级阈值（秒）：降质降帧
+    browser_stream_suspend_after: int = 300  # 闲置挂起阈值（秒）：关流保实例
+    browser_session_terminate_grace: int = 60  # 关实例前宽限倒计时（秒）
 
     # 浏览器页面数量限制配置
     browser_max_pages_per_context: int = 10  # 每个浏览器上下文的最大页面数
@@ -227,14 +356,23 @@ class Settings(BaseSettings):
 
     # WebRTC 视频流配置
     browser_webrtc_idle_timeout: int = 300  # WebRTC 流最大闲置时间（秒），默认5分钟
+    browser_stream_degrade_quality: int = 50  # 降级后 JPEG 质量（0-100）
+    browser_stream_degrade_max_fps: int = 5  # 降级后最大帧率
+    # 降级后在浏览器侧降帧分辨率（screencast size），JPEG 编码/传输/解码同步降载
+    browser_stream_degrade_frame_max_width: int = 640
+    browser_stream_degrade_frame_max_height: int = 360
 
     # Alembic 数据库迁移配置
     alembic_auto_migrate: bool = True  # 是否在应用启动时自动执行数据库迁移
     alembic_upgrade_target: str = "heads"  # 迁移目标版本，默认为最新版本
 
     # 浏览器操作日志采集配置（用户未做任何设置时的服务端兜底值）
-    action_log_default_enabled: bool = False  # 默认是否采集操作日志（用户可按 action 覆盖）
-    action_log_max_payload_length: int = 4000  # params/result/variables 序列化后最大字符数
+    action_log_default_enabled: bool = (
+        False  # 默认是否采集操作日志（用户可按 action 覆盖）
+    )
+    action_log_max_payload_length: int = (
+        4000  # params/result/variables 序列化后最大字符数
+    )
     action_log_default_retention_days: int = 30  # 默认日志保留天数，0 表示永久保留
 
 

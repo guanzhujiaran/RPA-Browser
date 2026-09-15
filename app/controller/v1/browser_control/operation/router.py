@@ -7,7 +7,7 @@ from loguru import logger
 from typing import Any, Dict
 from bili_common.models.response import StandardResponse, success_response, error_response
 from app.models.router.router_prefix import BrowserControlRouterPath
-from app.services.RPA_browser.session.live_service import LiveService
+from app.services.RPA_browser.session.live_service import LiveService, live_service
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.security_depends import verify_browser_ownership
 from bili_common.models.depends import BrowserReqInfo, BrowserReqAuthInfo
@@ -78,6 +78,7 @@ async def open_page(
             return error_response(404, "会话不存在")
         
         entry = LiveService._browser_sessions[session_key]
+        await live_service.touch(mid, browser_id, source="operation")
         
         # 如果 page_index 为 -1，新建页面
         if request.page_index < 0:
@@ -120,6 +121,7 @@ async def close_page(
             return error_response(404, "会话不存在")
         
         entry = LiveService._browser_sessions[session_key]
+        await live_service.touch(mid, browser_id, source="operation")
         pages = entry.browser_session.browser.pages
         
         if request.page_index >= len(pages):
@@ -153,6 +155,7 @@ async def switch_page(
             return error_response(404, "会话不存在")
         
         entry = LiveService._browser_sessions[session_key]
+        await live_service.touch(mid, browser_id, source="operation")
         pages = entry.browser_session.browser.pages
         
         if request.page_index >= len(pages):
@@ -183,6 +186,7 @@ async def get_page_info(
         return error_response(404, "会话不存在")
     
     entry = LiveService._browser_sessions[session_key]
+    await live_service.touch(mid, browser_id, source="operation")
     pages = entry.browser_session.all_pages
     if request.page_index >= len(pages):
         return error_response(400, "页面索引超出范围")
@@ -220,6 +224,7 @@ async def get_browser_info(
             return error_response(404, "会话不存在")
         
         entry = LiveService._browser_sessions[session_key]
+        await live_service.touch(mid, browser_id, source="operation")
         browser = entry.browser_session.browser
         
         # 获取浏览器版本信息

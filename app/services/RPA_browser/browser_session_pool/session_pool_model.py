@@ -74,7 +74,8 @@ async def _cleanup_browser_creation_lock(mid, browser_id):
 class SessionInfo:
     """
     会话信息数据类
-    尽量不要直接实例化，通过`new`方法实例化
+    尽量不要直接实例化：走 `WebRTCEnabledSession.new`（新建）或
+    `from_init_data` / `_apply_init_data`（由初始化结果构造 / 原地回写）
     """
     playwright_instance: BaseUndetectedPlaywright
     browser_context: BrowserContext
@@ -83,6 +84,35 @@ class SessionInfo:
     _headless: bool
     created_at: datetime = datetime.now()
     logger: "loguru.Logger" = loguru.logger
+
+    @classmethod
+    def from_init_data(
+        cls, init_data: InitSessionRes, headless: bool = False
+    ) -> "SessionInfo":
+        """
+        会话实例的唯一构造入口：由 `_initialize_session` 的产物创建实例。
+
+        新增初始化字段时只需改这里，避免各个创建路径漏赋值。
+        """
+        return cls(
+            playwright_instance=init_data.playwright_instance,
+            browser_context=init_data.browser_context,
+            browser_generator=init_data.browser_generator,
+            fingerprint_params=init_data.fingerprint_params,
+            _headless=headless,
+        )
+
+    def _apply_init_data(self, init_data: InitSessionRes) -> None:
+        """
+        把初始化结果原地写回当前实例。
+
+        供「会话已关闭后就地重建」使用：池与 LiveService 持有的是本对象引用，
+        只能原地更新字段，不能换成新实例。
+        """
+        self.playwright_instance = init_data.playwright_instance
+        self.browser_context = init_data.browser_context
+        self.browser_generator = init_data.browser_generator
+        self.fingerprint_params = init_data.fingerprint_params
 
     @computed_field
     @property
@@ -493,29 +523,29 @@ class WebRTCEnabledSession(SessionInfo):
                 browser_context = await anext(browser_generator)
 
                 return InitSessionRes(
-                    **{
-                        "playwright_instance": playwright_instance,
-                        "browser_context": browser_context,
-                        "browser_generator": browser_generator,
-                        "fingerprint_params": fingerprint_params,
-                    }
+                    playwright_instance=playwright_instance,
+                    browser_context=browser_context,
+                    browser_generator=browser_generator,
+                    fingerprint_params=fingerprint_params,
                 )
             finally:
                 # 🔑 清理锁（可选，避免内存泄漏）
                 await _cleanup_browser_creation_lock(mid, browser_id)
 
     async def _create_session(self):
-        """创建会话实例"""
+        """
+        就地重建已关闭会话的底层浏览器资源（见 `SessionInfo._apply_init_data`）。
+
+        与 `new` 的区别只在写入方式：本方法是**同一个实例原地更新**，
+        `new` 是**创建新实例**，二者的初始化流程与字段赋值都复用
+        `_initialize_session` + `from_init_data` / `_apply_init_data`。
+        """
         init_data = await self._initialize_session(
             mid=self.playwright_instance.mid,
             browser_id=self.playwright_instance.browser_id,
             headless=self.headless,
         )
-
-        self.playwright_instance = init_data.playwright_instance
-        self.browser_context = init_data.browser_context
-        self.browser_generator = init_data.browser_generator
-        self.fingerprint_params = init_data.fingerprint_params
+        self._apply_init_data(init_data)
 
     @classmethod
     async def new(cls, mid, browser_id, headless=False):
@@ -523,14 +553,7 @@ class WebRTCEnabledSession(SessionInfo):
         创建新的浏览器实例，并且自动查询插件配置进行初始化
         """
         init_data = await cls._initialize_session(mid, browser_id, headless)
-
-        return cls(
-            playwright_instance=init_data.playwright_instance,
-            browser_context=init_data.browser_context,
-            browser_generator=init_data.browser_generator,
-            fingerprint_params=init_data.fingerprint_params,
-            _headless=headless,
-        )
+        return cls.from_init_data(init_data, headless)
 
 
 @dataclass

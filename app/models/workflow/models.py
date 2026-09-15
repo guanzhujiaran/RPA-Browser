@@ -87,15 +87,17 @@ class WorkflowStepResponse(SQLModel):
 
 
 class WorkflowCreateRequest(SQLModel):
-    """创建工作流请求"""
+    """创建工作流请求 - 工作流是调度外壳，只引用已有动作"""
     name: str = Field(description="工作流显示名称（必填）")
     custom_action_id: str | None = Field(
-        default=None, description="要执行的自定义动作ID")
+        default=None, description="要引用的自定义动作ID（多对一共享）")
     description: str = Field(default="", description="工作流描述")
+    browser_id: int | None = Field(
+        default=None, description="执行目标浏览器ID（定时触发必填）")
     trigger_type: str = Field(
         default="manual", max_length=50, description="触发类型: manual/cron")
     trigger_config: Dict = Field(
-        default_factory=dict, description="触发配置")
+        default_factory=dict, description="触发配置，cron 触发时为 {cron: 表达式}")
     is_public: bool = Field(default=False, description="是否公开给所有用户")
     enabled_plugins: List[PluginConfig] | None = Field(
         default=None, description="关联的插件列表")
@@ -105,8 +107,10 @@ class WorkflowUpdateRequest(SQLModel):
     """更新工作流请求"""
     id: int = Field(description="工作流数据库ID")
     name: str | None = Field(default=None, description="新名称")
-    custom_action_id: str | None = Field(default=None, description="要执行的自定义动作ID")
+    custom_action_id: str | None = Field(default=None, description="要引用的自定义动作ID")
     description: str | None = Field(default=None, description="新描述")
+    browser_id: int | None = Field(
+        default=None, description="执行目标浏览器ID（不传表示不修改）")
     trigger_type: str | None = Field(default=None, description="触发类型")
     trigger_config: Dict | None = Field(
         default=None, description="触发配置")
@@ -147,6 +151,7 @@ class WorkflowDetailResponse(SQLModel):
     name: str
     custom_action_id: str | None = None
     description: str
+    browser_id: int | None = None
     trigger_type: str
     trigger_config: Dict
     is_enabled: bool
@@ -156,6 +161,9 @@ class WorkflowDetailResponse(SQLModel):
     is_verified: bool = False
     forks_count: int = 0
     forked_from_id: int | None = None
+    last_run_at: datetime | None = None
+    last_run_status: str | None = None
+    next_run_at: datetime | None = None
     enabled_plugins: List[PluginConfig] = Field(default_factory=list, description="关联的插件列表")
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -168,6 +176,9 @@ class WorkflowListItemResponse(SQLModel):
     name: str
     custom_action_id: str | None = None
     description: str
+    browser_id: int | None = None
+    trigger_type: str = "manual"
+    trigger_config: Dict = Field(default_factory=dict)
     is_enabled: bool
     is_public: bool = False
     likes_count: int = 0
@@ -175,8 +186,47 @@ class WorkflowListItemResponse(SQLModel):
     is_verified: bool = False
     forks_count: int = 0
     forked_from_id: int | None = None
+    last_run_at: datetime | None = None
+    last_run_status: str | None = None
+    next_run_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class WorkflowRunNowRequest(SQLModel):
+    """立即运行已保存的工作流请求"""
+    id: int = Field(description="工作流数据库ID")
+    browser_id: int | None = Field(
+        default=None, description="运行目标浏览器ID，不传则使用工作流上配置的 browser_id")
+
+
+class WorkflowRunLogListRequest(SQLModel):
+    """工作流运行记录列表请求"""
+    workflow_id: str = Field(description="工作流ID")
+    page: int = Field(default=1, description="页码")
+    per_page: int = Field(default=10, description="每页数量")
+
+
+class WorkflowRunLogItemResponse(SQLModel):
+    """工作流运行记录列表项"""
+    id: int
+    run_id: str
+    workflow_id: str
+    browser_id: str = ""
+    trigger_source: str
+    status: str
+    total: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    execution_id: str = ""
+    error_message: str | None = None
+    duration_ms: float = 0.0
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class WorkflowRunLogDetailResponse(WorkflowRunLogItemResponse):
+    """工作流运行记录详情（携带 execution_id 供下钻步骤日志）"""
 
 
 class WorkflowCreateResponse(SQLModel):
@@ -238,6 +288,10 @@ class CompositeActionCreateRequest(SQLModel):
     action_type: BuiltinActionType = Field(
         default=BuiltinActionType.COMPOSITE, description="操作类型")
     description: str = Field(default="", description="操作描述")
+    icon_series: int = Field(
+        default=0, ge=0, le=999999, description="图标系列编号（0 表示默认图标）")
+    icon_id: int = Field(
+        default=0, ge=0, le=99999999, description="图标在系列内的编号（0 表示默认图标）")
     parameters_schema: List[Dict] = Field(
         default_factory=list, description="参数定义JSON")
     steps: List[Dict] = Field(
@@ -266,6 +320,10 @@ class CompositeActionUpdateRequest(SQLModel):
     action_id: str = Field(description="操作的 action_id（如 ca_xxx）")
     name: str | None = Field(default=None, description="新名称")
     description: str | None = Field(default=None, description="新描述")
+    icon_series: int | None = Field(
+        default=None, ge=0, le=999999, description="图标系列编号（不传表示不修改）")
+    icon_id: int | None = Field(
+        default=None, ge=0, le=99999999, description="图标在系列内的编号（不传表示不修改）")
     parameters_schema: List[Dict] | None = Field(
         default=None, description="参数定义JSON")
     steps: List[Dict] | None = Field(
@@ -324,6 +382,8 @@ class CompositeActionDetailResponse(SQLModel):
     version: str
     action_type: str
     description: str
+    icon_series: int = 0
+    icon_id: int = 0
     mid: str = ""
     parameters_schema: List[Dict]
     steps: List[Dict]
@@ -358,6 +418,8 @@ class CompositeActionListItemResponse(SQLModel):
     name: str
     action_type: str
     description: str
+    icon_series: int = 0
+    icon_id: int = 0
     steps_count: int
     tags: List[str] = Field(default_factory=list)
     is_enabled: bool
@@ -655,6 +717,11 @@ __all__ = [
     "WorkflowForkRequest",
     "WorkflowForkResponse",
     "WorkflowExecuteResponse",
+    # 工作流调度外壳：立即运行 / 运行记录
+    "WorkflowRunNowRequest",
+    "WorkflowRunLogListRequest",
+    "WorkflowRunLogItemResponse",
+    "WorkflowRunLogDetailResponse",
     # 复合操作
     "CompositeActionCreateRequest",
     "CompositeActionUpdateRequest",

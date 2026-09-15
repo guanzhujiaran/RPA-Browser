@@ -16,6 +16,10 @@ class ExecutionRequest(SQLModel):
     browser_id: int | str = Field(description="浏览器ID")
     variables: Dict = Field(default_factory=dict, description="变量池")
     page_index: int | None = Field(default=None, description="页面索引")
+    execution_id: str = Field(
+        default="",
+        description="执行批次ID；为空时由执行引擎自动生成，定时调度场景由调度侧预生成以便关联运行记录",
+    )
     auth_headers: Dict[str, str] = Field(
         default_factory=dict,
         description="本系统认证请求头（x-bili-mid、x-bili-level），供 HTTP 请求类操作按需透传",

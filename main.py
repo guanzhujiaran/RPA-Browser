@@ -8,6 +8,7 @@ from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
 from scripts.initd.main import init_dependencies
 from app.utils.alembic_migration import run_alembic_upgrade_head, check_schemas
+from app.utils.virtual_display import ensure_virtual_display, stop_virtual_display
 import asyncio
 from loguru import logger
 from app.services.mq.rpc_client import rpc_client
@@ -47,6 +48,9 @@ async def lifespan(app: FastAPI):
 
     await init_dependencies()
 
+    # 有头模式需要显示环境：无 DISPLAY 时拉起 Xvfb 虚拟屏幕（画面不真的显示）
+    await ensure_virtual_display()
+
     # 启动后台任务
     await start_background_tasks()
 
@@ -59,6 +63,7 @@ async def lifespan(app: FastAPI):
     logger.info("lifespan complete!")
     yield
     await stop_background_tasks()
+    await stop_virtual_display()
     await stop_rpc_server()
     await rpc_client.close()
 

@@ -53,6 +53,7 @@ from app.models.execution.action_params import (
 from app.models.execution.condition_models import ConditionRule
 from app.services.execution.actions.control_flow import CompositeAction as CompositeActionClass
 from app.services.execution.action_registry import action_registry
+from app.services.RPA_browser.session.live_service import live_service
 from app.models.execution.request_params import (
     ExecutionRequest,
     ActionExecutionRequest,
@@ -88,25 +89,31 @@ class ExecutionEngine:
         if page is None:
             raise ValueError("必须提供 page 参数")
 
-        # 构建 Scope（兼容旧 req.variables dict）
-        scope = Scope(req.variables)
-        output_vars = getattr(req, 'output_vars', None) or []
+        # 自动化运行期间占用会话（pin），禁止闲置降级/关闭；结束时刷新活跃再解除
+        live_service.pin(req.mid, browser_id)
+        try:
+            # 构建 Scope（兼容旧 req.variables dict）
+            scope = Scope(req.variables)
+            output_vars = getattr(req, 'output_vars', None) or []
 
-        return await self._run_action(
-            action_id=req.action_id,
-            params=params_to_dict(req.params),
-            scope=scope,
-            output_vars=output_vars,
-            session_id=session_id,
-            browser_id=browser_id,
-            page=page,
-            plugins=plugins or [],
-            mid=req.mid,
-            auth_headers=getattr(req, 'auth_headers', {}) or {},
-            execution_id=execution_id or getattr(req, 'execution_id', '') or new_execution_id(),
-            parent_execution_id=parent_execution_id,
-            log_source=log_source,
-        )
+            return await self._run_action(
+                action_id=req.action_id,
+                params=params_to_dict(req.params),
+                scope=scope,
+                output_vars=output_vars,
+                session_id=session_id,
+                browser_id=browser_id,
+                page=page,
+                plugins=plugins or [],
+                mid=req.mid,
+                auth_headers=getattr(req, 'auth_headers', {}) or {},
+                execution_id=execution_id or getattr(req, 'execution_id', '') or new_execution_id(),
+                parent_execution_id=parent_execution_id,
+                log_source=log_source,
+            )
+        finally:
+            await live_service.touch(req.mid, browser_id, source="action")
+            live_service.unpin(req.mid, browser_id)
 
     async def execute_steps(
         self,
@@ -130,38 +137,44 @@ class ExecutionEngine:
 
         时间复杂度：O(N)，N 为步骤数（不含嵌套）。
         """
-        scope = Scope(req.variables)
-        scope.set("execute_steps_func", self.execute_steps)
-        req_auth_headers = getattr(req, 'auth_headers', {}) or {}
-        exec_id = getattr(req, 'execution_id', '') or new_execution_id()
-        workflow_id = getattr(req, 'workflow_id', None)
+        # 自动化运行期间占用会话（pin），禁止闲置降级/关闭；结束时刷新活跃再解除
+        live_service.pin(req.mid, browser_id)
+        try:
+            scope = Scope(req.variables)
+            scope.set("execute_steps_func", self.execute_steps)
+            req_auth_headers = getattr(req, 'auth_headers', {}) or {}
+            exec_id = getattr(req, 'execution_id', '') or new_execution_id()
+            workflow_id = getattr(req, 'workflow_id', None)
 
-        pipeline = PipelineBuilder.build(steps)
+            pipeline = PipelineBuilder.build(steps)
 
-        async def executor(
-            action_id: str,
-            params: dict,
-            scope: Scope,
-            output_vars: list[str],
-        ) -> ActionResult:
-            return await self._run_action(
-                action_id=action_id,
-                params=params,
-                scope=scope,
-                output_vars=output_vars,
-                session_id=session_id,
-                browser_id=browser_id,
-                page=page,
-                plugins=plugins or [],
-                mid=req.variables.get("mid", req.mid),
-                auth_headers=req_auth_headers,
-                execution_id=exec_id,
-                depth=depth,
-                workflow_id=workflow_id,
-                log_source=ActionLogSourceEnum.WORKFLOW,
-            )
+            async def executor(
+                action_id: str,
+                params: dict,
+                scope: Scope,
+                output_vars: list[str],
+            ) -> ActionResult:
+                return await self._run_action(
+                    action_id=action_id,
+                    params=params,
+                    scope=scope,
+                    output_vars=output_vars,
+                    session_id=session_id,
+                    browser_id=browser_id,
+                    page=page,
+                    plugins=plugins or [],
+                    mid=req.variables.get("mid", req.mid),
+                    auth_headers=req_auth_headers,
+                    execution_id=exec_id,
+                    depth=depth,
+                    workflow_id=workflow_id,
+                    log_source=ActionLogSourceEnum.WORKFLOW,
+                )
 
-        return await pipeline.execute(scope, executor)
+            return await pipeline.execute(scope, executor)
+        finally:
+            await live_service.touch(req.mid, browser_id, source="workflow")
+            live_service.unpin(req.mid, browser_id)
 
     # ═══════════════ 核心执行 ─────────────────────────────────
 

@@ -9,7 +9,11 @@ from bili_common.models.response_code import ResponseCode
 
 
 def _status_for_biz_code(code: int | None) -> int:
-    """业务码 → 对外 HTTP 状态码（失败一律非 200，HTTP 状态无需与业务码同值）。"""
+    """业务码 → 对外 HTTP 状态码（业务码 → 200；HTTP 语义码 400~599 → 同值）。
+
+    契约见 bili_common 模块说明与 docs/response-code-design.md：
+    业务失败由 body 的 `code` 表达，HTTP 非 200 只用于 HTTP 层语义。
+    """
     return http_status_for_code(code)
 from app.models.consts.enums import ConfigRunningModeEnum
 import traceback
@@ -49,21 +53,31 @@ async def http_exception_handler(
 async def validation_exception_handler(
     _: Request, exc: RequestValidationError
 ) -> Response:
-    """处理请求验证异常"""
+    """处理请求验证异常
+
+    与 bili_common 契约对齐：参数校验失败统一 HTTP 400 + `code = INVALID_PARAM(400)`。
+    （此前返回 HTTP 422 但 body.code = 400，同一项目出现两套契约，改为与公共包一致。）
+    """
     logger.exception(f"Request validation failed: {exc.errors()}")
     response = StandardResponse(
-        code=ResponseCode.BAD_REQUEST,
+        code=ResponseCode.INVALID_PARAM,
         data=None,
         msg=f"请求参数验证失败: {exc.errors()}",
     )
 
-    return JSONResponse(content=response.model_dump(), status_code=422)
+    return JSONResponse(
+        content=response.model_dump(), status_code=ResponseCode.INVALID_PARAM
+    )
 
 
 async def custom_exception_handler(
     _: Request, exc: CustomBaseException
 ) -> Response:
-    """处理自定义业务异常（HTTP 状态码非 200，按业务码推导）"""
+    """处理自定义业务异常
+
+    HTTP 状态码按业务码推导（业务码 → 200；HTTP 语义码 400~599 → 同值），
+    业务失败由 body 的 `code` 表达 —— 详见 docs/response-code-design.md。
+    """
     code = exc.code or ResponseCode.INTERNAL_ERROR
     response = StandardResponse(
         code=code,
@@ -114,7 +128,8 @@ async def global_exception_handler(_: Request, exc: Exception) -> Response:
         response_code = ResponseCode.SERVICE_UNAVAILABLE
         logger.warning(f"Database connection lost (ID: {error_id}): {exc}\n{error_details['traceback']}")
     elif is_custom_exception:
-        # 自定义业务异常，使用异常中定义的 code 和 msg；HTTP 状态码按业务码推导（非 200）
+        # 自定义业务异常，使用异常中定义的 code 和 msg；
+        # HTTP 状态码按业务码推导（业务码 → 200；HTTP 语义码 400~599 → 同值）
         response_code = exc_code
         error_message = exc_msg
         status_code = _status_for_biz_code(exc_code)

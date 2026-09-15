@@ -44,6 +44,8 @@ class CleanupDecision:
     reason: str = ""
     next_state: SessionLifecycleState = SessionLifecycleState.ACTIVE
     priority: int = 0  # 优先级，数字越小优先级越高
+    # 闲置动作: none | degrade | suspend | restore | terminate
+    action: str = "none"
 
 
 class LiveService:
@@ -89,33 +91,88 @@ class LiveService:
             logger.error(f"解析会话键失败: {session_key}, error: {e}")
             raise
 
+    # ── 活跃刷新 / 自动化占用（见 docs/be-message-统一计划书.md §5.15）──
+
+    async def touch(self, mid: int | str, browser_id: int | str, *, source: str = "unknown") -> bool:
+        """刷新会话活跃时间戳（真实操作入口调用）。
+
+        语义：任何**真实操作**（HTTP 操作接口 / action 执行 / WebRTC 信令）都应调用本方法，
+        使会话回到 ACTIVE、解除流降级并取消「待关闭」宽限。**状态查询类接口不应调用**，
+        否则前端轮询会持续续命，导致闲置回收失效。
+
+        Returns:
+            bool: 会话存在并刷新成功返回 True
+        """
+        session_key = self._get_session_key(mid, browser_id)
+        entry = self._browser_sessions.get(session_key)
+        if entry is None:
+            return False
+
+        entry.last_activity = int(time.time())
+        entry.terminate_scheduled_at = None
+        entry.status = BrowserStatusEnum.RUNNING
+        entry.lifecycle_state = SessionLifecycleState.ACTIVE
+
+        # 解除流降级（幂等：未降级时为空操作；仅在真正恢复时重启一次 screencast）
+        manager = getattr(entry.browser_session, "webrtc_manager", None)
+        if manager is not None:
+            try:
+                await manager.set_degraded(False)
+            except Exception as e:
+                logger.debug(f"touch 解除降级失败: {session_key}, {e}")
+
+        logger.debug(f"会话活跃刷新: {session_key} (source={source})")
+        return True
+
+    def pin(self, mid: int | str, browser_id: int | str) -> bool:
+        """标记会话被自动化任务占用（占用期间禁止一切降级/关闭）。需与 unpin 配对。"""
+        entry = self._browser_sessions.get(self._get_session_key(mid, browser_id))
+        if entry is None:
+            return False
+        entry.pin_count += 1
+        return True
+
+    def unpin(self, mid: int | str, browser_id: int | str) -> bool:
+        """解除自动化任务占用（与 pin 配对；计数归零后恢复可回收）。"""
+        entry = self._browser_sessions.get(self._get_session_key(mid, browser_id))
+        if entry is None:
+            return False
+        if entry.pin_count > 0:
+            entry.pin_count -= 1
+        return True
+
     async def _check_session_cleanup(self):
-        """检查会话清理 - 使用状态机判断会话清理"""
+        """扫描所有会话并执行闲置生命周期动作（三级软着陆）。
+
+        以 `entry.last_activity` 为唯一活跃时间戳（由 touch() 刷新）：
+        - 被自动化任务 pin 住 → 跳过一切动作；
+        - 闲置达降级阈值 → 降质降帧；
+        - 闲置达挂起阈值 → 关流保实例；
+        - 闲置达关实例阈值 → 进入宽限期，到期 release_browser_session()。
+        """
         current_time = int(time.time())
-        sessions_to_cleanup = []
+        sessions_to_cleanup: list[tuple[str, CleanupDecision]] = []
 
-        # 🔑 第一阶段：收集需要清理的会话（不加锁，快速扫描）
+        # 🔑 第一阶段：评估并就地应用非关闭动作（降级/挂起/恢复）
         for session_key, entry in list(self._browser_sessions.items()):
-            # 使用状态机评估会话状态
-            cleanup_decision: CleanupDecision = self._evaluate_session_cleanup(
-                entry, current_time
-            )
+            decision = self._evaluate_session_cleanup(entry, current_time)
 
-            if cleanup_decision.should_cleanup:
+            if decision.action == "terminate":
                 logger.warning(
-                    f"会话 {session_key} 需要清理 - 原因: {cleanup_decision.reason}, "
-                    f"状态: {entry.lifecycle_state.value} -> {cleanup_decision.next_state.value}"
+                    f"会话 {session_key} 需要关闭 - 原因: {decision.reason}, "
+                    f"状态: {entry.lifecycle_state.value} -> {decision.next_state.value}"
                 )
-                sessions_to_cleanup.append((session_key, cleanup_decision))
-            elif cleanup_decision.next_state != entry.lifecycle_state:
-                # 状态转换但不需要清理
-                old_state = entry.lifecycle_state
-                entry.lifecycle_state = cleanup_decision.next_state
-                logger.debug(
-                    f"会话 {session_key} 状态转换: {old_state.value} -> {entry.lifecycle_state.value}"
+                sessions_to_cleanup.append((session_key, decision))
+                continue
+
+            try:
+                await self._apply_idle_action(entry, decision)
+            except Exception as e:
+                logger.error(
+                    f"应用闲置动作失败: {session_key}, action={decision.action}, error: {e}"
                 )
 
-        # 🔑 第二阶段：执行清理（每个会话单独加锁）
+        # 🔑 第二阶段：执行关闭（每个会话单独加锁）
         for session_key, decision in sessions_to_cleanup:
             try:
                 mid, browser_id = self._parse_session_key(session_key)
@@ -125,23 +182,24 @@ class LiveService:
             except Exception as e:
                 logger.error(f"清理会话失败: {session_key}, error: {e}")
 
-    def _evaluate_session_cleanup(self,
-                                  entry: BrowserSessionEntry, current_time: int
-                                  ) -> CleanupDecision:
+    def _evaluate_session_cleanup(
+        self, entry: BrowserSessionEntry, current_time: int
+    ) -> CleanupDecision:
+        """评估会话的闲置档位（纯函数，不修改 entry 状态）。
+
+        优先级：自动化占用(pin) > 过期 > 关实例(含宽限) > 挂起 > 降级 > 正常。
         """
-        评估会话是否需要清理 - 状态机核心逻辑
-
-        优先级顺序（从高到低）:
-        1. 过期时间检查 (expires_at)
-        2. 闲置时间检查 (idle timeout)
-        3. 直播流超时检查 (live stream timeout)
-
-        Returns:
-            CleanupDecision: 清理决策，包含是否清理、原因、下一个状态
-        """
-
         policy = entry.cleanup_policy
-        decision = CleanupDecision()
+        idle = entry.idle_duration
+
+        # === 优先级 0: 自动化任务占用，禁止任何降级/关闭 ===
+        if entry.is_pinned:
+            return CleanupDecision(
+                reason="自动化任务运行中(pin)",
+                next_state=SessionLifecycleState.ACTIVE,
+                priority=0,
+                action="restore",
+            )
 
         # === 优先级 1: 检查是否已过期 (expires_at) ===
         if entry.is_expired:
@@ -149,49 +207,92 @@ class LiveService:
                 should_cleanup=True,
                 reason="会话已过期",
                 next_state=SessionLifecycleState.TERMINATING,
-                priority=1
+                priority=1,
+                action="terminate",
             )
 
-        # === 优先级 2: 检查闲置超时 ===
-        time_since_last_activity = entry.idle_duration
-        is_idle = entry.is_idle
-        no_active_connections = entry.no_active_connections
-
-        if is_idle and no_active_connections and time_since_last_activity > policy.max_idle_time:
+        # === 优先级 2: 闲置达关实例阈值（先宽限，再关闭）===
+        if idle >= policy.max_idle_time:
+            if entry.terminate_scheduled_at is None:
+                entry.terminate_scheduled_at = current_time
+                logger.warning(
+                    f"会话闲置超时，进入 {settings.browser_session_terminate_grace}s "
+                    f"宽限期后关闭 (idle={idle}s, max_idle_time={policy.max_idle_time}s)"
+                )
+                return CleanupDecision(
+                    reason=f"闲置超时，{settings.browser_session_terminate_grace}s 宽限期",
+                    next_state=SessionLifecycleState.TERMINATING,
+                    priority=2,
+                    action="suspend",
+                )
+            if current_time >= entry.terminate_scheduled_at + settings.browser_session_terminate_grace:
+                return CleanupDecision(
+                    should_cleanup=True,
+                    reason=f"闲置超时 ({idle}s >= {policy.max_idle_time}s)",
+                    next_state=SessionLifecycleState.TERMINATING,
+                    priority=2,
+                    action="terminate",
+                )
             return CleanupDecision(
-                should_cleanup=True,
-                reason=f"闲置超时 ({time_since_last_activity}s > {policy.max_idle_time}s)",
+                reason="宽限期等待中",
                 next_state=SessionLifecycleState.TERMINATING,
-                priority=3
+                priority=2,
+                action="suspend",
             )
 
-        # === 状态转换逻辑（不清理，只更新状态）===
+        # 未达关实例阈值：清空宽限标记（防止残留）
+        entry.terminate_scheduled_at = None
 
-        # 从 IDLE 恢复到 ACTIVE
-        if entry.lifecycle_state == SessionLifecycleState.IDLE and entry.status == BrowserStatusEnum.RUNNING:
+        # === 优先级 3: 闲置达挂起阈值（关流保实例）===
+        if idle >= settings.browser_stream_suspend_after:
             return CleanupDecision(
-                should_cleanup=False,
-                reason="从闲置恢复活跃",
-                next_state=SessionLifecycleState.ACTIVE,
-                priority=99
-            )
-
-        # 从 ACTIVE 转为 IDLE
-        if entry.lifecycle_state == SessionLifecycleState.ACTIVE and is_idle and no_active_connections:
-            return CleanupDecision(
-                should_cleanup=False,
-                reason="进入闲置状态",
+                reason=f"闲置挂起 ({idle}s >= {settings.browser_stream_suspend_after}s)",
                 next_state=SessionLifecycleState.IDLE,
-                priority=99
+                priority=3,
+                action="suspend",
             )
 
-        # 默认保持当前状态
+        # === 优先级 4: 闲置达降级阈值（降质降帧）===
+        if idle >= settings.browser_stream_degrade_after:
+            return CleanupDecision(
+                reason=f"闲置降级 ({idle}s >= {settings.browser_stream_degrade_after}s)",
+                next_state=SessionLifecycleState.ACTIVE,
+                priority=4,
+                action="degrade",
+            )
+
+        # === 优先级 5: 活跃 ===
         return CleanupDecision(
-            should_cleanup=False,
             reason="状态正常",
-            next_state=entry.lifecycle_state,
-            priority=99
+            next_state=SessionLifecycleState.ACTIVE,
+            priority=99,
+            action="restore",
         )
+
+    async def _apply_idle_action(
+        self, entry: BrowserSessionEntry, decision: CleanupDecision
+    ):
+        """就地应用闲置动作（降级/挂起/恢复）并同步 entry 生命周期状态。"""
+        action = decision.action
+
+        if action == "suspend":
+            entry.status = BrowserStatusEnum.IDLE
+        elif action in ("restore", "degrade"):
+            entry.status = BrowserStatusEnum.RUNNING
+        entry.lifecycle_state = decision.next_state
+
+        manager = getattr(entry.browser_session, "webrtc_manager", None)
+        if manager is None:
+            return
+
+        if action == "degrade":
+            await manager.set_degraded(True)
+            logger.info(f"会话闲置降级: mid={entry.mid}, browser_id={entry.browser_id}")
+        elif action == "suspend":
+            await manager.suspend_streams()
+            logger.info(f"会话闲置挂起（关流保实例）: mid={entry.mid}, browser_id={entry.browser_id}")
+        elif action == "restore":
+            await manager.set_degraded(False)
 
     def get_browser_session_entry(
         self,
@@ -266,8 +367,11 @@ class LiveService:
 
             # 验证浏览器是否真正运行
             if entry.browser_running:
-                # 浏览器仍然可用，更新活动时间
+                # 浏览器仍然可用，更新活动时间并复位闲置状态
                 entry.last_activity = current_time
+                entry.terminate_scheduled_at = None
+                entry.status = BrowserStatusEnum.RUNNING
+                entry.lifecycle_state = SessionLifecycleState.ACTIVE
                 elapsed = time.time() - start_time
                 logger.debug(f"复用现有会话: {session_key}, 耗时: {elapsed:.3f}s")
                 return entry
@@ -284,6 +388,9 @@ class LiveService:
                 entry = self.get_browser_session_entry(mid, browser_id)
                 if entry.browser_running:
                     entry.last_activity = current_time
+                    entry.terminate_scheduled_at = None
+                    entry.status = BrowserStatusEnum.RUNNING
+                    entry.lifecycle_state = SessionLifecycleState.ACTIVE
                     elapsed = time.time() - start_time
                     logger.debug(
                         f"并发检查后发现会话已存在: {session_key}, 耗时: {elapsed:.3f}s")
@@ -496,6 +603,13 @@ class LiveService:
             screen_width=screen_width,
             viewport_width=viewport_width,
             viewport_height=viewport_height,
+            idle_seconds=entry.idle_duration,
+            is_pinned=entry.is_pinned,
+            pending_termination_at=(
+                entry.terminate_scheduled_at + settings.browser_session_terminate_grace
+                if entry.terminate_scheduled_at
+                else None
+            ),
         )
 
     async def ensure_webrtc_session(self, mid: int, browser_id: int, headless: bool = False) -> BrowserSessionEntry:
@@ -517,9 +631,11 @@ class LiveService:
         """
         session_key = LiveService._get_session_key(mid, browser_id)
 
-        # 检查是否已存在会话
+        # 检查是否已存在会话：返回前刷新活跃（用户重新拉流即视为活跃，可解除挂起）
         if session_key in LiveService._browser_sessions:
-            return self.get_browser_session_entry(mid, browser_id)
+            entry = self.get_browser_session_entry(mid, browser_id)
+            await self.touch(mid, browser_id, source="webrtc_ensure")
+            return entry
 
         # 使用标准的 get_or_create 创建会话（WebRTC 管理器自动初始化）
         entry = await self.get_or_create_browser_session_entry(

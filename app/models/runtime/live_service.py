@@ -7,6 +7,7 @@ Runtime 模块 - LiveService 数据模型
 from dataclasses import dataclass, field
 from typing import Set
 import time
+from app.config import settings
 from app.models.runtime.control import (
     BrowserStatusEnum,
     OperationPriority,
@@ -36,6 +37,10 @@ class BrowserSessionEntry:
     created_at: int = field(default_factory=lambda: int(time.time()))
     lifecycle_state: SessionLifecycleState = SessionLifecycleState.ACTIVE
     expires_at: int | None = None
+    # 自动化任务占用计数（>0 时禁止一切降级/关闭），见 §5.15
+    pin_count: int = 0
+    # 闲置超时后进入宽限期的时间戳（用于「倒计时关实例」）
+    terminate_scheduled_at: int | None = None
 
     @property
     def is_expired(self) -> bool:
@@ -49,8 +54,13 @@ class BrowserSessionEntry:
 
     @property
     def is_idle(self) -> bool:
-        """检查是否处于闲置状态"""
+        """检查是否处于闲置状态（挂起时 status 置为 IDLE）"""
         return self.status == BrowserStatusEnum.IDLE
+
+    @property
+    def is_pinned(self) -> bool:
+        """是否被自动化任务占用（占用期间禁止降级/关闭）"""
+        return self.pin_count > 0
 
     @property
     def no_active_connections(self) -> bool:
@@ -67,8 +77,11 @@ class BrowserSessionEntry:
         policy = self.cleanup_policy
         calculated = None
 
-        # 基于闲置的过期时间
-        if self.is_idle and self.no_active_connections:
+        # 闲置关实例：一旦进入宽限期，以「宽限截止」作为临期时间
+        if self.terminate_scheduled_at:
+            calculated = self.terminate_scheduled_at + settings.browser_session_terminate_grace
+        # 未进入宽限时，给出预计的关实例时间
+        elif self.is_idle and self.no_active_connections:
             idle_expires = self.last_activity + policy.max_idle_time
             if calculated is None or idle_expires < calculated:
                 calculated = idle_expires

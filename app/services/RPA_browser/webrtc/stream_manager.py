@@ -10,7 +10,6 @@ WebRTCStreamManager - WebRTC 流管理器（无循环引用 + 高效数据结构
 
 import asyncio
 import weakref
-import time
 from collections import OrderedDict
 from typing import Dict, Optional
 from loguru import logger
@@ -18,7 +17,6 @@ from loguru import logger
 from app.config import settings
 from app.models.runtime.webrtc_models import WebRTCSessionConfig
 from .stream_session import WebRTCStreamSession
-from app.scheduler_manager import scheduler_manager_ist
 
 
 class WebRTCStreamManager:
@@ -54,21 +52,14 @@ class WebRTCStreamManager:
         """
         self._session_ref = weakref.ref(session)
 
-        # 主索引：OrderedDict 维护 LRU 淘汰顺序（最近活跃的在末尾）
+        # 主索引：OrderedDict 维护 LRU 顺序（最近活跃的在末尾）
         self._streams_by_index: OrderedDict[int, WebRTCStreamSession] = OrderedDict()
         # 辅助索引：stream_key → stream 的 O(1) 映射
         self._streams_by_key: Dict[str, WebRTCStreamSession] = {}
 
-        # 注册定期清理任务（基于配置的 cleanup_interval）
-        mid = getattr(session.playwright_instance, 'mid', 'unknown')
-        bid = getattr(session.playwright_instance, 'browser_id', 'unknown')
-        scheduler_manager_ist.add_interval_job(
-            func=self._cleanup_idle_streams,
-            seconds=0,
-            minutes=10,
-            hours=0,
-            id=f"{mid}_{bid}_webrtc_cleanup",
-        )
+        # 闲置降级/挂起/关闭已统一收敛到 LiveService 的三级软着陆
+        # （见 docs/be-message-统一计划书.md §5.15），本管理器不再自行注册定时任务，
+        # 避免「只关流不关实例」与「信令计时不反映真实操作」两套口径冲突。
 
     # ── session 访问（弱引用解引用） ──
 
@@ -121,6 +112,10 @@ class WebRTCStreamManager:
         config = WebRTCSessionConfig(
             quality=80,
             idle_timeout=settings.browser_webrtc_idle_timeout,
+            degrade_quality=settings.browser_stream_degrade_quality,
+            degrade_max_fps=settings.browser_stream_degrade_max_fps,
+            degrade_frame_max_width=settings.browser_stream_degrade_frame_max_width,
+            degrade_frame_max_height=settings.browser_stream_degrade_frame_max_height,
         )
 
         # 创建并启动流
@@ -225,45 +220,30 @@ class WebRTCStreamManager:
             self._streams_by_index.pop(page_index, None)
             self._streams_by_key.pop(stream.stream_key, None)
 
-    async def _cleanup_idle_streams(self):
-        """
-        基于 LRU 顺序的闲置流清理
+    async def set_degraded(self, degraded: bool):
+        """对所有流设置降级/恢复（幂等）。
 
-        算法：
-        - 按 OrderedDict 顺序（从旧到新）扫描流
-        - 闲置超过 idle_timeout 的流被淘汰
-        - 因为越靠前的流越久未被访问，大概率最先超时
-        - 一旦遇到未超时流，后续流理论上也不会超时（LRU 保证）
+        降级：降低 screencast JPEG 质量并限制帧率，降低 CPU / 带宽占用；
+        恢复：回到全速质量。由 LiveService 闲置生命周期统一驱动。
         """
-        session = self.session
-        if session is None:
-            # session 已回收，无法访问页面信息，保守清理所有流
-            await self.close_all_streams()
+        for stream in list(self._streams_by_index.values()):
+            try:
+                await stream.set_degraded(degraded)
+            except Exception as e:
+                logger.error(f"设置流降级状态失败 stream_key={stream.stream_key}: {e}")
+
+    async def suspend_streams(self):
+        """挂起本会话的所有流（关闭 WebRTC 流，**保留浏览器实例**）。
+
+        语义化的闲置挂起：释放 screencast + PeerConnection 的 CPU，但保留
+        浏览器进程/内存。用户重新拉流时由 start_stream() 幂等重建。
+        """
+        if not self._streams_by_index:
             return
-
-        current_time = time.time()
-        to_evict: list[tuple[int, WebRTCStreamSession]] = []
-
-        for page_index, stream in self._streams_by_index.items():
-            idle_time = stream.idle_duration
-            if idle_time > stream.config.idle_timeout:
-                to_evict.append((page_index, stream))
-            # 注意：不 break，因为可能有多个超时流连续出现在前面
-
-        for page_index, stream in to_evict:
-            logger.warning(
-                f"WebRTC 流闲置超时淘汰: page_index={page_index}, "
-                f"idle={stream.idle_duration:.0f}s, timeout={stream.config.idle_timeout}s"
-            )
-            await self._evict_stream(page_index, stream)
-
-        # 清理孤儿索引（stream 已关闭但索引残留）
-        orphan_keys = [
-            k for k, v in self._streams_by_key.items()
-            if v.page_index not in self._streams_by_index
-        ]
-        for k in orphan_keys:
-            self._streams_by_key.pop(k, None)
+        logger.info(
+            f"闲置挂起：关闭 {len(self._streams_by_index)} 个 WebRTC 流（保留浏览器实例）"
+        )
+        await self.close_all_streams()
 
     # ── 查询属性（兼容旧接口） ──
 

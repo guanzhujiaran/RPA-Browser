@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: f12701ed6cc4
+Revision ID: c710c4a3f4b6
 Revises: 
-Create Date: 2026-09-10 16:03:53.445788
+Create Date: 2026-09-15 13:31:27.476851
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f12701ed6cc4'
+revision: str = 'c710c4a3f4b6'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -92,6 +92,8 @@ def upgrade() -> None:
     sa.Column('steps', sa.JSON(), nullable=True),
     sa.Column('is_composite', sa.Boolean(), nullable=False),
     sa.Column('description', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
+    sa.Column('icon_series', sa.Integer(), nullable=False),
+    sa.Column('icon_id', sa.Integer(), nullable=False),
     sa.Column('input_vars', sa.JSON(), nullable=True),
     sa.Column('output_vars', sa.JSON(), nullable=True),
     sa.Column('forked_from_id', sa.Integer(), nullable=True),
@@ -377,12 +379,17 @@ def upgrade() -> None:
     sa.Column('custom_action_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=True),
     sa.Column('description', sqlmodel.sql.sqltypes.AutoString(length=500), nullable=False),
     sa.Column('forked_from_id', sa.Integer(), nullable=True),
+    sa.Column('browser_id', sa.Integer(), nullable=True),
     sa.Column('trigger_type', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
     sa.Column('trigger_config', sa.JSON(), nullable=True),
+    sa.Column('last_run_at', sa.DateTime(), nullable=True),
+    sa.Column('last_run_status', sqlmodel.sql.sqltypes.AutoString(length=20), nullable=True),
+    sa.Column('next_run_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['forked_from_id'], ['userworkflow.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_user_workflow_name_unique', 'userworkflow', ['mid', 'name'], unique=True)
+    op.create_index(op.f('ix_userworkflow_browser_id'), 'userworkflow', ['browser_id'], unique=False)
     op.create_index(op.f('ix_userworkflow_custom_action_id'), 'userworkflow', ['custom_action_id'], unique=False)
     op.create_index(op.f('ix_userworkflow_mid'), 'userworkflow', ['mid'], unique=False)
     op.create_index(op.f('ix_userworkflow_original_mid'), 'userworkflow', ['original_mid'], unique=False)
@@ -420,6 +427,34 @@ def upgrade() -> None:
     op.create_index('idx_workflow_user_name_unique', 'workflowrecord', ['mid', 'name'], unique=True)
     op.create_index(op.f('ix_workflowrecord_mid'), 'workflowrecord', ['mid'], unique=False)
     op.create_index(op.f('ix_workflowrecord_workflow_id'), 'workflowrecord', ['workflow_id'], unique=True)
+    op.create_table('workflowrunrecord',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('run_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
+    sa.Column('workflow_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
+    sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
+    sa.Column('browser_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
+    sa.Column('trigger_source', sa.Enum('MANUAL', 'SCHEDULE', name='workflowruntriggerenum'), nullable=False),
+    sa.Column('status', sa.Enum('RUNNING', 'SUCCESS', 'FAILED', name='workflowrunstatusenum'), nullable=False),
+    sa.Column('total', sa.Integer(), nullable=False),
+    sa.Column('success_count', sa.Integer(), nullable=False),
+    sa.Column('failed_count', sa.Integer(), nullable=False),
+    sa.Column('execution_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
+    sa.Column('error_message', sqlmodel.sql.sqltypes.AutoString(length=2000), nullable=True),
+    sa.Column('duration_ms', sa.Float(), nullable=False),
+    sa.Column('started_at', sa.DateTime(), nullable=False),
+    sa.Column('finished_at', sa.DateTime(), nullable=True),
+    sa.Column('notified', sa.Boolean(), nullable=False),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index('idx_workflow_run_mid_started', 'workflowrunrecord', ['mid', 'started_at'], unique=False)
+    op.create_index('idx_workflow_run_workflow_started', 'workflowrunrecord', ['workflow_id', 'started_at'], unique=False)
+    op.create_index(op.f('ix_workflowrunrecord_browser_id'), 'workflowrunrecord', ['browser_id'], unique=False)
+    op.create_index(op.f('ix_workflowrunrecord_execution_id'), 'workflowrunrecord', ['execution_id'], unique=False)
+    op.create_index(op.f('ix_workflowrunrecord_mid'), 'workflowrunrecord', ['mid'], unique=False)
+    op.create_index(op.f('ix_workflowrunrecord_run_id'), 'workflowrunrecord', ['run_id'], unique=True)
+    op.create_index(op.f('ix_workflowrunrecord_started_at'), 'workflowrunrecord', ['started_at'], unique=False)
+    op.create_index(op.f('ix_workflowrunrecord_status'), 'workflowrunrecord', ['status'], unique=False)
+    op.create_index(op.f('ix_workflowrunrecord_workflow_id'), 'workflowrunrecord', ['workflow_id'], unique=False)
     op.create_table('compositeactiontaglink',
     sa.Column('composite_action_id', sa.Integer(), nullable=False),
     sa.Column('tag_id', sa.Integer(), nullable=False),
@@ -448,6 +483,16 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_workflowpluginrelation_plugin_id'), table_name='workflowpluginrelation')
     op.drop_table('workflowpluginrelation')
     op.drop_table('compositeactiontaglink')
+    op.drop_index(op.f('ix_workflowrunrecord_workflow_id'), table_name='workflowrunrecord')
+    op.drop_index(op.f('ix_workflowrunrecord_status'), table_name='workflowrunrecord')
+    op.drop_index(op.f('ix_workflowrunrecord_started_at'), table_name='workflowrunrecord')
+    op.drop_index(op.f('ix_workflowrunrecord_run_id'), table_name='workflowrunrecord')
+    op.drop_index(op.f('ix_workflowrunrecord_mid'), table_name='workflowrunrecord')
+    op.drop_index(op.f('ix_workflowrunrecord_execution_id'), table_name='workflowrunrecord')
+    op.drop_index(op.f('ix_workflowrunrecord_browser_id'), table_name='workflowrunrecord')
+    op.drop_index('idx_workflow_run_workflow_started', table_name='workflowrunrecord')
+    op.drop_index('idx_workflow_run_mid_started', table_name='workflowrunrecord')
+    op.drop_table('workflowrunrecord')
     op.drop_index(op.f('ix_workflowrecord_workflow_id'), table_name='workflowrecord')
     op.drop_index(op.f('ix_workflowrecord_mid'), table_name='workflowrecord')
     op.drop_index('idx_workflow_user_name_unique', table_name='workflowrecord')
@@ -456,6 +501,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_userworkflow_original_mid'), table_name='userworkflow')
     op.drop_index(op.f('ix_userworkflow_mid'), table_name='userworkflow')
     op.drop_index(op.f('ix_userworkflow_custom_action_id'), table_name='userworkflow')
+    op.drop_index(op.f('ix_userworkflow_browser_id'), table_name='userworkflow')
     op.drop_index('idx_user_workflow_name_unique', table_name='userworkflow')
     op.drop_table('userworkflow')
     op.drop_index(op.f('ix_userplugin_plugin_id'), table_name='userplugin')

@@ -111,6 +111,7 @@ class WebRTCStreamSession:
 
         self._state: WebRTCStreamState = WebRTCStreamState.INITIALIZING
         self._last_activity: float = time.time()
+        self._degraded: bool = False
 
         # 初始化或获取 Page 的 WebRTC 状态管理器
         if not hasattr(page, '_webrtc_state'):
@@ -157,6 +158,26 @@ class WebRTCStreamSession:
     def _touch(self):
         """更新活动时间"""
         self._last_activity = time.time()
+
+    def touch(self):
+        """公开的活跃刷新（供 LiveService.touch 调用）"""
+        self._touch()
+        self.webrtc_state.update_activity()
+
+    async def set_degraded(self, degraded: bool):
+        """切换降级状态（幂等）：降级时降低 screencast 质量并限帧。"""
+        if self._degraded == degraded:
+            return
+        self._degraded = degraded
+        if self.producer:
+            await self.producer.set_degraded(degraded)
+        logger.info(
+            f"WebRTC 流{'进入降级' if degraded else '恢复全速'}: {self.stream_key}"
+        )
+
+    @property
+    def is_degraded(self) -> bool:
+        return self._degraded
 
     # ── 生命周期 ──
 
