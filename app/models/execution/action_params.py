@@ -80,7 +80,8 @@ class BuiltinActionIconId(IntEnumAutoDoc):
     """内置操作的默认展示图标编号（系列统一见 BUILTIN_ACTION_ICON_SERIES）
 
     每个内置操作一个独立编号，前端按
-    `src/assets/action-icons/{分类}/s_{系列}_{系列名}/i_{编号}_{名称}.{ext}` 映射为实际图标；
+    `public/action-icons/{分类}/s_{系列}_{系列名}/i_{编号}_{名称}.{ext}` 映射为实际图标
+    （静态资源，编号→文件的映射由前端清单 `npm run icons:manifest` 生成）；
     图库中缺少对应资源时前端回落到内置图标，因此此处只声明编号，不校验资源是否存在。
     """
     CLICK = 1
