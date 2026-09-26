@@ -39,6 +39,10 @@ class BrowserSessionEntry:
     expires_at: int | None = None
     # 自动化任务占用计数（>0 时禁止一切降级/关闭），见 §5.15
     pin_count: int = 0
+    # 工作流执行占用：非 None 表示该会话正在执行某次工作流运行（见 §5.17）。
+    # 与 pin_count 的区别：pin 无法区分「工作流执行」与「用户单步调试」（两者都会 pin），
+    # 因此执行期互斥（工作流运行时禁止调试、放行直播）必须依赖本字段。
+    workflow_run_id: str | None = None
     # 闲置超时后进入宽限期的时间戳（用于「倒计时关实例」）
     terminate_scheduled_at: int | None = None
 
@@ -61,6 +65,11 @@ class BrowserSessionEntry:
     def is_pinned(self) -> bool:
         """是否被自动化任务占用（占用期间禁止降级/关闭）"""
         return self.pin_count > 0
+
+    @property
+    def is_workflow_running(self) -> bool:
+        """是否正在执行工作流（执行期禁止调试类接口；直播为只读拉流，不受影响）"""
+        return self.workflow_run_id is not None
 
     @property
     def no_active_connections(self) -> bool:

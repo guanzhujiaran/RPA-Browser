@@ -9,6 +9,7 @@ from bili_common.models.response import StandardResponse, success_response, erro
 from bili_common.models.response_code import ResponseCode
 from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.security_depends import verify_browser_ownership
+from app.utils.depends.vip_depends import is_vip_user
 from ..base import new_webrtc_router
 import loguru
 from app.models.runtime.control import PagesListResponse
@@ -87,9 +88,19 @@ async def switch_page(
         )
 
     try:
+        # 🔑 内存不足时不阻塞在排队上，直接返回排队业务码
+        if live_service.would_queue_browser_session(
+            mid, int(browser_id), is_vip_user(browser_info.auth_info)
+        ):
+            return error_response(
+                code=ResponseCode.BROWSER_LAUNCH_MEMORY_INSUFFICIENT,
+                msg="当前服务器内存不足，浏览器启动请求已进入排队，请稍后重试",
+            )
+
         # 🔑 获取浏览器会话
         entry = await live_service.get_or_create_browser_session_entry(
-            mid, int(browser_id), headless=False
+            mid, int(browser_id), headless=False,
+            is_vip=is_vip_user(browser_info.auth_info),
         )
 
         # 验证浏览器是否可用
@@ -147,9 +158,19 @@ async def close_page(
         )
 
     try:
+        # 🔑 内存不足时不阻塞在排队上，直接返回排队业务码
+        if live_service.would_queue_browser_session(
+            mid, int(browser_id), is_vip_user(browser_info.auth_info)
+        ):
+            return error_response(
+                code=ResponseCode.BROWSER_LAUNCH_MEMORY_INSUFFICIENT,
+                msg="当前服务器内存不足，浏览器启动请求已进入排队，请稍后重试",
+            )
+
         # 获取浏览器会话
         session = await live_service.get_or_create_browser_session_entry(
-            mid, int(browser_id), headless=False
+            mid, int(browser_id), headless=False,
+            is_vip=is_vip_user(browser_info.auth_info),
         )
 
         # 关闭页面

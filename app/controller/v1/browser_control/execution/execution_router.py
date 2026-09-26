@@ -12,6 +12,9 @@ from app.utils.depends.security_depends import verify_browser_ownership
 from app.utils.depends.admin_depends import assert_approved
 from bili_common.models.depends import BrowserReqAuthInfo
 from app.services.RPA_browser.session.live_service import live_service
+from app.models.common.exceptions.base_exception import (
+    BrowserWorkflowRunningException,
+)
 from app.services.execution.engine import ExecutionEngine
 from app.services.execution.action_registry import action_registry
 from app.services.execution.actions.control_flow import CompositeAction as CompositeActionClass
@@ -44,10 +47,15 @@ execution_engine = ExecutionEngine()
 
 
 async def _resolve_page(mid: int, browser_id: int | str, page_index: int | None = None):
-    """从 LiveService 解析浏览器页面，供路由层传入引擎"""
+    """从 LiveService 解析浏览器页面，供路由层传入引擎
+
+    会话不存在时由 ``get_browser_session_entry`` 抛 ``BrowserNotStartedException``（code=1007）
+    表达，前端据此引导用户重新启动（本入口不承担启动职责，见计划书 §5.17）。
+    工作流执行期间拒绝调试类调用（执行期互斥）；直播为只读拉流，不受影响。
+    """
     entry = live_service.get_browser_session_entry(mid=mid, browser_id=browser_id)
-    if not entry:
-        raise ValueError("浏览器不存在或未运行")
+    if entry.is_workflow_running:
+        raise BrowserWorkflowRunningException()
 
     if page_index is None:
         return await entry.browser_session.get_current_page()

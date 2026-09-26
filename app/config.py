@@ -1,7 +1,14 @@
 import os
+
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 「推送 / 服务标识」配置片段与推送渠道配置模型统一来自 bili-common（单一来源）
+from bili_common.core.push_settings import PushNotifySettingsMixin
+# 兼容 re-export：存量 `app.config.PushChannelConfig` 的引用无需改动
+from bili_common.models.push import PushChannelConfig
+
 from app.models.consts.enums import ConfigRunningModeEnum
 
 current_dir = os.path.dirname(__file__)
@@ -10,134 +17,7 @@ current_dir = os.path.dirname(__file__)
 PROJECT_ROOT = os.path.abspath(os.path.join(current_dir, ".."))
 
 
-class PushChannelConfig(BaseModel):
-    """全局推送渠道配置（pydantic 模型）。
-
-    字段与 message-service 的 PushChannelConfig 保持一致，以便原样序列化后
-    经 RabbitMQ 投递给 message-service 解析；未知字段一律忽略。
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    # 一言（随机句子）
-    hitokoto: bool = True
-
-    # Bark
-    bark_push: str = ""
-    bark_archive: str = ""
-    bark_group: str = ""
-    bark_sound: str = ""
-    bark_icon: str = ""
-    bark_level: str = ""
-    bark_url: str = ""
-
-    # 钉钉机器人
-    dd_bot_secret: str = ""
-    dd_bot_token: str = ""
-
-    # 飞书机器人
-    fskey: str = ""
-
-    # go-cqhttp
-    gobot_url: str = ""
-    gobot_qq: str = ""
-    gobot_token: str = ""
-
-    # Gotify
-    gotify_url: str = ""
-    gotify_token: str = ""
-    gotify_priority: int = 0
-
-    # iGot
-    igot_push_key: str = ""
-
-    # Server 酱
-    push_key: str = ""
-
-    # PushDeer
-    deer_key: str = ""
-    deer_url: str = ""
-
-    # Synology Chat
-    chat_url: str = ""
-    chat_token: str = ""
-
-    # PushPlus
-    push_plus_token: str = ""
-    push_plus_url: str = ""
-    push_plus_user: str = ""
-    push_plus_template: str = "html"
-    push_plus_channel: str = "wechat"
-    push_plus_webhook: str = ""
-    push_plus_callbackurl: str = ""
-    push_plus_to: str = ""
-
-    # 微加机器人
-    we_plus_bot_token: str = ""
-    we_plus_bot_receiver: str = ""
-    we_plus_bot_version: str = "pro"
-
-    # Qmsg 酱
-    qmsg_key: str = ""
-    qmsg_type: str = ""
-
-    # 企业微信
-    qywx_origin: str = ""
-    qywx_am: str = ""
-    qywx_key: str = ""
-
-    # Telegram
-    tg_bot_token: str = ""
-    tg_user_id: str = ""
-    tg_api_host: str = ""
-    tg_proxy_auth: str = ""
-    tg_proxy_host: str = ""
-    tg_proxy_port: str = ""
-
-    # 智能微秘书
-    aibotk_key: str = ""
-    aibotk_type: str = ""
-    aibotk_name: str = ""
-
-    # SMTP 邮件
-    smtp_server: str = ""
-    smtp_ssl: str = "false"
-    smtp_email: str = ""
-    smtp_password: str = ""
-    smtp_name: str = ""
-
-    # PushMe
-    pushme_key: str = ""
-    pushme_url: str = ""
-
-    # Chronocat
-    chronocat_qq: str = ""
-    chronocat_token: str = ""
-    chronocat_url: str = ""
-
-    # 自定义 Webhook
-    webhook_url: str = ""
-    webhook_body: str = ""
-    webhook_headers: str = ""
-    webhook_method: str = ""
-    webhook_content_type: str = ""
-
-    # Ntfy
-    ntfy_url: str = ""
-    ntfy_topic: str = ""
-    ntfy_priority: str = "3"
-    ntfy_token: str = ""
-    ntfy_username: str = ""
-    ntfy_password: str = ""
-    ntfy_actions: str = ""
-
-    # WxPusher
-    wxpusher_app_token: str = ""
-    wxpusher_topic_ids: str = ""
-    wxpusher_uids: str = ""
-
-
-class Settings(BaseSettings):
+class Settings(PushNotifySettingsMixin, BaseSettings):
     mysql_browser_info_url: str
     RUNNING_MODE: ConfigRunningModeEnum
     controller_base_path: str | None = "/api"
@@ -274,10 +154,9 @@ class Settings(BaseSettings):
         ]
     )
 
-    # RabbitMQ 连接地址，用于 HTTP 请求 Action 通过 RPC 调用 FastapiApp 内部业务方法
-    # 后端定时执行工作流时通过 RabbitMQ RPC 调用系统接口，不经过网关、不依赖 JWT
-    # heartbeat=180：与服务端保持一致，避免 handler 执行时间较长时 heartbeat 超时导致连接关闭
-    rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/?heartbeat=180"
+    # RabbitMQ 连接地址（rabbitmq_url）由 PushNotifySettingsMixin 提供，默认即
+    # docker-compose 内部服务名；本服务经它做 RPC 调用（不经过网关、不依赖 JWT），
+    # 后端定时执行工作流也走同一连接串。
 
     # be-message 服务地址：管理员身份判定（GET /api/v1/message/admin/me）统一由
     # be-message 裁决（权限数据存于其 msg_admin 表），RPA 不再持有独立 RpaAdmin 表。
@@ -305,13 +184,10 @@ class Settings(BaseSettings):
     )
 
     # 底下是不那么重要的配置
-    hitokoto_api_url: str = "https://v1.hitokoto.cn"
-    # 全局推送渠道配置（pydantic PushChannelConfig，与 message-service / fastapi 共用同一份）
-    # 作为无 per-user 通知配置时的兜底；由 pydantic-settings 自动解析 JSON 环境变量，无需 Json() 包装
-    message_config: PushChannelConfig = PushChannelConfig()
-    # 本服务标识（写入推送告警标题，便于定位「哪台服务器的哪个服务」报错）
+    # 推送渠道配置（message_config）、服务标识（SERVER_NAME / SERVER_ADDRESS）、
+    # 渠道默认端点（pushme_url / pushplus_url）、hitokoto_api_url 等共用项
+    # 由 PushNotifySettingsMixin 提供，此处只覆盖本服务有差异的默认值。
     SERVER_NAME: str = "rpa-browser"
-    SERVER_ADDRESS: str = ""  # 缺省自动取本机 hostname
     GEMINI_API_KEY: str = "NotNecessary"
     default_proxy_server: str = (
         ""  # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128
@@ -348,17 +224,68 @@ class Settings(BaseSettings):
     browser_stream_suspend_after: int = 300  # 闲置挂起阈值（秒）：关流保实例
     browser_session_terminate_grace: int = 60  # 关实例前宽限倒计时（秒）
 
+    # ── 浏览器启动内存准入与排队 ──
+    # 启动浏览器前先检查系统可用内存：内存充足立即放行；不足则进入启动队列排队。
+    # 队列分两条：VIP 队列优先于普通用户队列；VIP 身份来自 x-bili-vip-status 请求头。
+    browser_launch_queue_enabled: bool = True  # 是否启用内存准入排队（关闭=不做任何限制）
+    browser_launch_min_available_memory_mb: int = (
+        1024  # 启动单个浏览器所需的「最小可用内存」(MB)，低于该值拒绝放行
+    )
+    browser_launch_reserved_memory_mb: int = (
+        768  # 单个浏览器启动的内存预留额度(MB)：用于并发准入记账，避免瞬时放行打爆内存
+    )
+    browser_launch_admit_cooldown_ms: int = (
+        1000  # 两次放行的最小间隔(ms)：给浏览器进程内存爬升留出时间
+    )
+    browser_launch_queue_tick_interval_ms: int = 1000  # 队列兜底轮询间隔(ms)
+    browser_launch_queue_max_wait_time: int = (
+        600  # 排队最大等待时间(秒)，超时抛错；0 表示不限
+    )
+
+    # ── 排队时长估算（ETA）──
+    # 用「连续放行间隔」的实测均值 × 前方人数估算等待时长，供前端展示。
+    # 仅采样「放行后队列仍有等待者」的间隔：此时放行节奏由内存释放 + 冷却共同决定，
+    # 才是排队时长的有效信号；队列排空后的间隔只反映空闲时长，纳入会严重高估。
+    browser_launch_eta_sample_window: int = 20  # 放行间隔采样窗口（最近 N 次连续放行）
+    browser_launch_eta_min_samples: int = (
+        3  # 生效所需的最少样本数；不足则退化为冷却下限估算（偏乐观，标记为不可信）
+    )
+
+    # ── 浏览器内存实测估算（实测校准准入额度，防止并发启动 OOM）──
+    # 实测口径：按会话的 --user-data-dir 聚合 Chromium 进程树，累加 /proc 的 PSS
+    # （共享内存按比例分摊，避免多进程重复计数）。本机实测参考：
+    # 有头 Chromium 空页面 ≈ 435MB，重 DOM 页面 ≈ 465MB，每多开 1 个 page ≈ +15~20MB。
+    browser_memory_estimate_enabled: bool = True  # 是否按实测占用自适应调整预留额度
+    browser_memory_scan_interval: int = 15  # 全量扫描浏览器进程内存的间隔(秒)
+    browser_memory_post_launch_delay: int = 10  # 启动完成后延迟多久采样(秒)，等内存爬升
+    browser_memory_sample_window: int = 20  # 内存样本滑动窗口长度
+    browser_memory_min_samples: int = 3  # 至少积累多少样本才用实测值覆盖基准值
+    browser_memory_safety_factor: float = 1.1  # 实测值的安全系数（额外留出的余量）
+    browser_memory_min_sample_mb: int = 64  # 低于该值的采样视为噪声（进程未真正起来），丢弃
+
+    # ── 并发护栏（除内存外的硬性上限，双保险防 OOM）──
+    browser_launch_max_memory_percent: float = (
+        90.0  # 系统内存使用率红线(%)：超过则一律不放行，避免 OOM Killer 介入
+    )
+    browser_max_concurrent_instances: int = (
+        0  # 同时存在的浏览器实例数上限（运行中+启动中）；0 表示仅按内存限制
+    )
+
     # 浏览器页面数量限制配置
     browser_max_pages_per_context: int = 10  # 每个浏览器上下文的最大页面数
 
     # 工作流控制流嵌套深度限制
     workflow_max_nesting_depth: int = 10  # 最大嵌套深度（Loop/IfElse）
 
-    # WebRTC 视频流配置
+    # WebRTC 视频流配置（清晰度档位见计划书 §5.18）
     browser_webrtc_idle_timeout: int = 300  # WebRTC 流最大闲置时间（秒），默认5分钟
-    browser_stream_degrade_quality: int = 50  # 降级后 JPEG 质量（0-100）
-    browser_stream_degrade_max_fps: int = 5  # 降级后最大帧率
-    # 降级后在浏览器侧降帧分辨率（screencast size），JPEG 编码/传输/解码同步降载
+    browser_stream_medium_quality: int = 65  # 标清档 JPEG 质量（0-100）
+    browser_stream_medium_max_fps: int = 15  # 标清档最大帧率
+    browser_stream_medium_frame_max_width: int = 960  # 标清档浏览器侧分辨率上限
+    browser_stream_medium_frame_max_height: int = 540
+    browser_stream_degrade_quality: int = 50  # 流畅档（原「降级档」）JPEG 质量（0-100）
+    browser_stream_degrade_max_fps: int = 5  # 流畅档最大帧率
+    # 流畅档在浏览器侧降分辨率（screencast size），JPEG 编码/传输/解码同步降载
     browser_stream_degrade_frame_max_width: int = 640
     browser_stream_degrade_frame_max_height: int = 360
 
@@ -395,4 +322,4 @@ class CONF:
         user_data_dir = os.path.join(PROJECT_ROOT, "user_data_dir")
 
 
-__all__ = ["settings", "CONF"]
+__all__ = ["settings", "CONF", "PushChannelConfig"]

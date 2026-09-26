@@ -7,6 +7,7 @@ from app.controller.v1.admin.certification_router import router as certification
 from app.controller.v1.admin.audit_router import router as audit_sub_router
 from app.controller.v1.admin.user_ban_router import router as user_ban_sub_router
 from app.controller.v1.admin.browser_monitor_router import router as browser_monitor_sub_router
+from app.controller.v1.admin.permission_router import router as permission_sub_router
 from app.models.router.all_routes import admin_router
 from app.utils.controller.router_path import gen_api_router
 
@@ -18,5 +19,6 @@ router.include_router(certification_sub_router)
 router.include_router(audit_sub_router)
 router.include_router(user_ban_sub_router)
 router.include_router(browser_monitor_sub_router)
+router.include_router(permission_sub_router)
 
 __all__ = ["router"]

@@ -7,12 +7,15 @@ from app.models.runtime.control import (
     CreateSessionResponse,
     CloseSessionResponse,
     BrowserSessionStatus,
+    BrowserLaunchQueueStatusResponse,
 )
 from bili_common.models.response import StandardResponse, success_response, error_response
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserSessionRouterPath
+from app.services.RPA_browser.session.launch_queue import get_launch_queue
 from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
+from app.utils.depends.vip_depends import is_vip_user
 from app.utils.depends.security_depends import verify_browser_ownership
 from bili_common.models.depends import BrowserReqInfo, BrowserReqAuthInfo
 from ..base import new_session_router
@@ -64,13 +67,16 @@ async def create_browser_session(
             message="会话已存在，返回现有会话信息",
         )
         return success_response(data=response_data)
-    await LiveService.create_browser_session(
+
+    # 🔑 VIP 身份决定内存不足时进入哪条启动队列（VIP 队列优先）
+    is_vip = is_vip_user(auth_info)
+    result = await LiveService.create_browser_session(
         live_service,
         auth_info.mid,
         int(browser_info.browser_id),
+        is_vip=is_vip,
     )
 
-    # 立即返回响应，表示任务已启动
     current_time = int(time.time())
     expiration_time = settings.browser_session_expiration_time
     expires_at = (
@@ -78,14 +84,35 @@ async def create_browser_session(
         if expiration_time
         else None
     )
+
+    # 创建失败（如排队超时）：返回业务错误码，由前端展示提示
+    if not result.success:
+        return error_response(
+            code=ResponseCode(result.error_code) if result.error_code else ResponseCode.INTERNAL_ERROR,
+            msg=result.error or "创建浏览器会话失败",
+            data=CreateSessionResponse(
+                success=False,
+                session_id=session_key,
+                browser_started=False,
+                status="failed",
+                created_at=current_time,
+                expires_at=None,
+                message=result.message or "创建浏览器会话失败",
+            ),
+        )
+
+    # 内存不足时返回 queued + 排位，真正的启动在后台进行，前端轮询 /status 获取进度
     response_data = CreateSessionResponse(
         success=True,
         session_id=session_key,
-        browser_started=True,
-        status="running",
-        created_at=current_time,
-        expires_at=expires_at,
-        message="浏览器会话已创建",
+        browser_started=result.browser_started,
+        status="queued" if result.queued else "running",
+        created_at=result.created_at or current_time,
+        expires_at=result.expires_at if result.expires_at else expires_at,
+        message=result.message or "浏览器会话已创建",
+        queued=result.queued,
+        queue_type=result.queue_type,
+        queue_position=result.queue_position,
     )
 
     return success_response(data=response_data)
@@ -128,6 +155,43 @@ async def browser_session_status(
 
 
 @router.post(
+    BrowserSessionRouterPath.queue_status,
+    response_model=StandardResponse[BrowserLaunchQueueStatusResponse],
+)
+async def browser_launch_queue_status(
+    auth_info: AuthInfo = Depends(get_auth_info_from_header),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+):
+    """
+    查询浏览器启动排队状态
+
+    内存不足时浏览器启动会进入排队（VIP 队列优先于普通队列），本接口返回：
+
+    - 当前会话：是否在排队、所在队列（vip / normal）、排位、已等待时长、当前阶段
+      （queued=排队等待，launching=已放行正在启动）；
+    - 服务器整体：两条队列的等待数、正在启动数、可用内存水位、排队最大等待时长。
+
+    仅查询、不产生副作用：未排队时 in_queue=False，全局字段依然可用，
+    前端可据此展示「服务器繁忙」等提示。
+
+    Returns:
+        BrowserLaunchQueueStatusResponse: 启动排队状态
+    """
+    queue_data = live_service.get_launch_queue_status(
+        auth_info.mid, int(browser_info.browser_id)
+    )
+
+    if not queue_data.enabled:
+        msg = "内存准入排队未启用，浏览器启动无排队"
+    elif queue_data.in_queue:
+        msg = "当前会话正在启动队列中"
+    else:
+        msg = "当前会话未在启动队列中"
+
+    return success_response(data=queue_data, msg=msg)
+
+
+@router.post(
     BrowserSessionRouterPath.close,
     response_model=StandardResponse[CloseSessionResponse],
 )
@@ -147,9 +211,22 @@ async def close_browser_session(
     import time
 
     session_key = f"{auth_info.mid}_{browser_info.browser_id}"
+    browser_id = int(browser_info.browser_id)
 
-    # 检查会话是否存在
+    # 🔑 仍在启动队列中排队：关闭即取消排队，避免「关掉又被拉起」
     if session_key not in LiveService._browser_sessions:
+        cancelled = await get_launch_queue().cancel(auth_info.mid, browser_id)
+        if cancelled:
+            return success_response(
+                data=CloseSessionResponse(
+                    success=True,
+                    session_id=session_key,
+                    browser_id=browser_info.browser_id,
+                    mid=auth_info.mid,
+                    closed_at=int(time.time()),
+                    message="已取消浏览器启动排队",
+                )
+            )
         return error_response(
             code=ResponseCode.SESSION_NOT_FOUND,
             msg="浏览器会话不存在",

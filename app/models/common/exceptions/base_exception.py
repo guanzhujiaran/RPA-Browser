@@ -63,6 +63,23 @@ class BrowserNotStartedException(BaseException):
     msg = ResponseMsg.exception_browser_not_started
 
 
+class BrowserLaunchQueueTimeoutException(BaseException):
+    """启动排队超时（内存长时间不足以放行）"""
+
+    code = ResponseCode.BROWSER_LAUNCH_QUEUE_TIMEOUT
+    msg = ResponseMsg.exception_browser_launch_queue_timeout
+
+    def __init__(self, wait_seconds: int):
+        self.msg = self.msg.format(seconds=wait_seconds)
+
+
+class BrowserLaunchQueueCancelledException(BaseException):
+    """启动排队被取消（用户主动关闭 / 取消排队）"""
+
+    code = ResponseCode.BROWSER_LAUNCH_QUEUE_CANCELLED
+    msg = ResponseMsg.exception_browser_launch_queue_cancelled
+
+
 class VideoStreamInitFailedException(BaseException):
     code = ResponseCode.INTERNAL_ERROR
     msg = ResponseMsg.exception_video_stream_init_failed
@@ -141,6 +158,17 @@ class ActionNotAccessibleException(BaseException):
 
     def __init__(self, action_id: str):
         self.msg = self.msg.format(action_id=action_id)
+
+
+class BrowserWorkflowRunningException(BaseException):
+    """工作流执行期间拒绝调试类调用（执行期互斥，见计划书 §5.17）。
+
+    判定不依赖 ``pin_count``：``ExecutionEngine.execute_action``（单步调试自身）与
+    ``execute_steps``（工作流）都会 pin，无法据此区分「工作流在执行」与「用户自己在调试」，
+    因此依赖 ``BrowserSessionEntry.workflow_run_id``。
+    """
+    code = ResponseCode.BROWSER_WORKFLOW_RUNNING
+    msg = ResponseMsg.exception_browser_workflow_running
 
 
 class ActionNotFoundException(BaseException):

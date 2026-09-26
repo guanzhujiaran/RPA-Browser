@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import json
 import re
-import socket
 import time
 import urllib.parse
 import smtplib
@@ -13,6 +12,10 @@ from email.utils import formataddr
 import asyncio
 import inspect
 from typing import Type
+
+from bili_common.core.push_settings import build_server_label
+
+from app.config import settings
 from app.models.database.notify.models import NotificationConfig
 from app.utils.decorator import log_class_decorator
 from app.utils.http import httpx_client
@@ -988,15 +991,11 @@ async def one() -> str:
 def server_label() -> str:
     """返回本服务标识前缀，例如 ``[rpa-browser@10.0.0.5]``。
 
-    所有推送标题都会带上它，便于在告警中区分「是哪台服务器的哪个服务」报错。
-    ``SERVER_NAME`` / ``SERVER_ADDRESS`` 来自全局 ``settings``（可被环境变量覆盖），
+    实现统一在 ``bili_common.core.push_settings.build_server_label``（与
+    be-bilibili-crawler 共用一份），本函数只做本服务的零参包装，历史调用点保持不变。
     ``SERVER_ADDRESS`` 缺省时自动取本机 hostname。
     """
-    from app.config import settings
-
-    name = settings.SERVER_NAME or "rpa-browser"
-    addr = settings.SERVER_ADDRESS or socket.gethostname()
-    return f"[{name}@{addr}]"
+    return build_server_label(settings)
 
 
 async def send(

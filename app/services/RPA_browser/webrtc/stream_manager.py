@@ -15,7 +15,11 @@ from typing import Dict, Optional
 from loguru import logger
 
 from app.config import settings
-from app.models.runtime.webrtc_models import WebRTCSessionConfig
+from app.models.runtime.webrtc_models import (
+    StreamQualityLevelEnum,
+    StreamQualitySnapshot,
+    WebRTCSessionConfig,
+)
 from .stream_session import WebRTCStreamSession
 
 
@@ -60,6 +64,12 @@ class WebRTCStreamManager:
         # 闲置降级/挂起/关闭已统一收敛到 LiveService 的三级软着陆
         # （见 docs/be-message-统一计划书.md §5.15），本管理器不再自行注册定时任务，
         # 避免「只关流不关实例」与「信令计时不反映真实操作」两套口径冲突。
+
+        # 用户清晰度档位（会话级，见 §5.18）：记录在管理器而非各流内部，
+        # 这样「未开流时选档」也能作用于之后新建的流
+        self._level: StreamQualityLevelEnum = StreamQualityLevelEnum.HIGH
+        # 用户暂停开关（会话级）：暂停期间切页面会重建流，重建后仍应保持暂停
+        self._paused: bool = False
 
     # ── session 访问（弱引用解引用） ──
 
@@ -109,17 +119,25 @@ class WebRTCStreamManager:
         browser_id = session.playwright_instance.browser_id
         stream_key = f"{mid}:{browser_id}:page_{page_index}"
 
+        # 档位参数：high 走代码默认（JPEG 80 / 30fps / 浏览器自适应分辨率，见 §5.18）
         config = WebRTCSessionConfig(
-            quality=80,
             idle_timeout=settings.browser_webrtc_idle_timeout,
-            degrade_quality=settings.browser_stream_degrade_quality,
-            degrade_max_fps=settings.browser_stream_degrade_max_fps,
-            degrade_frame_max_width=settings.browser_stream_degrade_frame_max_width,
-            degrade_frame_max_height=settings.browser_stream_degrade_frame_max_height,
+            medium_quality=settings.browser_stream_medium_quality,
+            medium_max_fps=settings.browser_stream_medium_max_fps,
+            medium_frame_max_width=settings.browser_stream_medium_frame_max_width,
+            medium_frame_max_height=settings.browser_stream_medium_frame_max_height,
+            low_quality=settings.browser_stream_degrade_quality,
+            low_max_fps=settings.browser_stream_degrade_max_fps,
+            low_frame_max_width=settings.browser_stream_degrade_frame_max_width,
+            low_frame_max_height=settings.browser_stream_degrade_frame_max_height,
         )
 
-        # 创建并启动流
+        # 创建并启动流：先应用会话级的档位与暂停态再 start，
+        # 避免「先按高档启动、再降档重启 screencast」的无谓开销；
+        # 暂停态下 start() 会跳过 screencast 启动（浏览器侧零编码）
         stream = WebRTCStreamSession(stream_key, page, config, page_index)
+        await stream.set_level(self._level)
+        await stream.set_paused(self._paused)
         await stream.start()
 
         # 双向索引注册（新流插入 OrderedDict 末尾 = 最新）
@@ -219,6 +237,64 @@ class WebRTCStreamManager:
         finally:
             self._streams_by_index.pop(page_index, None)
             self._streams_by_key.pop(stream.stream_key, None)
+
+    async def set_level(self, level: StreamQualityLevelEnum) -> None:
+        """设置用户清晰度档位（见 §5.18）
+
+        记录到会话级（未开流时选档也能作用于之后新建的流），并即时应用到现有流。
+        """
+        self._level = level
+        for stream in list(self._streams_by_index.values()):
+            try:
+                await stream.set_level(level)
+            except Exception as e:
+                logger.error(
+                    f"设置流清晰度档位失败 stream_key={stream.stream_key}: {e}"
+                )
+
+    async def set_visibility(self, visible: bool) -> None:
+        """对所有流下发可见性信号（幂等，见 §5.18）
+
+        不可见降到最省档、恢复可见时回落到用户档位。与闲置降档分开记录，
+        避免 `touch()` 的「恢复全速」把仍在后台的页面一起恢复满帧。
+        """
+        for stream in list(self._streams_by_index.values()):
+            try:
+                await stream.set_visibility(visible)
+            except Exception as e:
+                logger.error(f"设置流可见性失败 stream_key={stream.stream_key}: {e}")
+
+    async def set_paused(self, paused: bool) -> None:
+        """暂停 / 恢复所有流的出帧（见 §5.18）
+
+        记录到会话级（暂停期间切页面重建流后仍保持暂停），并即时下发到现有流。
+        """
+        self._paused = paused
+        for stream in list(self._streams_by_index.values()):
+            try:
+                await stream.set_paused(paused)
+            except Exception as e:
+                logger.error(f"设置流暂停态失败 stream_key={stream.stream_key}: {e}")
+
+    def quality_snapshot(self) -> StreamQualitySnapshot:
+        """当前档位快照
+
+        档位是会话级概念（各流一致），故任取一条流回显生效档位；
+        未开流时按用户档位回显——实际生效以开流那一刻的计算为准。
+        """
+        for stream in self._streams_by_index.values():
+            return StreamQualitySnapshot(
+                level=self._level,
+                effective_level=stream.effective_level,
+                degraded=stream.is_degraded,
+                paused=self._paused,
+            )
+        return StreamQualitySnapshot(
+            level=self._level,
+            effective_level=self._level,
+            degraded=False,
+            paused=self._paused,
+        )
 
     async def set_degraded(self, degraded: bool):
         """对所有流设置降级/恢复（幂等）。

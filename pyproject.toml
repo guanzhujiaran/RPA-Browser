@@ -36,6 +36,7 @@ dependencies = [
     "Pillow>=10.0.0",
     "alembic>=1.18.4",
     "pymysql>=1.1.2",
+    "psutil>=7.0.0",
     "pytest-playwright-asyncio>=0.8.0",
     "aiounittest>=1.5.0",
     "httpx2>=2.3.0",

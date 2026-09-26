@@ -6,6 +6,7 @@ from loguru import logger
 from typing import List
 from app.models.system.permission import (
     PermissionLevelConfig,
+    PermissionLevelQuotaUpdate,
     PermissionConfigList,
     PermissionConfigData,
 )
@@ -144,6 +145,36 @@ class PermissionConfigService:
             if level_config.level_value == level_value:
                 return level_config.permissions
         return None
+
+    @classmethod
+    async def update_max_fingerprints(
+        cls, quotas: List[PermissionLevelQuotaUpdate]
+    ) -> PermissionConfigList:
+        """按 level_name 更新各等级的最大指纹数量，并整体写回配置文件。
+
+        只改 ``max_fingerprints``：``permissions`` / ``level_value`` 一律沿用磁盘现值回写，
+        因此经此接口无法变相修改功能权限位。传入未知 level_name 时抛 ValueError（不写盘）。
+        """
+        current = await cls.get_permissions()
+        existing_names = {level.level_name for level in current.levels}
+        unknown = [q.level_name for q in quotas if q.level_name not in existing_names]
+        if unknown:
+            raise ValueError(f"未知等级: {', '.join(unknown)}")
+
+        quota_map = {q.level_name: q.max_fingerprints for q in quotas}
+        levels = [
+            level.model_copy(update={"max_fingerprints": quota_map[level.level_name]})
+            if level.level_name in quota_map
+            else level
+            for level in current.levels
+        ]
+        updated = PermissionConfigList(levels=levels)
+        await cls.update_permissions(updated)
+        logger.info(
+            "指纹配额已更新: "
+            + ", ".join(f"{q.level_name}={q.max_fingerprints}" for q in quotas)
+        )
+        return updated
 
     @classmethod
     async def get_max_fingerprints_by_level(

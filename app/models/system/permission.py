@@ -29,8 +29,37 @@ class PermissionConfigData(SQLModel):
     levels: List[PermissionLevelConfig] = Field(description="所有等级的配置")
 
 
+class PermissionLevelQuotaUpdate(SQLModel):
+    """单个等级的指纹配额更新项。
+
+    只承载「最大指纹数量」：``permissions`` / ``level_value`` 由服务端按磁盘现值回写，
+    不接受调用方传值（避免经配额接口变相修改功能权限位）。
+    """
+
+    level_name: str = Field(description="等级名称，如 level0 / level6 / root")
+    max_fingerprints: int = Field(
+        ge=0, description="该等级允许创建的最大浏览器指纹数量（≥0）"
+    )
+
+
+class PermissionQuotaUpdateReq(SQLModel):
+    """等级指纹配额更新请求：按 level_name 合并，未传的等级保持现值。"""
+
+    levels: List[PermissionLevelQuotaUpdate] = Field(description="需要更新的等级列表")
+
+
+class PermissionQuotaResp(SQLModel):
+    """等级权限配置响应（含配置文件路径，便于管理端/运维定位实际读写位置）。"""
+
+    levels: List[PermissionLevelConfig] = Field(description="所有等级的配置")
+    config_file: str = Field(description="配置文件路径（实际读写位置）")
+
+
 __all__ = [
     "PermissionLevelConfig",
     "PermissionConfigList",
     "PermissionConfigData",
+    "PermissionLevelQuotaUpdate",
+    "PermissionQuotaUpdateReq",
+    "PermissionQuotaResp",
 ]

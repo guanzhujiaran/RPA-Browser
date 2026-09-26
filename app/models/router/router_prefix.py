@@ -28,10 +28,11 @@ class BrowserFingerprintRouterPath(StrEnumAutoDoc):
 
 
 class BrowserSessionRouterPath(StrEnumAutoDoc):
-    """会话管理路由路径 - prefix: /browser/session"""
+    """会话管理路由路径 - prefix: /browser/control（与浏览器控制入口同前缀）"""
 
     create = "/create"
     status = "/status"
+    queue_status = "/queue_status"
     close = "/close"
 
 
@@ -88,6 +89,9 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     webrtc_ice_candidate = "/webrtc/ice-candidate"
     webrtc_status = "/webrtc/status"
     webrtc_close = "/webrtc/close"
+    webrtc_quality = "/webrtc/quality"
+    webrtc_visibility = "/webrtc/visibility"
+    webrtc_pause = "/webrtc/pause"
 
 class UserBrowserDefaultSettingRouterPath(StrEnumAutoDoc):
     """用户浏览器默认设置路由路径 - prefix: /browser"""
@@ -105,3 +109,11 @@ class NotifyRouterPath(StrEnumAutoDoc):
     read_notify_config = "/notify/conf/read"
     delete_notify_config = "/notify/conf/delete"
     test_notify = "/notify/test"
+
+
+class AdminPermissionRouterPath(StrEnumAutoDoc):
+    """等级权限 / 指纹配额管理路由路径 - prefix: /api/admin/rpa（仅 root）"""
+
+    permission_levels = "/permission/levels"
+    permission_update = "/permission/update"
+    permission_reset = "/permission/reset"

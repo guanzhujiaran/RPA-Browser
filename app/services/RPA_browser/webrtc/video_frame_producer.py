@@ -27,6 +27,7 @@ from playwright.async_api import Page
 
 from app.models.runtime.webrtc_models import (
     ScreencastFrameData,
+    StreamQualityLevelEnum,
     VideoFrameProducerStats,
     WebRTCSessionConfig,
 )
@@ -110,14 +111,29 @@ class VideoFrameProducer:
         self.screencast_session = None
         self._is_running = False
         self._last_frame: av.VideoFrame | None = None  # 最后一帧（解码失败时兜底）
-        self._quality = config.quality  # 当前 screencast 质量（降级时下调）
+        # ── 清晰度档位（见计划书 §5.18）──
+        # 生效档位 = 用户档位与各自动降档来源中最省的一个，三者互不覆盖：
+        #   _level          用户手动选择的档位
+        #   _degraded       后端闲置生命周期降档（§5.15）
+        #   _visibility_low 前端页面不可见（标签页切后台 / 组件被遮挡）
+        self._level = StreamQualityLevelEnum.HIGH
         self._degraded = False
-        self._frame_interval = config.frame_interval  # 当前最小帧间隔（秒）
+        self._visibility_low = False
+        _params = config.params_for(self._level)
+        self._quality = _params.quality  # 当前 screencast JPEG 质量
+        self._frame_interval = _params.frame_interval  # 当前最小帧间隔（秒）
+        self._screencast_size = _params.size  # 当前分辨率上限（None = 浏览器自适应）
         self._next_frame_at = 0.0  # 下一帧允许出帧的单调时间戳
         self._frame_size = (640, 480)  # 最近一次成功解码的帧尺寸（绿屏兜底跟随）
         self._decode_failures = 0  # 连续解码失败次数
         self._emitted_frames = 0
         self._dropped_frames = 0
+        # 用户暂停态（见计划书 §5.18）：暂停时停止 screencast 并挂起出帧。
+        # _resume_event 用于唤起阻塞中的 get_next_frame —— 注意**不能**用「返回 None」
+        # 表示暂停，那会被 WebRTCMediaTrack 判定为「生产者已停止」而直接结束轨道。
+        self._paused = False
+        self._resume_event = asyncio.Event()
+        self._resume_event.set()
 
     # -- 生命周期 --
 
@@ -130,15 +146,21 @@ class VideoFrameProducer:
         try:
             logger.info(
                 f"启动 VideoFrameProducer，质量: {self._quality}, "
-                f"帧间隔: {self._frame_interval * 1000:.1f}ms"
+                f"帧间隔: {self._frame_interval * 1000:.1f}ms, 暂停={self._paused}"
             )
 
-            await self._start_screencast()
+            # 先置位 + 先清残留，**再**启动 screencast：
+            # CDP 在 start 之后立刻推首帧，而 _on_frame_callback 会 `if not self._is_running: return`
+            # 直接丢弃它且**不做 ack** —— CDP screencast 依赖 ack 才推下一帧，于是整条流停摆：
+            # 静止页面（不重绘）就再也不会来第二帧 → 前端「已连接但 0B/s、全程黑屏」。
             self._is_running = True
-
             # 清掉上一轮残留，避免首帧就是旧画面
             self._drain_queue()
             self._decode_failures = 0
+
+            # 暂停态下不启动 screencast：浏览器侧零 JPEG 编码，出帧由 get_next_frame 挂起
+            if not self._paused:
+                await self._start_screencast()
 
             logger.info("VideoFrameProducer 启动成功")
         except Exception as e:
@@ -153,6 +175,8 @@ class VideoFrameProducer:
 
         # 先置位：回调不再入队，get_next_frame 不再产出新帧
         self._is_running = False
+        # 唤醒可能正被「暂停」挂起的 get_next_frame，否则它会一直等到轨道被取消
+        self._resume_event.set()
 
         await self._stop_screencast()
 
@@ -161,32 +185,107 @@ class VideoFrameProducer:
         self._last_frame = None
         logger.info("VideoFrameProducer 已停止")
 
-    async def set_degraded(self, degraded: bool):
-        """切换降级状态（幂等）：下调 JPEG 质量 + 限帧 + 降分辨率，并重启 screencast 生效。
+    def effective_level(self) -> StreamQualityLevelEnum:
+        """生效档位：用户档位与各自动降档来源中最省的一个（见计划书 §5.18）"""
+        if self._degraded or self._visibility_low:
+            return StreamQualityLevelEnum.LOW
+        return self._level
 
-        未运行时仅记录目标参数，下次 start() 生效。
+    async def set_level(self, level: StreamQualityLevelEnum) -> None:
+        """设置用户档位（幂等）。未运行时仅记录，下次 start() 生效。"""
+        if self._level == level:
+            return
+        self._level = level
+        await self._apply_effective_level()
+
+    async def set_visibility(self, visible: bool) -> None:
+        """前端可见性信号：不可见降到最省档，恢复可见时回落到用户档位。
+
+        与闲置降档分开记录——``touch()`` 的「恢复全速」只应解除闲置来源，
+        不该把「页面仍在后台」这件事一并恢复。
+        """
+        low = not visible
+        if self._visibility_low == low:
+            return
+        self._visibility_low = low
+        await self._apply_effective_level()
+
+    async def set_degraded(self, degraded: bool) -> None:
+        """闲置生命周期驱动的降档（幂等，见 §5.15）。
+
+        与用户档位、可见性信号取「最省」；未运行时仅记录，下次 start() 生效。
         """
         if self._degraded == degraded:
             return
         self._degraded = degraded
-        self._quality = self.config.degrade_quality if degraded else self.config.quality
-        self._frame_interval = (
-            self.config.degrade_frame_interval
-            if degraded
-            else self.config.frame_interval
-        )
+        await self._apply_effective_level()
+
+    async def set_paused(self, paused: bool) -> None:
+        """暂停 / 恢复出帧（幂等，见 §5.18）
+
+        - **暂停**：停止 screencast（浏览器侧不再 JPEG 编码），并让 get_next_frame 挂起。
+          带宽与 CPU 归零；接收端画面停留在最后一帧（浏览器行为，非后端保证）。
+        - **恢复**：重启 screencast，画面立即续上。全程不重建 WebRTC 连接。
+
+        暂停优先级高于清晰度档位，且不参与「取最省」仲裁。
+        """
+        if self._paused == paused:
+            return
+        self._paused = paused
+        # 先切事件再操作 screencast：恢复时让挂起的 get_next_frame 能立刻继续
+        if paused:
+            self._resume_event.clear()
+        else:
+            self._resume_event.set()
         logger.info(
-            f"VideoFrameProducer {'降级' if degraded else '恢复'}："
-            f"quality={self._quality}, 帧间隔={self._frame_interval * 1000:.1f}ms"
+            f"VideoFrameProducer {'暂停' if paused else '恢复'}出帧 "
+            f"(用户档位={self._level.value})"
         )
-        if self._is_running:
+
+        if not self._is_running:
+            # 未运行：仅记录状态，start() 会按 _paused 决定是否启动 screencast
+            return
+        if paused:
+            # 先停采再清队列：清掉暂停前积压的帧，避免恢复后先吐一段「旧画面」
+            await self._stop_screencast()
+            self._drain_queue()
+        else:
+            await self._start_screencast()
+
+    @property
+    def is_paused(self) -> bool:
+        """是否处于用户暂停态"""
+        return self._paused
+
+    async def _apply_effective_level(self) -> None:
+        """按生效档位刷新 screencast 参数；运行中且参数确有变化时才重启生效
+
+        参数未变化则跳过重启——例如「不可见降档」与「闲置降档」同时命中，
+        两者生效档位相同，不该重复重启 screencast（会白白丢帧）。
+        """
+        level = self.effective_level()
+        params = self.config.params_for(level)
+        changed = (
+            params.quality != self._quality
+            or params.frame_interval != self._frame_interval
+            or params.size != self._screencast_size
+        )
+        self._quality = params.quality
+        self._frame_interval = params.frame_interval
+        self._screencast_size = params.size
+        logger.info(
+            f"VideoFrameProducer 档位生效: level={level.value}, quality={params.quality}, "
+            f"帧间隔={params.frame_interval * 1000:.1f}ms, size={params.size} "
+            f"(用户={self._level.value}, 闲置降档={self._degraded}, 不可见={self._visibility_low})"
+        )
+        if changed and self._is_running:
             await self._restart_screencast()
 
     # -- screencast 会话管理 --
 
     async def _start_screencast(self):
         """启动 screencast 会话（含「已启动」异常恢复）。"""
-        size = self.config.screencast_size(self._degraded)
+        size = self._screencast_size
         try:
             self.screencast_session = await self.page.screencast.start(
                 on_frame=self._on_frame_callback, quality=self._quality, size=size
@@ -319,6 +418,15 @@ class VideoFrameProducer:
 
         try:
             while self._is_running:
+                # 暂停态：挂起直到恢复。**不能返回 None** —— WebRTCMediaTrack 会把 None
+                # 当作「生产者已停止」并抛 MediaStreamError 直接结束轨道（见 §5.18）。
+                # resume / stop 都会 set 该事件，保证这里不会被永久挂住。
+                if self._paused:
+                    await self._resume_event.wait()
+                    if not self._is_running:
+                        return None
+                    continue
+
                 jpeg_data = await self.frame_queue.get()
                 if jpeg_data is _STOP_SENTINEL:
                     return None
@@ -477,7 +585,9 @@ class VideoFrameProducer:
             dropped_frames=self._dropped_frames,
             drop_rate=(self._dropped_frames / total) if total else 0.0,
             queue_size=self.frame_queue.qsize(),
-            degraded=self._degraded,
+            degraded=self._degraded or self._visibility_low,
+            paused=self._paused,
+            level=self.effective_level().value,
             quality=self._quality,
             frame_interval=self._frame_interval,
         )

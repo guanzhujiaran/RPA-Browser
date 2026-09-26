@@ -4,6 +4,7 @@ from loguru import logger
 from app.config import settings
 from app.scheduler_manager import scheduler_manager_ist
 from app.services.RPA_browser.background_tasks import BackgroundTasks
+from app.services.RPA_browser.session.launch_queue import get_launch_queue
 
 
 def register_background_tasks():
@@ -28,6 +29,9 @@ async def start_background_tasks():
     """启动所有后台任务"""
     logger.info("🚀 Starting background tasks...")
 
+    # 启动浏览器启动队列的兜底轮询（内存释放后自动放行排队请求）
+    get_launch_queue().start()
+
     # 注册所有后台任务
     register_background_tasks()
 
@@ -45,6 +49,9 @@ async def start_background_tasks():
 async def stop_background_tasks():
     """停止所有后台任务"""
     logger.info("🛑 Stopping background tasks...")
+
+    # 停止浏览器启动队列轮询
+    await get_launch_queue().stop()
 
     # 关闭调度器
     scheduler_manager_ist.shutdown(wait=True)

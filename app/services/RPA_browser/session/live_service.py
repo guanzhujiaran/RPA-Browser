@@ -11,10 +11,13 @@ import contextlib
 from dataclasses import dataclass
 from typing import Dict
 from app.config import settings
+from bili_common.models.response_code import ResponseCode
 from app.models.consts.enums import ConfigRunningModeEnum
 from loguru import logger
 from app.models.common.exceptions.base_exception import (
     BrowserNotStartedException,
+    BrowserLaunchQueueCancelledException,
+    BrowserLaunchQueueTimeoutException,
     BrowserPageIndexError,
 )
 from app.models.runtime.control import (
@@ -23,6 +26,7 @@ from app.models.runtime.control import (
     SessionLifecycleState,
     CreateSessionData,
     BrowserSessionStatusData,
+    BrowserLaunchQueueStatusResponse,
 )
 from app.models.runtime.session import BrowserSessionRemoveParams
 
@@ -35,6 +39,10 @@ from app.services.RPA_browser.browser_session_pool.playwright_pool import (
 )
 from app.services.RPA_browser.browser_session_pool.session_pool_model import (
     WebRTCEnabledSession,
+)
+from app.services.RPA_browser.session.launch_queue import (
+    LaunchTicket,
+    get_launch_queue,
 )
 
 
@@ -60,6 +68,8 @@ class LiveService:
     # 🔑 添加会话级别的锁，防止并发操作导致的状态不一致
     _session_locks: Dict[str, asyncio.Lock] = {}
     _global_lock = asyncio.Lock()  # 用于保护 _session_locks 字典本身
+    # 🔑 排队启动的后台任务引用（防止被 GC 回收）
+    _background_launch_tasks: set[asyncio.Task] = set()
 
     @staticmethod
     def _get_session_key(mid: int|str, browser_id: int|str) -> str:
@@ -139,6 +149,35 @@ class LiveService:
             return False
         if entry.pin_count > 0:
             entry.pin_count -= 1
+        return True
+
+    def begin_workflow_run(
+        self, mid: int | str, browser_id: int | str, run_id: str
+    ) -> bool:
+        """标记会话进入工作流执行期（执行期禁止调试类接口；直播不受影响，见 §5.17）。
+
+        需与 ``end_workflow_run`` 配对。不复用 ``pin`` 是因为单步调试自身也会 pin，
+        无法区分「工作流在执行」与「用户自己在调试」。
+
+        Returns:
+            bool: 会话存在并标记成功返回 True
+        """
+        entry = self._browser_sessions.get(self._get_session_key(mid, browser_id))
+        if entry is None:
+            return False
+        entry.workflow_run_id = run_id
+        return True
+
+    def end_workflow_run(self, mid: int | str, browser_id: int | str) -> bool:
+        """解除工作流执行期标记（与 ``begin_workflow_run`` 配对）。
+
+        Returns:
+            bool: 会话存在并解除成功返回 True
+        """
+        entry = self._browser_sessions.get(self._get_session_key(mid, browser_id))
+        if entry is None:
+            return False
+        entry.workflow_run_id = None
         return True
 
     async def _check_session_cleanup(self):
@@ -320,6 +359,7 @@ class LiveService:
         headless: bool = False,
         is_create_browser: bool = True,
         max_retries: int = 2,  # ✅ 最大重试次数
+        is_vip: bool = False,  # VIP 身份：决定进入哪条启动队列
     ) -> BrowserSessionEntry:
         """获取插件化浏览器会话（优化锁策略，支持并发创建）"""
         start_time = time.time()
@@ -330,7 +370,8 @@ class LiveService:
         for attempt in range(max_retries + 1):
             try:
                 return await self._do_get_or_create_session_entry(
-                    mid, browser_id, headless, is_create_browser, current_time, start_time
+                    mid, browser_id, headless, is_create_browser,
+                    current_time, start_time, is_vip,
                 )
             except BrowserNotStartedException as e:
                 if attempt < max_retries:
@@ -350,14 +391,39 @@ class LiveService:
         is_create_browser: bool,
         current_time: int,
         start_time: float,
+        is_vip: bool = False,
+    ) -> BrowserSessionEntry:
+        """执行实际的会话获取或创建逻辑，并统一释放内存准入预留
+
+        无论走「复用现有会话」还是「新建会话」，方法返回/抛错前都会调用
+        ``launch_settled`` 释放启动队列的内存预留额度（幂等：无凭证时为空操作），
+        避免调用方先 ``reserve`` 后因复用分支提前返回而造成额度泄漏。
+        """
+        try:
+            return await self._reuse_or_create_session_entry(
+                mid, browser_id, headless, is_create_browser,
+                current_time, start_time, is_vip,
+            )
+        finally:
+            await get_launch_queue().launch_settled(mid, browser_id)
+
+    async def _reuse_or_create_session_entry(
+        self,
+        mid: int,
+        browser_id: int,
+        headless: bool,
+        is_create_browser: bool,
+        current_time: int,
+        start_time: float,
+        is_vip: bool = False,
     ) -> BrowserSessionEntry:
         """
-        执行实际的会话获取或创建逻辑
+        会话获取/创建主体：
 
-        此方法负责：
         1. 检查现有会话的有效性
-        2. 委托给 PlaywrightSessionPool._create_session 进行创建
-        3. 在 LiveService.browser_sessions 中注册新创建的会话
+        2. 内存准入排队（内存不足时按 VIP / 普通队列等待）
+        3. 委托给 PlaywrightSessionPool._create_session 进行创建
+        4. 在 LiveService.browser_sessions 中注册新创建的会话
         """
         session_key = self._get_session_key(mid, browser_id)
         pool: PlaywrightSessionPool = get_default_session_pool()
@@ -402,7 +468,10 @@ class LiveService:
                 browser_id=browser_id,
                 headless=headless,
             )
+            launch_queue = get_launch_queue()
             try:
+                # 🔑 内存准入：内存不足时在此排队等待（VIP 队列优先），超时抛错
+                await launch_queue.acquire(mid, browser_id, is_vip=is_vip)
                 # 这里用get_session就行了，不存在自动创建
                 browser_session = await pool.get_session(session_params)
                 create_elapsed = time.time() - start_time
@@ -433,6 +502,10 @@ class LiveService:
     async def release_browser_session(self, mid: int, browser_id: int) -> bool:
         """释放浏览器会话（带锁保护）"""
         session_key = LiveService._get_session_key(mid, browser_id)
+        launch_queue = get_launch_queue()
+
+        # 🔑 若该会话仍在启动队列中排队，先取消，避免「关掉又被拉起」
+        await launch_queue.cancel(mid, browser_id)
 
         try:
             # 🔑 获取会话级别的锁，防止并发操作
@@ -462,6 +535,8 @@ class LiveService:
 
             # 🔑 在锁外清理会话锁（避免死锁）
             await self._cleanup_session_lock(session_key)
+            # 🔑 内存已释放，唤醒排队中的启动请求（VIP 优先）
+            await launch_queue.notify_capacity_freed()
 
             return True
 
@@ -475,13 +550,19 @@ class LiveService:
     async def create_browser_session(
         service: "LiveService",
         mid: int,
-        browser_id: int
+        browser_id: int,
+        is_vip: bool = False,
     ) -> CreateSessionData:
         """
         创建浏览器会话
 
         这是一个独立的会话创建接口，与心跳机制完全解耦。
         只有显式调用此接口才会创建浏览器会话。
+
+        内存准入：
+        - 内存充足 → 同步创建并返回 running；
+        - 内存不足 → 进入启动队列（VIP 队列优先），立即返回 queued + 排位，
+          真正的创建放到后台任务中执行，前端通过会话状态接口轮询进度。
         """
         session_key = LiveService._get_session_key(mid, browser_id)
         current_time = int(time.time())
@@ -503,10 +584,37 @@ class LiveService:
                 message="会话已存在，返回现有会话信息",
             )
 
+        launch_queue = get_launch_queue()
+
+        # 🔑 先同步取号：内存充足则直接放行，否则进入队列（VIP 优先）
+        ticket = launch_queue.reserve(mid, browser_id, is_vip=is_vip)
+
+        # 🔑 内存不足 / 队列有人等待：转入后台排队启动，立即返回排队信息
+        if not ticket.admitted:
+            entry_status = launch_queue.get_entry_status(mid, browser_id)
+            queue_label = "VIP" if is_vip else "普通"
+            logger.info(
+                f"内存不足，浏览器启动进入{queue_label}队列: {session_key}, "
+                f"排位={entry_status.position}"
+            )
+            # 后台任务会等待同一凭证被放行后创建浏览器
+            service._spawn_background_launch(mid, browser_id, is_vip, ticket)
+            return CreateSessionData(
+                success=True,
+                session_id=session_key,
+                browser_started=False,
+                created_at=current_time,
+                expires_at=None,
+                queued=True,
+                queue_type=entry_status.queue_type,
+                queue_position=entry_status.position,
+                message=f"当前服务器内存不足，已进入{queue_label}队列排队，请稍候",
+            )
+
         try:
-            # 🔑 优化：直接调用优化后的 get_or_create_browser_session
+            # 🔑 已放行：直接调用优化后的 get_or_create_browser_session
             entry = await service.get_or_create_browser_session_entry(
-                mid, browser_id
+                mid, browser_id, is_vip=is_vip
             )
             # 显式确认浏览器会话状态为 RUNNING、生命周期为 ACTIVE
             entry.status = BrowserStatusEnum.RUNNING
@@ -536,6 +644,18 @@ class LiveService:
                 message="浏览器会话创建成功",
             )
 
+        except BrowserLaunchQueueTimeoutException as e:
+            # 排队超时：内存长时间未释放，返回业务错误码供前端提示
+            logger.warning(f"浏览器启动排队超时: {session_key}, {e.msg}")
+            return CreateSessionData(
+                success=False,
+                session_id=session_key,
+                browser_started=False,
+                created_at=0,
+                expires_at=None,
+                error=e.msg,
+                error_code=int(e.code) if e.code is not None else None,
+            )
         except Exception as e:
             return CreateSessionData(
                 success=False,
@@ -544,7 +664,86 @@ class LiveService:
                 created_at=0,
                 expires_at=None,
                 error=f"创建会话失败: {str(e)}",
+                error_code=ResponseCode.INTERNAL_ERROR,
             )
+
+    def _spawn_background_launch(
+        self, mid: int, browser_id: int, is_vip: bool, ticket: LaunchTicket
+    ) -> None:
+        """把排队启动放到后台任务（请求立即返回 queued）"""
+        task = asyncio.create_task(
+            self._background_launch(mid, browser_id, is_vip, ticket)
+        )
+        LiveService._background_launch_tasks.add(task)
+        task.add_done_callback(LiveService._background_launch_tasks.discard)
+
+    async def _background_launch(
+        self, mid: int, browser_id: int, is_vip: bool, ticket: LaunchTicket
+    ) -> None:
+        """后台等待内存放行并创建浏览器会话
+
+        必须复用调用方已取号的凭证：否则「排队期间被取消」会在后台被重新取号，
+        导致取消后又被拉起。
+        """
+        session_key = self._get_session_key(mid, browser_id)
+        try:
+            await get_launch_queue().wait(ticket)
+            entry = await self.get_or_create_browser_session_entry(
+                mid, browser_id, is_vip=is_vip
+            )
+            entry.status = BrowserStatusEnum.RUNNING
+            entry.lifecycle_state = SessionLifecycleState.ACTIVE
+            logger.info(f"排队会话启动完成: {session_key}")
+        except BrowserLaunchQueueCancelledException:
+            logger.info(f"排队会话已被取消: {session_key}")
+        except BrowserLaunchQueueTimeoutException as e:
+            logger.warning(f"排队会话启动超时: {session_key}, {e.msg}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"排队会话启动失败: {session_key}, error: {e}")
+
+    def would_queue_browser_session(
+        self, mid: int, browser_id: int, is_vip: bool = False
+    ) -> bool:
+        """该会话此刻启动是否需要排队（会话已存在时恒为 False）
+
+        供 pages / webrtc 等「顺手拉起浏览器」的入口做前置判断，
+        避免内存不足时长时间阻塞 HTTP 请求。
+        """
+        if self._get_session_key(mid, browser_id) in self._browser_sessions:
+            return False
+        return get_launch_queue().would_queue(mid, browser_id, is_vip=is_vip)
+
+    def get_launch_queue_status(
+        self, mid: int, browser_id: int
+    ) -> BrowserLaunchQueueStatusResponse:
+        """查询启动排队状态：全局队列水位 + 当前会话排位
+
+        供前端展示「排队中，前方还有 N 位」等进度信息；
+        会话未在排队时 ``in_queue`` 为 False，其余全局字段仍然可用。
+        """
+        launch_queue = get_launch_queue()
+        queue_status = launch_queue.get_status()
+        entry_status = launch_queue.get_entry_status(mid, browser_id)
+
+        return BrowserLaunchQueueStatusResponse(
+            enabled=queue_status.enabled,
+            vip_waiting=queue_status.vip_waiting,
+            normal_waiting=queue_status.normal_waiting,
+            launching=queue_status.launching,
+            max_wait_seconds=settings.browser_launch_queue_max_wait_time,
+            max_instances=queue_status.max_instances,
+            memory=queue_status.memory,
+            browser_memory=queue_status.browser_memory,
+            in_queue=entry_status.in_queue,
+            queue_state=entry_status.state,
+            queue_type=entry_status.queue_type,
+            queue_position=entry_status.position,
+            queue_waiting_seconds=entry_status.waiting_seconds,
+            estimated_wait_seconds=entry_status.estimated_wait_seconds,
+            estimate_reliable=entry_status.estimate_reliable,
+        )
 
     def get_browser_session_status(
         self,
@@ -555,6 +754,7 @@ class LiveService:
         获取浏览器会话的详细状态
         """
         session_key = LiveService._get_session_key(mid, browser_id)
+        queue_status = get_launch_queue().get_entry_status(mid, browser_id)
 
         if session_key not in self._browser_sessions:
             return BrowserSessionStatusData(
@@ -566,13 +766,22 @@ class LiveService:
                 manual_mode=False,
                 created_at=0,
                 expires_at=None,
-                status="terminated",
+                status="queued" if queue_status.in_queue else "terminated",
                 cleanup_policy=BrowserCleanupPolicy(),
-                message="会话不存在",
+                message=(
+                    "会话正在启动队列中排队"
+                    if queue_status.in_queue
+                    else "会话不存在"
+                ),
                 screen_height=0,
                 screen_width=0,
                 viewport_width=0,
                 viewport_height=0,
+                in_launch_queue=queue_status.in_queue,
+                queue_state=queue_status.state,
+                queue_type=queue_status.queue_type,
+                queue_position=queue_status.position,
+                queue_waiting_seconds=queue_status.waiting_seconds,
             )
 
         entry = self.get_browser_session_entry(mid, browser_id)
@@ -610,9 +819,20 @@ class LiveService:
                 if entry.terminate_scheduled_at
                 else None
             ),
+            in_launch_queue=queue_status.in_queue,
+            queue_state=queue_status.state,
+            queue_type=queue_status.queue_type,
+            queue_position=queue_status.position,
+            queue_waiting_seconds=queue_status.waiting_seconds,
         )
 
-    async def ensure_webrtc_session(self, mid: int, browser_id: int, headless: bool = False) -> BrowserSessionEntry:
+    async def ensure_webrtc_session(
+        self,
+        mid: int,
+        browser_id: int,
+        headless: bool = False,
+        is_vip: bool = False,
+    ) -> BrowserSessionEntry:
         """
         获取或创建带 WebRTC 能力的浏览器会话。
 
@@ -625,6 +845,7 @@ class LiveService:
             mid: 用户 ID
             browser_id: 浏览器指纹 ID
             headless: 是否无头模式
+            is_vip: 是否大会员（决定内存不足时进入 VIP / 普通启动队列）
 
         Returns:
             BrowserSessionEntry: 浏览器会话条目（WebRTC 已就绪）

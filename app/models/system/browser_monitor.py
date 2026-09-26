@@ -13,6 +13,11 @@ System 模块 - 浏览器监管（管理端）请求 / 响应模型
 
 from sqlmodel import SQLModel, Field
 
+from app.models.runtime.launch_queue import (
+    BrowserLaunchQueueWaitingItem,
+    LaunchQueueStatus,
+)
+
 
 class BrowserMonitorPageItem(SQLModel):
     """监管用标签页信息（只读）"""
@@ -94,6 +99,21 @@ class BrowserMonitorStopResponse(SQLModel):
     message: str = Field(default="", description="结果说明")
 
 
+class BrowserLaunchQueueMonitorResponse(SQLModel):
+    """启动队列监管总览（管理端）
+
+    用于运营观察「服务器内存水位 / 单实例实测占用 / VIP 与普通队列长度 / 谁在排队」，
+    以便判断是否需要扩容或调整准入配置；只读，不含任何处置能力。
+    """
+
+    queue: LaunchQueueStatus = Field(
+        description="队列全局状态（含系统内存快照与浏览器单实例内存实测）"
+    )
+    waiting_sessions: list[BrowserLaunchQueueWaitingItem] = Field(
+        default_factory=list, description="排队 / 启动中的会话明细（VIP 优先、等待久者在前）"
+    )
+
+
 __all__ = [
     "BrowserMonitorPageItem",
     "BrowserMonitorItem",
@@ -103,4 +123,5 @@ __all__ = [
     "BrowserMonitorPagesResponse",
     "BrowserMonitorStopRequest",
     "BrowserMonitorStopResponse",
+    "BrowserLaunchQueueMonitorResponse",
 ]

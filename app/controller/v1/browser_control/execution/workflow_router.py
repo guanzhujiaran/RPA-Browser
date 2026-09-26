@@ -15,6 +15,10 @@ from app.utils.depends.security_depends import verify_browser_ownership
 from bili_common.models.depends import BrowserReqAuthInfo
 from fastapi import Depends
 from app.services.RPA_browser.session.live_service import live_service
+from app.models.common.exceptions.base_exception import (
+    BaseException as CustomBaseException,
+    BrowserWorkflowRunningException,
+)
 from app.services.execution.crud_service import (
     workflow_crud_svr,
     workflow_run_crud_svr,
@@ -81,10 +85,15 @@ def _validate_trigger(trigger_type: str, trigger_config: dict | None, browser_id
 
 
 async def _resolve_page(mid: int, browser_id: int, page_index: int | None = None):
-    """从 LiveService 解析浏览器页面"""
+    """从 LiveService 解析浏览器页面
+
+    会话不存在时由 ``get_browser_session_entry`` 抛 ``BrowserNotStartedException``（code=1007）
+    表达，前端据此引导用户重新启动（本入口不承担启动职责，见计划书 §5.17）。
+    工作流执行期间拒绝调试类调用（执行期互斥）；直播为只读拉流，不受影响。
+    """
     entry = live_service.get_browser_session_entry(mid=mid, browser_id=browser_id)
-    if not entry:
-        raise ValueError("浏览器不存在或未运行")
+    if entry.is_workflow_running:
+        raise BrowserWorkflowRunningException()
     if page_index is not None:
         all_pages = entry.browser_session.all_pages
         if not all_pages:
@@ -572,6 +581,10 @@ async def execute_workflow_step(
                 total_steps=len(request.steps),
             )
         )
+    except CustomBaseException:
+        # 业务异常（1007 浏览器未启动 / 2016 工作流执行中）交给全局处理器，
+        # 保留 code / msg / HTTP 语义，不能被下面的 except Exception 吞成 500
+        raise
     except ValueError as e:
         return error_response(400, str(e))
     except Exception as e:

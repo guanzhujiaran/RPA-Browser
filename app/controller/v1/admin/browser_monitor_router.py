@@ -29,6 +29,7 @@ from bili_common.models.response_code import ResponseCode
 
 from app.models.database.browser.info import UserBrowserInfo
 from app.models.system.browser_monitor import (
+    BrowserLaunchQueueMonitorResponse,
     BrowserMonitorItem,
     BrowserMonitorListRequest,
     BrowserMonitorListResponse,
@@ -38,6 +39,7 @@ from app.models.system.browser_monitor import (
     BrowserMonitorStopRequest,
     BrowserMonitorStopResponse,
 )
+from app.services.RPA_browser.session.launch_queue import get_launch_queue
 from app.services.RPA_browser.session.live_service import live_service
 from app.services.admin_audit import log_admin_action
 from app.utils.depends.admin_depends import require_permission
@@ -190,6 +192,35 @@ async def get_browser_monitor_pages(
             pages=pages,
         )
     )
+
+
+@router.post(
+    "/browser/launch-queue/status",
+    response_model=StandardResponse[BrowserLaunchQueueMonitorResponse],
+    summary="浏览器启动队列总览（管理员）",
+)
+async def get_launch_queue_status(
+    auth: AuthInfo = Depends(
+        require_permission(InteractionBizTypeEnum.RPA_BROWSER, BizPermOp.VIEW)
+    ),
+):
+    """启动队列总览：系统内存水位 + 单实例内存实测 + VIP/普通队列长度 + 排队明细
+
+    只读接口，用于运营判断是否需要扩容或调整准入配置，不含任何处置能力。
+    """
+    try:
+        launch_queue = get_launch_queue()
+        return success_response(
+            data=BrowserLaunchQueueMonitorResponse(
+                queue=launch_queue.get_status(),
+                waiting_sessions=launch_queue.list_waiting_items(),
+            )
+        )
+    except Exception as e:
+        logger.error(f"❌ 启动队列总览查询失败: {e}")
+        return error_response(
+            msg=f"查询失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR
+        )
 
 
 @router.post(

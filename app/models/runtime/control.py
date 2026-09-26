@@ -9,6 +9,12 @@ from sqlmodel import SQLModel, Field
 from typing import Any, Dict, Optional
 import time
 from app.config import settings
+from app.models.runtime.launch_queue import (
+    BrowserMemoryEstimatorStatus,
+    LaunchQueueStateEnum,
+    LaunchQueueTypeEnum,
+    MemorySnapshot,
+)
 
 
 class BrowserStatusEnum(StrEnumAutoDoc):
@@ -110,6 +116,16 @@ class BrowserSessionStatus(SQLModel):
     pending_termination_at: int | None = Field(
         default=None, description="待关闭的宽限截止时间戳（闲置超时进入宽限期后非空）"
     )
+    # 启动内存队列（内存不足时按 VIP / 普通队列排队）
+    in_launch_queue: bool = Field(default=False, description="是否处于启动队列中")
+    queue_state: LaunchQueueStateEnum | None = Field(
+        default=None, description="排队状态：queued=排队等待，launching=已放行启动中"
+    )
+    queue_type: LaunchQueueTypeEnum | None = Field(
+        default=None, description="所在队列：vip / normal"
+    )
+    queue_position: int | None = Field(default=None, description="同队列中的排位（1 起）")
+    queue_waiting_seconds: int = Field(default=0, description="已排队等待时长（秒）")
 
 
 class CreateSessionResponse(SQLModel):
@@ -118,10 +134,69 @@ class CreateSessionResponse(SQLModel):
     success: bool
     session_id: str
     browser_started: bool
-    status: str = Field(default="running", description="浏览器会话状态")
+    status: str = Field(default="running", description="浏览器会话状态：running / queued")
     created_at: int
     expires_at: int | None = Field(None, description="会话过期时间")
     message: str | None = Field(None, description="详细信息")
+    # 启动内存队列（内存不足时进入排队，前端可据此展示「排队中，前面还有 N 位」）
+    queued: bool = Field(default=False, description="是否因内存不足进入启动队列排队")
+    queue_type: LaunchQueueTypeEnum | None = Field(
+        default=None, description="所在队列：vip / normal"
+    )
+    queue_position: int | None = Field(default=None, description="同队列中的排位（1 起）")
+
+
+class BrowserLaunchQueueStatusResponse(SQLModel):
+    """浏览器启动队列状态（排队进度查询）
+
+    同时给出「全局队列水位」与「当前会话排位」两部分：
+    前端既可展示本会话排在第几位，也可展示服务器繁忙程度。
+    """
+
+    # ── 全局队列（服务器视角）──
+    enabled: bool = Field(description="是否启用内存准入排队；false 时不会排队")
+    vip_waiting: int = Field(default=0, description="VIP 队列等待数")
+    normal_waiting: int = Field(default=0, description="普通用户队列等待数")
+    launching: int = Field(default=0, description="已放行、正在启动的浏览器数")
+    max_wait_seconds: int = Field(
+        default=0, description="排队最大等待时长（秒），超时后启动请求作废；0 表示不限"
+    )
+    max_instances: int = Field(
+        default=0, description="浏览器实例数上限（运行中+启动中）；0 表示仅按内存限制"
+    )
+    memory: MemorySnapshot = Field(description="当前系统内存快照")
+    browser_memory: BrowserMemoryEstimatorStatus = Field(
+        description="浏览器单实例内存实测估算（准入预留额度的来源）"
+    )
+
+    # ── 当前会话（用户视角）──
+    in_queue: bool = Field(
+        default=False, description="当前会话是否在启动队列中（含排队中与已放行启动中）"
+    )
+    queue_state: LaunchQueueStateEnum | None = Field(
+        default=None, description="排队状态：queued=排队等待，launching=已放行启动中"
+    )
+    queue_type: LaunchQueueTypeEnum | None = Field(
+        default=None, description="所在队列：vip / normal"
+    )
+    queue_position: int | None = Field(
+        default=None, description="同队列中的排位（1 起），前方还有 position-1 位"
+    )
+    queue_waiting_seconds: int = Field(default=0, description="已排队等待时长（秒）")
+    estimated_wait_seconds: int | None = Field(
+        default=None,
+        description=(
+            "当前会话预计还需等待时长(秒)，按「前方人数 × 放行节奏」估算（见计划书 §5.17）；"
+            "已放行时为 0；null 表示当前不在启动队列中。属粗略参考值，不是承诺"
+        ),
+    )
+    estimate_reliable: bool = Field(
+        default=False,
+        description=(
+            "估算是否可信：true=实测样本充足且当前名额已释放；"
+            "false=样本不足或内存长期未释放，实际可能更久"
+        ),
+    )
 
 
 class CloseSessionResponse(SQLModel):
@@ -441,6 +516,13 @@ class CreateSessionData(SQLModel):
     expires_at: int | None = Field(None, description="过期时间")
     message: str | None = Field(None, description="消息")
     error: str | None = Field(None, description="错误信息")
+    error_code: int | None = Field(None, description="失败时的业务错误码")
+    # 启动内存队列
+    queued: bool = Field(default=False, description="是否因内存不足进入启动队列排队")
+    queue_type: LaunchQueueTypeEnum | None = Field(
+        default=None, description="所在队列：vip / normal"
+    )
+    queue_position: int | None = Field(default=None, description="同队列中的排位（1 起）")
 
 
 class BrowserSessionStatusData(SQLModel):
@@ -468,6 +550,16 @@ class BrowserSessionStatusData(SQLModel):
     pending_termination_at: int | None = Field(
         None, description="待关闭的宽限截止时间戳（闲置超时进入宽限期后非空）"
     )
+    # 启动内存队列（内存不足时按 VIP / 普通队列排队）
+    in_launch_queue: bool = Field(False, description="是否处于启动队列中")
+    queue_state: LaunchQueueStateEnum | None = Field(
+        None, description="排队状态：queued=排队等待，launching=已放行启动中"
+    )
+    queue_type: LaunchQueueTypeEnum | None = Field(
+        None, description="所在队列：vip / normal"
+    )
+    queue_position: int | None = Field(None, description="同队列中的排位（1 起）")
+    queue_waiting_seconds: int = Field(0, description="已排队等待时长（秒）")
 
 
 class JavaScriptExecutionResult(SQLModel):

@@ -209,10 +209,12 @@ async def run_workflow(
     status = WorkflowRunStatusEnum.SUCCESS
 
     try:
-        # ---------- 会话与页面（定时运行允许自动拉起） ----------
+        # ---------- 会话与页面（定时运行允许自动拉起；统一有头，见计划书 §5.17） ----------
         entry = await live_service.get_or_create_browser_session_entry(
-            mid=mid, browser_id=target_browser_id, headless=True
+            mid=mid, browser_id=target_browser_id, headless=False
         )
+        # 进入执行期互斥：运行期间禁止调试类接口操作同一会话（直播为只读拉流，不受影响）
+        live_service.begin_workflow_run(mid, target_browser_id, run.run_id)
         page = await entry.browser_session.get_current_page()
 
         plugins = await workflow_crud_svr.get_enabled_plugins(workflow.workflow_id)
@@ -255,6 +257,9 @@ async def run_workflow(
         logger.exception(
             f"[WorkflowRunner] 工作流执行异常: {workflow.workflow_id}, run={run.run_id}"
         )
+
+    # 退出执行期互斥：无论成功 / 失败 / 异常都必须解除，避免会话被永久锁在「执行中」
+    live_service.end_workflow_run(mid, target_browser_id)
 
     # ---------- 汇总落库 ----------
     total = len(results_data)

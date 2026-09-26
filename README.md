@@ -82,7 +82,8 @@ docker compose up -d rpa-browser
 | `GEMINI_API_KEY` | Gemini API Key |
 | `RABBITMQ_URL` | RabbitMQ 连接串（`auto_attach_auth` RPC 依赖） |
 | `MESSAGE_CONFIG` | 统一推送渠道配置（JSON，无 per-user 配置时兜底） |
-| `SERVER_NAME` / `SERVER_ADDRESS` | 推送服务标识 |
+| `SERVER_NAME` / `SERVER_ADDRESS` | 推送服务标识（来自 `bili_common` 的 `PushNotifySettingsMixin`） |
+| `PUSHME_URL` / `PUSHPLUS_URL` / `HITOKOTO_API_URL` | 渠道默认端点 / 一言接口（同上，与其它服务共用默认值） |
 | `TZ` | 时区 |
 
 ## 与其它服务的关系
