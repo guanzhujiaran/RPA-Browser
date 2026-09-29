@@ -525,6 +525,49 @@ class CreateSessionData(SQLModel):
     queue_position: int | None = Field(default=None, description="同队列中的排位（1 起）")
 
 
+class BrowserSessionViewerData(SQLModel):
+    """观看者摘要（随会话状态一并下发，供归属者判断「是谁在看」）
+
+    多观看者并发直播，见 docs/rpa-多观看者并发直播计划书.md §2.7。
+    随会话状态 SSE 推送，前端因此**无需再轮询** `/webrtc/status` 取观看者列表。
+
+    ⚠️ 刻意**不含** `idle_seconds` / `last_activity` 等每次请求都在变的字段：
+    它们会破坏状态签名去重（`LiveService._STATUS_SIGNATURE_FIELDS`），
+    让 SSE 退化成逐秒推送。
+    """
+
+    viewer_id: str = Field(description="观看者标识")
+    stream_key: str = Field(description="信令键")
+    page_index: int = Field(description="订阅的页面索引")
+    state: str = Field(description="该连接的流状态")
+    paused: bool = Field(False, description="本端是否暂停出帧（只影响本端）")
+    level: str = Field("", description="本端用户档位")
+    effective_level: str = Field("", description="本端生效档位")
+    client_ip: str = Field("", description="客户端 IP（网关解析 nginx 头后注入）")
+    client_device: str = Field(
+        "", description="设备描述，如「Windows · Chrome 126」"
+    )
+    client_device_type: str = Field(
+        "",
+        description="设备类型稳定码：desktop / mobile / tablet（文案由前端 i18n 出）",
+    )
+    client_browser_version: str = Field(
+        "", description="浏览器大版本，如 126（结构化，供前端单独展示）"
+    )
+    client_ip_region: str = Field(
+        "",
+        description="IP 属地，如「浙江 杭州」（be-message GeoIP RPC 解析；失败为空串）",
+    )
+    client_ip_isp: str = Field(
+        "",
+        description=(
+            "IP 运营商（ASN 组织名，GeoLite2-ASN 原值，**英文**，"
+            "如 `China Unicom Shanghai network`；与属地同一次 RPC 返回，失败为空串）"
+        ),
+    )
+    connected_at: int = Field(0, description="接入时间（Unix 秒）")
+
+
 class BrowserSessionStatusData(SQLModel):
     """浏览器会话状态数据"""
 
@@ -533,6 +576,16 @@ class BrowserSessionStatusData(SQLModel):
     lifecycle_state: SessionLifecycleState = Field(description="生命周期状态")
     active_connections: int = Field(description="活跃连接数")
     video_streaming: bool = Field(description="是否视频流中")
+    viewer_count: int = Field(
+        0, description="当前观看者连接数（多观看者并发直播，见 docs/rpa-多观看者并发直播计划书.md）"
+    )
+    viewers: list["BrowserSessionViewerData"] = Field(
+        default_factory=list,
+        description=(
+            "观看者摘要列表（已排除监管管理员观看者，见计划书 §2.7）；"
+            "随会话状态 SSE 下发，前端据此展示「谁在看」而无需轮询 /webrtc/status"
+        ),
+    )
     manual_mode: bool = Field(description="是否手动模式")
     created_at: int = Field(description="创建时间")
     expires_at: int | None = Field(None, description="过期时间")

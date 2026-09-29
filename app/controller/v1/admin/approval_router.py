@@ -138,7 +138,7 @@ async def review_approval(
             )
             approval = result.first()
             if approval is None:
-                return error_response(msg="审批单不存在", code=ResponseCode.NOT_FOUND)
+                return error_response(msg="审批单不存在", code=ResponseCode.APPROVAL_NOT_FOUND)
             allowed = _APPROVAL_TRANSITIONS.get(approval.status, set())
             if request.status not in allowed:
                 return error_response(
@@ -171,7 +171,7 @@ async def cancel_approval(
             )
             approval = result.first()
             if approval is None:
-                return error_response(msg="审批单不存在", code=ResponseCode.NOT_FOUND)
+                return error_response(msg="审批单不存在", code=ResponseCode.APPROVAL_NOT_FOUND)
             if approval.submitter_mid != auth.mid:
                 return error_response(msg="只能撤回自己提交的审批", code=ResponseCode.FORBIDDEN)
             if approval.status != "pending":
@@ -198,7 +198,7 @@ async def delete_approval(
             )
             approval = result.first()
             if approval is None:
-                return error_response(msg="审批单不存在", code=ResponseCode.NOT_FOUND)
+                return error_response(msg="审批单不存在", code=ResponseCode.APPROVAL_NOT_FOUND)
             if approval.submitter_mid != auth.mid:
                 return error_response(msg="只能删除自己提交的审批", code=ResponseCode.FORBIDDEN)
             await session.delete(approval)

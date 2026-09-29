@@ -9,6 +9,7 @@ from typing import List
 import uuid
 
 from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response_code import ResponseCode
 from app.models.workflow.models import (
     PluginCreateRequest,
     PluginUpdateRequest,
@@ -132,7 +133,7 @@ async def update_plugin(
     """更新插件挂载配置"""
     model = await plugin_crud_svr.get_by_id(request.id)
     if not model or str(model.mid) != str(auth.mid):
-        return error_response(404, "插件配置不存在")
+        return error_response(ResponseCode.PLUGIN_CONF_NOT_FOUND, "插件配置不存在")
 
     try:
         # publish 审批强制：把插件公开到社区前，需已通过对应 publish 审批单（未通过保持 private）
@@ -171,7 +172,7 @@ async def delete_plugin(
     """删除插件挂载配置"""
     model = await plugin_crud_svr.get_by_id(id)
     if not model or str(model.mid) != str(auth.mid):
-        return error_response(404, "插件配置不存在")
+        return error_response(ResponseCode.PLUGIN_CONF_NOT_FOUND, "插件配置不存在")
 
     await plugin_crud_svr.delete(id)
     return success_response("删除成功")
@@ -193,7 +194,7 @@ async def fork_plugin(
     # 获取原插件
     original = await plugin_crud_svr.get_by_id(request.id)
     if not original:
-        return error_response(404, "插件不存在")
+        return error_response(ResponseCode.PLUGIN_NOT_FOUND, "插件不存在")
     
     # 检查权限：如果是别人的插件，必须是公开的
     if str(original.mid) != str(auth.mid) and not original.is_public:
@@ -233,7 +234,7 @@ async def get_plugin_forks(
     """获取某插件的所有 Fork 版本列表"""
     original = await plugin_crud_svr.get_by_id(id)
     if not original:
-        return error_response(404, "插件不存在")
+        return error_response(ResponseCode.PLUGIN_NOT_FOUND, "插件不存在")
     
     forks = await plugin_crud_svr.list_forks(id, skip, limit)
     

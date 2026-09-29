@@ -103,7 +103,8 @@ async def lift_user_ban(
             mid=request.mid, operator_mid=auth.mid, reason=request.reason
         )
         if ban is None:
-            return error_response(msg="该用户当前未被封禁", code=ResponseCode.NOT_FOUND)
+            # 前置状态不满足（解封一个未封禁的用户）：非「资源不存在」，用通用业务拒绝码
+            return error_response(msg="该用户当前未被封禁", code=ResponseCode.BUSINESS_ERROR)
         await log_admin_action(
             auth.mid, "user:unban", "user", request.mid, f"reason={request.reason}"
         )

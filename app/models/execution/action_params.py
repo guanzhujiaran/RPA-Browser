@@ -83,29 +83,39 @@ class BuiltinActionIconId(IntEnumAutoDoc):
     `public/action-icons/{分类}/s_{系列}_{系列名}/i_{编号}_{名称}.{ext}` 映射为实际图标
     （静态资源，编号→文件的映射由前端清单 `npm run icons:manifest` 生成）；
     图库中缺少对应资源时前端回落到内置图标，因此此处只声明编号，不校验资源是否存在。
+
+    ⚠️ 编号**刻意不是 1~16 连续**：`s_33` 内 `i_1~i_16` 只是阿尔托莉雅 / 阿尔托莉雅〔Alter〕/
+    Lily / 尼禄 四个角色的 1/2/3 再临，16 个内置动作全用它们会「全是一张脸」。
+    这里改为**一个动作一位不同角色、各取该角色的最终形态**（`i_*_<角色>_3.png`，即第三再临）。
+    换人只需改下面的数字；⚠️ 素材是批量 dump，**同一显示名可能对应多位不同角色**
+    （如 `i_38` / `i_45` 都叫「阿尔托莉雅·潘德拉贡」，实为绿披风王女与白甲骑士），
+    换编号前请先打开对应图片确认，不要只看文件名。
     """
-    CLICK = 1
-    INPUT = 2
-    WAIT = 3
-    SCROLL = 4
-    NAVIGATE = 5
-    SCREENSHOT = 6
-    LLM = 7
-    HOVER = 8
-    NEW_PAGE = 9
-    GET_TEXT = 10
-    GET_WINDOW = 11
-    FETCH_EXTERNAL_DATA = 12
-    PRINT = 13
-    LOOP = 14
-    COMPOSITE = 15
-    IF_ELSE = 16
+
+    # 最终形态 = `s_33` 内该角色的 `i_*_<角色>_3.png`
+    CLICK = 28                # 冲田总司（粉发 + 武士刀）
+    INPUT = 65                # 阿尔托莉雅·卡斯特（白甲金冠 + 蓝缎带）
+    WAIT = 87                 # 摩根（白发黑冠）
+    SCROLL = 68               # 雨之魔女梣（白发白裙 + 花饰）
+    NAVIGATE = 3              # 阿尔托莉雅·潘德拉贡（白甲 + 王冠）
+    SCREENSHOT = 112          # 谜之女主角XX（蓝帽科幻）
+    LLM = 101                 # 梅塔特隆·贞德（白金翼装甲）
+    HOVER = 7                 # 阿尔托莉雅·潘德拉贡〔Alter〕（黑裙）
+    NEW_PAGE = 11             # 阿尔托莉雅·潘德拉贡〔Lily〕（白裙黑结）
+    GET_TEXT = 75             # 格蕾（灰斗篷 + 羽领）
+    GET_WINDOW = 14           # 尼禄·克劳狄乌斯（红白礼服 + 狮首）
+    FETCH_EXTERNAL_DATA = 121  # 所多玛之兽／德拉科（黑甲红角）
+    PRINT = 41                # 贞德（银冠 + 蓝绿礼服）
+    LOOP = 23                 # 莫德雷德（红装马尾）
+    COMPOSITE = 115           # 谜之偶像X〔Alter〕（霓虹绿 + 眼镜）
+    IF_ELSE = 84              # 贞德〔Alter〕（白发黑红）
 
 
-# 内置操作默认图标的系列编号：**复用现有图库系列** `FGO头像/s_1_saber`
-# （不再保留 101 这类专属号，避免占用/阻塞图库的全局连续编号）；
-# 编号仍由 BuiltinActionIconId（1~16）分配，即对应 `s_1` 的 `i_1~i_16`。
-BUILTIN_ACTION_ICON_SERIES = 1
+# 内置操作默认图标的系列编号：**复用现有图库系列** `Saber脸/s_33_FGO状态图`
+# （不保留专属号，避免占用/阻塞图库的全局连续编号）；
+# 编号由 BuiltinActionIconId 分配（见其 docstring：一动作一角色、取各角色最终形态）。
+# ⚠️ 被引用的这 16 个编号自此被内置动作常驻引用，不可再重排。
+BUILTIN_ACTION_ICON_SERIES = 33
 
 
 class BuiltinActionType(StrEnumAutoDoc):
@@ -140,7 +150,7 @@ class BuiltinActionType(StrEnumAutoDoc):
     def icon(self) -> tuple[int, int]:
         """该内置操作的默认展示图标 (icon_series, icon_id)
 
-        未登记编号时返回 (101, 0)，由前端回落到内置图标。
+        未登记编号时返回 (BUILTIN_ACTION_ICON_SERIES, 0)，由前端回落到内置图标。
         """
         icon_id = BuiltinActionIconId.__members__.get(self.name)
         return BUILTIN_ACTION_ICON_SERIES, int(icon_id) if icon_id is not None else 0

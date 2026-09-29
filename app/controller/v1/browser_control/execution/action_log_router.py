@@ -9,6 +9,7 @@
 from typing import List
 
 from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from fastapi import Depends
@@ -95,7 +96,7 @@ async def get_action_log(
         return error_response(400, "缺少 log_id")
     model = await action_log_crud_svr.get_by_log_id(auth.mid, log_id)
     if not model:
-        return error_response(404, "日志不存在")
+        return error_response(ResponseCode.ACTION_LOG_NOT_FOUND, "日志不存在")
     return success_response(_to_detail(model))
 
 

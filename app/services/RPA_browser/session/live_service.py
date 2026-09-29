@@ -44,6 +44,7 @@ from app.services.RPA_browser.session.launch_queue import (
     LaunchTicket,
     get_launch_queue,
 )
+from app.services.RPA_browser.session.session_status_bus import session_status_bus
 
 
 @dataclass
@@ -70,6 +71,31 @@ class LiveService:
     _global_lock = asyncio.Lock()  # 用于保护 _session_locks 字典本身
     # 🔑 排队启动的后台任务引用（防止被 GC 回收）
     _background_launch_tasks: set[asyncio.Task] = set()
+    # 🔑 SSE 状态推送去重：会话键 → 最近一次已推送的快照签名
+    _last_status_signature: dict[str, str] = {}
+
+    #: 参与「是否需要推送」判定的稳定字段。
+    #: 刻意排除 idle_seconds / created_at / expires_at 等每请求都变的字段，
+    #: 否则会退化成逐秒推送（详见 docs/rpa-会话状态SSE推送计划书.md §2.2）。
+    _STATUS_SIGNATURE_FIELDS: tuple[str, ...] = (
+        "session_exists",
+        "browser_running",
+        "status",
+        "lifecycle_state",
+        "is_pinned",
+        "pending_termination_at",
+        "in_launch_queue",
+        "queue_state",
+        "queue_type",
+        "queue_position",
+        # 观看者数变化（多人观看 / 有人离开）也要即时推送，前端据此展示「N 人在观看」
+        "viewer_count",
+        # 观看者列表变化（有人加入 / 离开 / 暂停 / 切档）同样即时推送，
+        # 前端因此无需再轮询 /webrtc/status 取「谁在看」列表。
+        # ⚠️ BrowserSessionViewerData 刻意不含 idle_seconds / last_activity，
+        # 否则该字段每请求都变，会让去重失效、退化成逐秒推送。
+        "viewers",
+    )
 
     @staticmethod
     def _get_session_key(mid: int|str, browser_id: int|str) -> str:
@@ -100,6 +126,45 @@ class LiveService:
         except ValueError as e:
             logger.error(f"解析会话键失败: {session_key}, error: {e}")
             raise
+
+    # ── 会话状态 SSE 推送（见 docs/rpa-会话状态SSE推送计划书.md）──
+
+    def _notify_session_status(self, mid: int | str, browser_id: int | str) -> None:
+        """向 SSE 订阅者推送最新会话状态快照。
+
+        去重：只有 `_STATUS_SIGNATURE_FIELDS` 组成的签名变化时才推送，
+        因此可以安全地挂在 touch 这类高频入口上（见计划书 §2.2）。
+        无订阅者时直接返回，不构造快照。
+        """
+        mid_int = int(mid)
+        browser_id_int = int(browser_id)
+        if not session_status_bus.has_subscribers(mid_int, browser_id_int):
+            return
+
+        status = self.get_browser_session_status(mid_int, browser_id_int)
+        signature = "|".join(
+            str(getattr(status, field)) for field in self._STATUS_SIGNATURE_FIELDS
+        )
+        session_key = self._get_session_key(mid_int, browser_id_int)
+        if self._last_status_signature.get(session_key) == signature:
+            return
+
+        self._last_status_signature[session_key] = signature
+        session_status_bus.publish(mid_int, browser_id_int, status)
+
+    def _forget_session_status(self, mid: int | str, browser_id: int | str) -> None:
+        """会话已销毁：清掉签名缓存，避免键泄漏与后续复用时的误去重。"""
+        self._last_status_signature.pop(self._get_session_key(mid, browser_id), None)
+
+    def notify_session_status(self, mid: int | str, browser_id: int | str) -> None:
+        """公开的状态推送入口 —— 供观看者生命周期 / 播放状态变化时调用。
+
+        与 `touch()` 的区别：**只推送快照，不刷新活跃时间**。
+        心跳下线（计划书 §10.7）后，观看者的加入 / 离开 / 暂停 / 切档
+        不再有任何周期性 touch 兜底触发推送，必须在这些变化点上显式调用本方法，
+        否则 SSE 订阅者会一直看到过期的人数与观看者列表。
+        """
+        self._notify_session_status(mid, browser_id)
 
     # ── 活跃刷新 / 自动化占用（见 docs/be-message-统一计划书.md §5.15）──
 
@@ -132,6 +197,8 @@ class LiveService:
                 logger.debug(f"touch 解除降级失败: {session_key}, {e}")
 
         logger.debug(f"会话活跃刷新: {session_key} (source={source})")
+        # 可能把挂起/降级/待关闭的会话拉回 ACTIVE，需推送给 SSE 订阅者（有签名去重）
+        self._notify_session_status(mid, browser_id)
         return True
 
     def pin(self, mid: int | str, browser_id: int | str) -> bool:
@@ -250,6 +317,20 @@ class LiveService:
                 action="terminate",
             )
 
+        # === 优先级 2: 有 WebRTC 链路连通的观看者 → 视为活跃（豁免闲置类回收）===
+        # 有人在看就不该闲置降级 / 挂起 —— 那本是「没人用」才触发的动作。
+        # 活性以 ICE/DTLS 连接状态（pc.connectionState）为准而非 HTTP 心跳：
+        # 暂停中的观看者保活仍在；监管页不订阅会话状态 SSE，也照样被覆盖。
+        # 放在「过期」之后：到期是硬约束，有人在看也要关（见计划书 §10.7）。
+        manager = getattr(entry.browser_session, "webrtc_manager", None)
+        if manager is not None and manager.has_live_viewer():
+            return CleanupDecision(
+                reason="有观看者正在观看(WebRTC 连通)",
+                next_state=SessionLifecycleState.ACTIVE,
+                priority=2,
+                action="restore",
+            )
+
         # === 优先级 2: 闲置达关实例阈值（先宽限，再关闭）===
         if idle >= policy.max_idle_time:
             if entry.terminate_scheduled_at is None:
@@ -319,6 +400,8 @@ class LiveService:
         elif action in ("restore", "degrade"):
             entry.status = BrowserStatusEnum.RUNNING
         entry.lifecycle_state = decision.next_state
+        # 降级/挂起/恢复都是服务端主动触发的状态变化，需即时推送给 SSE 订阅者
+        self._notify_session_status(entry.mid, entry.browser_id)
 
         manager = getattr(entry.browser_session, "webrtc_manager", None)
         if manager is None:
@@ -342,6 +425,30 @@ class LiveService:
         if entry := self._browser_sessions.get(session_key):
             return entry
         raise BrowserNotStartedException()
+
+    def find_session_entry_by_browser_id(
+        self, browser_id: int | str
+    ) -> BrowserSessionEntry | None:
+        """按 browser_id 反查会话条目（监管管理员观看场景）。
+
+        会话表的键是 `{mid}_{browser_id}`。监管管理员访问**他人**浏览器时，请求里带的是
+        **管理员自己的 mid**，拼不出归属者的键，因此只能按 browser_id 反查
+        （browser_id 全局唯一，结果唯一）。
+
+        ⚠️ 调用方必须已通过 `verify_browser_ownership_or_admin`（归属校验或监管权限校验），
+        否则等于越权读取他人会话。
+
+        Returns:
+            BrowserSessionEntry；不存在返回 None
+        """
+        try:
+            target = int(browser_id)
+        except (TypeError, ValueError):
+            return None
+        for entry in self._browser_sessions.values():
+            if entry.browser_id == target:
+                return entry
+        return None
 
     async def get_browser_session_page(self, mid: int, browser_id: int, page_index: int | None = None) -> Page:
         entry = self.get_browser_session_entry(mid, browser_id)
@@ -440,6 +547,7 @@ class LiveService:
                 entry.lifecycle_state = SessionLifecycleState.ACTIVE
                 elapsed = time.time() - start_time
                 logger.debug(f"复用现有会话: {session_key}, 耗时: {elapsed:.3f}s")
+                self._notify_session_status(mid, browser_id)
                 return entry
 
         # 🔑 第二阶段：如果不需要创建，抛出异常
@@ -460,6 +568,7 @@ class LiveService:
                     elapsed = time.time() - start_time
                     logger.debug(
                         f"并发检查后发现会话已存在: {session_key}, 耗时: {elapsed:.3f}s")
+                    self._notify_session_status(mid, browser_id)
                     return entry
 
             # 🔑 第四阶段：委托给 PlaywrightSessionPool 创建会话
@@ -494,6 +603,8 @@ class LiveService:
                 self._browser_sessions[session_key] = entry
                 elapsed = time.time() - start_time
                 logger.info(f"会话创建并注册完成: {session_key}, 总耗时: {elapsed:.3f}s")
+                # 会话从「不存在」变为「存在」，即时推送给 SSE 订阅者
+                self._notify_session_status(mid, browser_id)
                 return entry
             except Exception as e:
                 logger.exception(f"创建浏览器会话失败: {session_key}, error: {e}")
@@ -522,6 +633,9 @@ class LiveService:
                     # 删除会话引用
                     del self._browser_sessions[session_key]
                     logger.info(f"已删除会话: {session_key}")
+                    # 会话已销毁：先推送「不存在」快照，再清掉签名缓存
+                    self._notify_session_status(mid, browser_id)
+                    self._forget_session_status(mid, browser_id)
 
                 # 从池中释放会话
                 remove_params = BrowserSessionRemoveParams(
@@ -635,6 +749,9 @@ class LiveService:
                     cleanup_interval=settings.browser_session_cleanup_interval,
                 )
 
+            # 启动已落地（此时排队凭证已结算），推送最终快照
+            service._notify_session_status(mid, browser_id)
+
             return CreateSessionData(
                 success=True,
                 session_id=session_key,
@@ -694,6 +811,8 @@ class LiveService:
             entry.status = BrowserStatusEnum.RUNNING
             entry.lifecycle_state = SessionLifecycleState.ACTIVE
             logger.info(f"排队会话启动完成: {session_key}")
+            # 排队放行 → 启动完成：推送最终快照（含已退出的排队字段）
+            self._notify_session_status(mid, browser_id)
         except BrowserLaunchQueueCancelledException:
             logger.info(f"排队会话已被取消: {session_key}")
         except BrowserLaunchQueueTimeoutException as e:
@@ -796,12 +915,25 @@ class LiveService:
         expires_at = entry.calculated_expires_at
         browser_running = entry.browser_running
 
+        # 观看者连接数（多观看者并发直播）：取不到管理器时为 0。
+        # 用对外计数（排除监管管理员观看者）—— 管理员观看对归属者完全隐藏，
+        # 不能体现在人数里（见 docs/rpa-多观看者并发直播计划书.md §2.7）。
+        manager = getattr(entry.browser_session, "webrtc_manager", None)
+        viewer_count = manager.public_viewer_count if manager is not None else 0
+
+        # 观看者摘要随状态一并下发（SSE 首帧即全量快照），前端因此**不再轮询**
+        # /webrtc/status 取列表。构造收敛在 manager.viewer_summaries()：
+        # 与 /webrtc/status 共用同一份，两条出口字段一致（见计划书 §4.4）。
+        viewers = manager.viewer_summaries() if manager is not None else []
+
         return BrowserSessionStatusData(
             session_exists=True,
             browser_running=browser_running,
             lifecycle_state=lifecycle_state,
-            active_connections=0,
-            video_streaming=False,
+            active_connections=viewer_count,
+            video_streaming=viewer_count > 0,
+            viewer_count=viewer_count,
+            viewers=viewers,
             manual_mode=entry.is_manual_mode,
             created_at=created_at,
             expires_at=expires_at,  # 🔑 使用动态计算的过期时间

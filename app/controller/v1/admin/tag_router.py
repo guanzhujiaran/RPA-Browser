@@ -36,7 +36,7 @@ async def update_tag(
             result = await session.exec(select(ResourceTag).where(ResourceTag.id == request.id))
             tag = result.first()
             if tag is None:
-                return error_response(msg="标签不存在", code=ResponseCode.NOT_FOUND)
+                return error_response(msg="标签不存在", code=ResponseCode.TAG_NOT_FOUND)
             if request.name is not None:
                 tag.name = request.name
             if request.color is not None:
@@ -61,7 +61,7 @@ async def delete_tag(
             result = await session.exec(select(ResourceTag).where(ResourceTag.id == request.id))
             tag = result.first()
             if tag is None:
-                return error_response(msg="标签不存在", code=ResponseCode.NOT_FOUND)
+                return error_response(msg="标签不存在", code=ResponseCode.TAG_NOT_FOUND)
             rels = await session.exec(
                 select(ResourceTagRel).where(ResourceTagRel.tag_id == request.id)
             )

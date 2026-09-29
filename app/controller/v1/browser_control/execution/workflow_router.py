@@ -243,7 +243,7 @@ async def get_workflow_detail(
 
     model = await workflow_crud_svr.get_by_id(workflow_id)
     if not model or str(model.mid) != str(auth.mid):
-        return error_response(404, "工作流不存在")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
 
     # 获取关联的插件列表
     enabled_plugins = await workflow_crud_svr.get_enabled_plugins(model.workflow_id)
@@ -283,7 +283,7 @@ async def update_workflow(
     """更新工作流"""
     existing = await workflow_crud_svr.get_by_id(request.id)
     if not existing or str(existing.mid) != str(auth.mid):
-        return error_response(404, "工作流不存在或无权限")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
 
     # publish 审批强制：把工作流公开到社区前，需已通过对应 publish 审批单（未通过保持 private）
     if request.is_public is True and not existing.is_public:
@@ -319,7 +319,7 @@ async def update_workflow(
     )
 
     if not model or str(model.mid) != str(auth.mid):
-        return error_response(404, "工作流不存在或无权限")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
 
     # 同步定时任务（启用/cron/浏览器任一变化都需重建或移除）
     await sync_workflow_job(model)
@@ -371,7 +371,7 @@ async def delete_workflow(
 
     model = await workflow_crud_svr.get_by_id(workflow_id)
     if not model or str(model.mid) != str(auth.mid):
-        return error_response(404, "工作流不存在或无权限")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
 
     # 先摘掉定时任务，避免删除后仍被调度
     remove_workflow_job(model.workflow_id)
@@ -404,7 +404,7 @@ async def duplicate_workflow(
     # 获取原工作流
     original = await workflow_crud_svr.get_by_id(workflow_id)
     if not original or str(original.mid) != str(auth.mid):
-        return error_response(404, "工作流不存在或无权限")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
 
     # 创建副本
     new_workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
@@ -454,7 +454,7 @@ async def fork_workflow(
     # 获取原工作流
     original = await workflow_crud_svr.get_by_id(request.id)
     if not original:
-        return error_response(404, "工作流不存在")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
 
     # 检查权限：如果是别人的工作流，必须是公开的
     if str(original.mid) != str(auth.mid) and not original.is_public:
@@ -494,7 +494,7 @@ async def get_workflow_forks(
     """获取某工作流的所有 Fork 版本列表"""
     original = await workflow_crud_svr.get_by_id(id)
     if not original:
-        return error_response(404, "工作流不存在")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
 
     forks = await workflow_crud_svr.list_forks(id, skip, limit)
 
@@ -611,7 +611,7 @@ async def run_saved_workflow(
 
     model = await workflow_crud_svr.get_by_id(request.id)
     if not model or str(model.mid) != str(mid):
-        return error_response(404, "工作流不存在或无权限")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
     if not model.custom_action_id:
         return error_response(ResponseCode.BUSINESS_ERROR, "工作流未关联任何动作")
 
@@ -634,7 +634,7 @@ async def list_workflow_runs(
     """分页查询某工作流的运行记录（最新在前）"""
     model = await workflow_crud_svr.get_by_workflow_id(request.workflow_id)
     if not model or str(model.mid) != str(auth.mid):
-        return error_response(404, "工作流不存在或无权限")
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
 
     skip = (request.page - 1) * request.per_page
     total = await workflow_run_crud_svr.count_by_workflow(request.workflow_id)
@@ -671,7 +671,7 @@ async def get_workflow_run(
 
     model = await workflow_run_crud_svr.get_by_run_id(run_id, auth.mid)
     if not model:
-        return error_response(404, "运行记录不存在")
+        return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
     return success_response(
         WorkflowRunLogDetailResponse(**(await workflow_run_crud_svr.to_dict(model)))
     )

@@ -19,6 +19,17 @@ def register_background_tasks():
         misfire_grace_time=None,  # 错过执行时间不立即执行,等待下一次
     )
 
+    # 观看者回收任务 - 每 browser_webrtc_viewer_reap_interval 秒执行一次（默认 20s）
+    # 回收心跳超时的观看者连接（前端关标签页 / 断网时不会主动发关闭请求）
+    # 见 docs/rpa-多观看者并发直播计划书.md §4.3
+    scheduler_manager_ist.add_interval_job(
+        func=BackgroundTasks.reap_idle_viewers,
+        seconds=settings.browser_webrtc_viewer_reap_interval,
+        id="reap_idle_viewers",
+        name="观看者回收任务",
+        misfire_grace_time=None,
+    )
+
     logger.info("✅ All background tasks registered")
     logger.info("📋 Registered tasks:")
     for job in scheduler_manager_ist.get_jobs():

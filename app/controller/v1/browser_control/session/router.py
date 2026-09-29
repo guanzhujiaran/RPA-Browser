@@ -1,6 +1,10 @@
 from app.models.runtime.control import BrowserSessionStatusData
 from app.services.RPA_browser.session.live_service import live_service
+from app.services.RPA_browser.session.session_status_bus import (
+    iter_session_status_events,
+)
 from fastapi import Depends, BackgroundTasks
+from fastapi.responses import StreamingResponse
 import time
 from app.config import settings
 from app.models.runtime.control import (
@@ -151,6 +155,58 @@ async def browser_session_status(
     return success_response(
         data=status_data,
         msg=status_data.message or "获取会话状态成功",
+    )
+
+
+@router.get(
+    BrowserSessionRouterPath.events,
+    response_class=StreamingResponse,
+    # 必须显式声明 SSE 内容类型：
+    # 1) openapi.json / Swagger 才能如实描述契约（否则被记成 application/json）；
+    # 2) hey-api 依据响应 mediaType === "text/event-stream" 才会生成 client.sse.* 方法
+    #    （见 @hey-api/openapi-ts 的 SSE 判定），否则会生成一个会读满响应体的普通 .get()。
+    responses={
+        200: {
+            "description": "会话状态 SSE 事件流（text/event-stream 长连接）",
+            "content": {"text/event-stream": {}},
+        }
+    },
+)
+async def browser_session_events(
+    auth_info: AuthInfo = Depends(get_auth_info_from_header),
+    browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
+):
+    """订阅浏览器会话状态事件流（Server-Sent Events）。
+
+    替代前端 20s 生命周期轮询：会话状态发生变更时由服务端主动推送全量快照，
+    建连时先下发一帧当前状态（等价于一次 /status），前端无需再补请求。
+
+    事件名固定 `session_status`，`data` 为 /status 的 data 全量快照；
+    无状态变化时下发 SSE 注释行作为心跳（详见 docs/rpa-会话状态SSE推送计划书.md）。
+
+    Returns:
+        StreamingResponse: text/event-stream 长连接
+    """
+    mid = int(auth_info.mid)
+    browser_id = int(browser_info.browser_id)
+
+    initial = live_service.get_browser_session_status(mid, browser_id)
+
+    # 流式响应与统一 envelope（StandardResponse）互斥，故不声明 response_model
+    return StreamingResponse(
+        iter_session_status_events(
+            mid,
+            browser_id,
+            initial,
+            heartbeat_interval=settings.browser_session_sse_heartbeat_interval,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # 若后续前面挂 nginx，必须关闭响应缓冲，否则推送会被攒批
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

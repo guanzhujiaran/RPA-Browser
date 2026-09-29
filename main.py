@@ -8,11 +8,13 @@ from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
 from scripts.initd.main import init_dependencies
 from app.utils.alembic_migration import run_alembic_upgrade_head, check_schemas
+from app.utils.logging_setup import setup_logging
 from app.utils.virtual_display import ensure_virtual_display, stop_virtual_display
 import asyncio
 from loguru import logger
 from app.services.mq.rpc_client import rpc_client
 from app.services.mq.rpc_server import start_rpc_server, stop_rpc_server
+from app.services.RPA_browser.session.session_status_bus import session_status_bus
 
 
 def _setup_windows_event_loop() -> None:
@@ -38,6 +40,9 @@ def _setup_windows_event_loop() -> None:
 async def lifespan(app: FastAPI):
     # Windows 平台事件循环配置
     _setup_windows_event_loop()
+
+    # 会话状态 SSE 推送：绑定事件循环，供非循环线程发布状态时安全投递
+    session_status_bus.bind_loop(asyncio.get_running_loop())
 
     # 参照 FastapiApp lifespan 模式：先执行 alembic upgrade head，再检查 Schema 一致性
     if settings.alembic_auto_migrate:
@@ -75,6 +80,9 @@ def create_app() -> FastAPI:
 
     return app
 
+
+# 日志必须在应用启动前初始化：收敛 loguru 级别 + 接管标准库日志（第三方 INFO 噪声）
+setup_logging()
 
 app = create_app()
 

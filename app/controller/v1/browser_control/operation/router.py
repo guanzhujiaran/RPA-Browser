@@ -1,62 +1,34 @@
 """
 浏览器操作控制路由
 
-提供浏览器的基础操作控制功能：打开页面、关闭页面、切换页面、执行JavaScript等
+提供浏览器的基础操作控制功能：打开页面、关闭页面、切换页面、获取页面信息、清空登录态等。
+
+接口本身只做「取参数 → 干活 → 拼响应」：
+- 浏览器归属校验 + 会话存在性 + 刷新活跃时间 + 索引取页，统一由
+  `require_active_browser_session` / `ActiveBrowserSession` 依赖承担；
+- 出错一律抛业务异常，由统一异常处理器转成 `{code, msg}`，接口内不再手拼错误响应。
 """
-from loguru import logger
-from typing import Any, Dict
-from bili_common.models.response import StandardResponse, success_response, error_response
-from app.models.router.router_prefix import BrowserControlRouterPath
-from app.services.RPA_browser.session.live_service import LiveService, live_service
-from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
-from app.utils.depends.security_depends import verify_browser_ownership
-from bili_common.models.depends import BrowserReqInfo, BrowserReqAuthInfo
-from ..base import new_operation_router
-from pydantic import BaseModel, Field
 from fastapi import Depends
+from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response_code import ResponseCode
+from app.models.router.router_prefix import BrowserControlRouterPath
+from app.models.runtime.browser_operation import (
+    BrowserInfoResponse,
+    ClearLoginStateRequest,
+    ClearLoginStateResponse,
+    ClosePageRequest,
+    GetPageInfoRequest,
+    OpenPageRequest,
+    SwitchPageRequest,
+)
+from app.services.RPA_browser.session.browser_data_service import BrowserDataService
+from app.utils.depends.browser_session_depends import (
+    ActiveBrowserSession,
+    require_active_browser_session,
+)
+from ..base import new_operation_router
 
 router = new_operation_router()
-
-
-# ============ 浏览器操作请求模型 ============
-
-
-class OpenPageRequest(BaseModel):
-    """打开页面请求"""
-    url: str = Field(..., description="要打开的URL")
-    page_index: int = Field(0, description="页面索引，-1表示新建页面")
-
-
-class ClosePageRequest(BaseModel):
-    """关闭页面请求"""
-    page_index: int = Field(0, description="要关闭的页面索引")
-
-
-class SwitchPageRequest(BaseModel):
-    """切换页面请求"""
-    page_index: int = Field(0, description="目标页面索引")
-
-
-class ExecuteJSRequest(BaseModel):
-    """执行JavaScript请求"""
-    script: str = Field(..., description="要执行的JavaScript代码")
-    page_index: int = Field(0, description="执行脚本的页面索引")
-
-
-class GetPageInfoRequest(BaseModel):
-    """获取页面信息请求"""
-    page_index: int = Field(0, description="页面索引")
-
-
-class BrowserInfoResponse(BaseModel):
-    """浏览器信息响应"""
-    browser_id: str = Field(..., description="浏览器实例ID")
-    mid: int = Field(..., description="用户ID")
-    user_data_dir: str | None = Field(None, description="用户数据目录")
-    is_headless: bool = Field(False, description="是否为无头模式")
-    browser_type: str = Field("chromium", description="浏览器类型")
-    version: str = Field("", description="浏览器版本")
-    user_agent: str = Field("", description="User-Agent")
 
 
 # ============ 浏览器操作 API ============
@@ -65,137 +37,69 @@ class BrowserInfoResponse(BaseModel):
 @router.post("/operation/open_page", summary="打开页面")
 async def open_page(
     request: OpenPageRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
+    session: ActiveBrowserSession = Depends(require_active_browser_session()),
 ) -> StandardResponse[dict]:
     """在浏览器中打开指定URL"""
-    mid = browser_req.auth_info.mid
-    browser_id = browser_req.browser_id
-    
-    try:
-        # 获取会话
-        session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService._browser_sessions:
-            return error_response(404, "会话不存在")
-        
-        entry = LiveService._browser_sessions[session_key]
-        await live_service.touch(mid, browser_id, source="operation")
-        
-        # 如果 page_index 为 -1，新建页面
-        if request.page_index < 0:
-            page = await entry.browser_session.browser.new_page()
-            page_index = len(entry.browser_session.browser.pages) - 1
-        else:
-            # 获取指定页面
-            pages = entry.browser_session.browser.pages
-            if request.page_index >= len(pages):
-                return error_response(400, "页面索引超出范围")
-            page = pages[request.page_index]
-            page_index = request.page_index
-        
-        # 导航到URL
-        await page.goto(request.url)
-        
-        return success_response({
-            "page_index": page_index,
-            "url": request.url,
-            "message": "页面打开成功"
-        })
-        
-    except Exception as e:
-        logger.error(f"打开页面失败: {e}")
-        return error_response(500, str(e))
+    # page_index 为负数表示新建页面
+    if request.page_index < 0:
+        page = await session.browser_session.create_new_page_with_limit()
+        page_index = len(session.all_pages) - 1
+    else:
+        page = session.get_page(request.page_index)
+        page_index = request.page_index
+
+    await page.goto(request.url)
+
+    return success_response({
+        "page_index": page_index,
+        "url": request.url,
+        "message": "页面打开成功"
+    })
 
 
 @router.post("/operation/close_page", summary="关闭页面")
 async def close_page(
     request: ClosePageRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
+    session: ActiveBrowserSession = Depends(require_active_browser_session()),
 ) -> StandardResponse[dict]:
     """关闭指定页面"""
-    mid = browser_req.auth_info.mid
-    browser_id = browser_req.browser_id
-    
-    try:
-        session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService._browser_sessions:
-            return error_response(404, "会话不存在")
-        
-        entry = LiveService._browser_sessions[session_key]
-        await live_service.touch(mid, browser_id, source="operation")
-        pages = entry.browser_session.browser.pages
-        
-        if request.page_index >= len(pages):
-            return error_response(400, "页面索引超出范围")
-        
-        # 不能关闭最后一个页面
-        if len(pages) <= 1:
-            return error_response(400, "无法关闭最后一个页面")
-        
-        await pages[request.page_index].close()
-        
-        return success_response({"message": "页面关闭成功"})
-        
-    except Exception as e:
-        logger.error(f"关闭页面失败: {e}")
-        return error_response(500, str(e))
+    page = session.get_page(request.page_index)
+
+    # 不能关闭最后一个页面
+    if len(session.all_pages) <= 1:
+        return error_response(ResponseCode.BAD_REQUEST, "无法关闭最后一个页面")
+
+    await page.close()
+
+    return success_response({"message": "页面关闭成功"})
 
 
 @router.post("/operation/switch_page", summary="切换页面")
 async def switch_page(
     request: SwitchPageRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
+    session: ActiveBrowserSession = Depends(require_active_browser_session()),
 ) -> StandardResponse[dict]:
     """切换到指定页面"""
-    mid = browser_req.auth_info.mid
-    browser_id = browser_req.browser_id
-    
-    try:
-        session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService._browser_sessions:
-            return error_response(404, "会话不存在")
-        
-        entry = LiveService._browser_sessions[session_key]
-        await live_service.touch(mid, browser_id, source="operation")
-        pages = entry.browser_session.browser.pages
-        
-        if request.page_index >= len(pages):
-            return error_response(400, "页面索引超出范围")
-        
-        await pages[request.page_index].bring_to_front()
-        
-        return success_response({
-            "page_index": request.page_index,
-            "message": "页面切换成功"
-        })
-        
-    except Exception as e:
-        logger.error(f"切换页面失败: {e}")
-        return error_response(500, str(e))
+    page = session.get_page(request.page_index)
+    await page.bring_to_front()
+
+    return success_response({
+        "page_index": request.page_index,
+        "message": "页面切换成功"
+    })
+
 
 @router.post("/operation/get_page_info", summary="获取页面信息")
 async def get_page_info(
     request: GetPageInfoRequest,
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
+    session: ActiveBrowserSession = Depends(require_active_browser_session()),
 ) -> StandardResponse[dict]:
     """获取指定页面的信息"""
-    mid = browser_req.auth_info.mid
-    browser_id = browser_req.browser_id
-    
-    session_key = LiveService._get_session_key(mid, browser_id)
-    if session_key not in LiveService._browser_sessions:
-        return error_response(404, "会话不存在")
-    
-    entry = LiveService._browser_sessions[session_key]
-    await live_service.touch(mid, browser_id, source="operation")
-    pages = entry.browser_session.all_pages
-    if request.page_index >= len(pages):
-        return error_response(400, "页面索引超出范围")
-    
-    page = pages[request.page_index]
+    page = session.get_page(request.page_index)
     url = await page.evaluate("document.URL")
     title = await page.title()
     cookies = await page.context.cookies()
-    
+
     return success_response({
         "page_index": request.page_index,
         "url": url,
@@ -203,8 +107,40 @@ async def get_page_info(
         "cookies_count": len(cookies),
         "message": "获取页面信息成功"
     })
-    
 
+
+@router.post(
+    "/operation/clear_login_state",
+    summary="清空登录态（换号）",
+    response_model=StandardResponse[ClearLoginStateResponse],
+)
+async def clear_login_state(
+    request: ClearLoginStateRequest,
+    session: ActiveBrowserSession = Depends(
+        require_active_browser_session(
+            source="clear_login_state",
+            # 工作流可能正在登录 / 下单，清掉登录态会把它打成「莫名其妙的登录失败」
+            reject_workflow_running=True,
+        )
+    ),
+) -> StandardResponse[ClearLoginStateResponse]:
+    """清空该浏览器的登录态，用于「换号」——**不关闭、不重建浏览器**。
+
+    只做两件事：
+    1. 清 cookie（全部站点，含 HttpOnly）+ 权限授权：登录态的真正载体，B 站的
+       SESSDATA 就是 HttpOnly cookie，页面 JS 清不掉，只能在这里做；
+    2. 清已打开页面的 localStorage / sessionStorage：否则 cookie 没了、
+       前端缓存的用户信息还在，页面会继续显示旧账号；再按需刷新页面让站点回到未登录态。
+
+    ⚠️ 明确不做：HTTP 磁盘缓存 / Service Worker / IndexedDB / 扩展数据 / 浏览历史。
+    正因为不动这些，才不需要删 profile 重建浏览器 —— 会话 ID 不变、不断 WebRTC 流、
+    不重排启动队列。反过来，若站点把凭证存在 IndexedDB / SW 里（不靠 cookie），
+    本接口对它无效，那类只能走「删除浏览器重建」。
+    """
+    data = await BrowserDataService.clear_login_state(
+        session.browser_session, reload_pages=request.reload_pages
+    )
+    return success_response(data=data, msg="清空登录态成功")
 
 
 # ============ browser/info API ============
@@ -212,40 +148,29 @@ async def get_page_info(
 
 @router.post(BrowserControlRouterPath.browser_info, summary="获取浏览器信息")
 async def get_browser_info(
-    browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership)
+    session: ActiveBrowserSession = Depends(require_active_browser_session()),
 ) -> StandardResponse[BrowserInfoResponse]:
     """获取当前浏览器实例的详细信息"""
-    mid = browser_req.auth_info.mid
-    browser_id = browser_req.browser_id
-    
-    try:
-        session_key = LiveService._get_session_key(mid, browser_id)
-        if session_key not in LiveService._browser_sessions:
-            return error_response(404, "会话不存在")
-        
-        entry = LiveService._browser_sessions[session_key]
-        await live_service.touch(mid, browser_id, source="operation")
-        browser = entry.browser_session.browser
-        
-        # 获取浏览器版本信息
-        version_info = await browser.version()
-        user_agent = await browser.user_agent()
-        
-        # 获取用户数据目录（如果可用）
-        user_data_dir = None
-        if hasattr(browser, '_user_data_dir'):
-            user_data_dir = str(browser._user_data_dir)
-        
-        return success_response(BrowserInfoResponse(
-            browser_id=browser_id,
-            mid=mid,
-            user_data_dir=user_data_dir,
-            is_headless=browser.is_headless,
-            browser_type="chromium",
-            version=version_info.get('browserVersion', ''),
-            user_agent=user_agent
-        ))
-        
-    except Exception as e:
-        logger.error(f"获取浏览器信息失败: {e}")
-        return error_response(500, str(e))
+    browser_session = session.browser_session
+    fingerprint_params = browser_session.fingerprint_params
+
+    # 浏览器版本 / User-Agent 在会话初始化时由指纹确定，直接取用即可
+    version = fingerprint_params.fingerprint_brand_version or ""
+    user_agent = fingerprint_params.patchright_browser_ua or ""
+
+    # 获取用户数据目录（来自底层 playwright 实例）
+    user_data_dir = getattr(
+        browser_session.playwright_instance, "_user_data_dir", None
+    )
+
+    return success_response(BrowserInfoResponse(
+        # browser_id 在依赖里被规范化为 int，而响应契约是 str：
+        # pydantic v2 不会把 int 自动转成 str，必须显式转，否则这里直接抛校验错误
+        browser_id=str(session.browser_id),
+        mid=session.mid,
+        user_data_dir=str(user_data_dir) if user_data_dir else None,
+        is_headless=browser_session.headless,
+        browser_type="chromium",
+        version=version,
+        user_agent=user_agent
+    ))

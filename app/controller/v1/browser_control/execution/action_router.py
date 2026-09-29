@@ -6,6 +6,7 @@ Action 管理路由
 from typing import Dict, List
 import uuid
 from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.admin_depends import assert_approved
@@ -245,10 +246,10 @@ async def get_custom_action(
 
     model = await action_crud_svr.get_by_action_id(str(action_id))
     if not model:
-        return error_response(404, "操作不存在")
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
 
     if model.mid != str(auth.mid) and not model.is_public:
-        return error_response(404, "操作不存在")
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
 
     # 将字典转换回 InputVarDefinition 对象
     input_vars_objs = [
@@ -317,7 +318,7 @@ async def update_custom_action(
     # 先校验所有权，防止越权修改他人数据
     existing = await action_crud_svr.get_by_action_id(request.action_id)
     if not existing or existing.mid != str(auth.mid):
-        return error_response(404, "操作不存在或无权限")
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在或无权限")
 
     # 将 InputVarDefinition 对象转换为字典以便正确序列化
     input_vars_dicts = None
@@ -356,7 +357,7 @@ async def update_custom_action(
     )
 
     if not model:
-        return error_response(404, "操作不存在")
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
 
     # 将字典转换回 InputVarDefinition 对象
     input_vars_objs = [
@@ -418,7 +419,7 @@ async def delete_custom_action(
 
     model = await action_crud_svr.get_by_action_id(str(action_id))
     if not model or model.mid != str(auth.mid):
-        return error_response(404, "操作不存在或无权限")
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在或无权限")
 
     success = await action_crud_svr.delete(model.id)
     if success:
@@ -475,7 +476,7 @@ async def fork_custom_action(
     # 获取原操作
     original = await action_crud_svr.get_by_action_id(request.action_id)
     if not original:
-        return error_response(404, "操作不存在")
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
 
     # 检查是否为公开操作，或者是自己的操作也允许 fork
     if not original.is_public and original.mid != str(auth.mid):
@@ -513,7 +514,7 @@ async def get_action_forks(
     """获取某自定义操作的所有 Fork 版本列表"""
     original = await action_crud_svr.get_by_id(id)
     if not original:
-        return error_response(404, "操作不存在")
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
 
     forks = await action_crud_svr.list_forks(id, skip, limit)
 

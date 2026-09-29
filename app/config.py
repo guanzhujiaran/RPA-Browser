@@ -1,6 +1,5 @@
 import os
 
-from loguru import logger
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,6 +19,10 @@ PROJECT_ROOT = os.path.abspath(os.path.join(current_dir, ".."))
 class Settings(PushNotifySettingsMixin, BaseSettings):
     mysql_browser_info_url: str
     RUNNING_MODE: ConfigRunningModeEnum
+    # 业务日志（loguru）输出级别：DEBUG / INFO / WARNING / ERROR / CRITICAL，
+    # 可用环境变量 LOG_LEVEL 覆盖；未设置时按运行模式推导：
+    # dev → INFO（默认不打 DEBUG），prod → WARNING（压日志量）。
+    log_level: str | None = None
     controller_base_path: str | None = "/api"
     chromium_executable_dir: str | None = os.path.join(current_dir, "chrome")
     # 有头(headful)模式是反自动化检测的关键，但服务器没有物理显示器，
@@ -183,6 +186,15 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
         extra="ignore",
     )
 
+    @property
+    def effective_log_level(self) -> str:
+        """生效的业务日志级别：LOG_LEVEL 显式设置优先，否则按运行模式推导。"""
+        if self.log_level:
+            return self.log_level.upper()
+        if self.RUNNING_MODE == ConfigRunningModeEnum.DEV:
+            return "INFO"
+        return "WARNING"
+
     # 底下是不那么重要的配置
     # 推送渠道配置（message_config）、服务标识（SERVER_NAME / SERVER_ADDRESS）、
     # 渠道默认端点（pushme_url / pushplus_url）、hitokoto_api_url 等共用项
@@ -223,6 +235,21 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     browser_stream_degrade_after: int = 120  # 闲置降级阈值（秒）：降质降帧
     browser_stream_suspend_after: int = 300  # 闲置挂起阈值（秒）：关流保实例
     browser_session_terminate_grace: int = 60  # 关实例前宽限倒计时（秒）
+
+    # ── 会话状态 SSE 推送（详见 docs/rpa-会话状态SSE推送计划书.md）──
+    # 状态变更即时推送，替代前端 20s 生命周期轮询；
+    # 心跳必须小于网关空闲超时（be-gateway ProxyEndPort.js: 180s）。
+    browser_session_sse_heartbeat_interval: int = 15  # SSE 心跳间隔（秒）
+
+    # ── 多观看者并发直播（详见 docs/rpa-多观看者并发直播计划书.md）──
+    # 同一 page 只允许一个 screencast，因此帧源为页级共享；每个观看者各持一条
+    # PeerConnection 与媒体轨道（暂停 / 档位 / 可见性均为观看者级）。
+    # ⚠️ 每条观看者连接都会独立编码一份 H264，CPU 随人数线性增长。
+    browser_webrtc_max_viewers: int = 0  # 单会话最大观看者数，0 = 不限制
+    # 非 connected 状态（新建协商中 / 断线自愈中）的宽限秒数，超时仍未恢复才回收。
+    # 活性判定依据是 pc.connectionState（ICE/DTLS 自带保活），前端无需发心跳（§10.7）。
+    browser_webrtc_viewer_idle_timeout: int = 60
+    browser_webrtc_viewer_reap_interval: int = 20  # 观看者回收扫描间隔（秒）
 
     # ── 浏览器启动内存准入与排队 ──
     # 启动浏览器前先检查系统可用内存：内存充足立即放行；不足则进入启动队列排队。
@@ -279,6 +306,14 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
 
     # WebRTC 视频流配置（清晰度档位见计划书 §5.18）
     browser_webrtc_idle_timeout: int = 300  # WebRTC 流最大闲置时间（秒），默认5分钟
+    # 原画档：JPEG 质量拉满，且按页面真实视口尺寸采集（不缩放、不降质）
+    browser_stream_original_quality: int = 100  # 原画档 JPEG 质量（0-100）
+    browser_stream_original_max_fps: int = 30  # 原画档最大帧率
+    browser_stream_ultra_quality: int = 90  # 超清档 JPEG 质量（0-100）
+    browser_stream_ultra_max_fps: int = 30  # 超清档最大帧率
+    # 超清档在浏览器侧抬高分辨率上限（默认自适应仅 800×800），画质最清晰
+    browser_stream_ultra_frame_max_width: int = 1920
+    browser_stream_ultra_frame_max_height: int = 1080
     browser_stream_medium_quality: int = 65  # 标清档 JPEG 质量（0-100）
     browser_stream_medium_max_fps: int = 15  # 标清档最大帧率
     browser_stream_medium_frame_max_width: int = 960  # 标清档浏览器侧分辨率上限
@@ -304,7 +339,6 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
 
 
 settings = Settings()
-logger.info(f"Settings loaded\n{settings}")
 
 
 class CONF:

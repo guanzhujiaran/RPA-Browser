@@ -178,7 +178,7 @@ async def get_browser_monitor_pages(
     entry = live_service._browser_sessions.get(session_key)
     if entry is None:
         return error_response(
-            msg="会话不存在或浏览器未启动", code=ResponseCode.NOT_FOUND
+            msg="会话不存在或浏览器未启动", code=ResponseCode.BROWSER_NOT_STARTED
         )
 
     pages = await _build_page_items(entry)
@@ -243,7 +243,7 @@ async def stop_browser_session(
     session_key = live_service._get_session_key(mid, browser_id)
     if session_key not in live_service._browser_sessions:
         return error_response(
-            msg="会话不存在或浏览器未启动", code=ResponseCode.NOT_FOUND
+            msg="会话不存在或浏览器未启动", code=ResponseCode.BROWSER_NOT_STARTED
         )
 
     try:

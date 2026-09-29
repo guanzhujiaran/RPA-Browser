@@ -73,7 +73,8 @@ async def revoke_certification(
             )
             cert = existing.first()
             if cert is None:
-                return error_response(msg="该资源未认证", code=ResponseCode.NOT_FOUND)
+                # 前置状态不满足（撤销一个未认证的资源）：非「资源不存在」，用通用业务拒绝码
+                return error_response(msg="该资源未认证", code=ResponseCode.BUSINESS_ERROR)
             await session.delete(cert)
             await session.commit()
             await log_admin_action(auth.mid, "cert:revoke", request.target_type, request.target_id)

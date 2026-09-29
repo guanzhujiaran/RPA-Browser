@@ -32,6 +32,7 @@ class BrowserSessionRouterPath(StrEnumAutoDoc):
 
     create = "/create"
     status = "/status"
+    events = "/events"  # 会话状态 SSE 事件流（状态变更即时推送）
     queue_status = "/queue_status"
     close = "/close"
 
@@ -87,11 +88,14 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     webrtc_offer = "/webrtc/offer"
     webrtc_answer = "/webrtc/answer"
     webrtc_ice_candidate = "/webrtc/ice-candidate"
+    # 批量候选端点：建连期前端攒 200ms 批量上报，替代逐个 POST（见计划书 §10.9）
+    webrtc_ice_candidates = "/webrtc/ice-candidates"
     webrtc_status = "/webrtc/status"
     webrtc_close = "/webrtc/close"
     webrtc_quality = "/webrtc/quality"
     webrtc_visibility = "/webrtc/visibility"
     webrtc_pause = "/webrtc/pause"
+    webrtc_heartbeat = "/webrtc/heartbeat"  # 观看者保活（多观看者并发直播）
 
 class UserBrowserDefaultSettingRouterPath(StrEnumAutoDoc):
     """用户浏览器默认设置路由路径 - prefix: /browser"""
