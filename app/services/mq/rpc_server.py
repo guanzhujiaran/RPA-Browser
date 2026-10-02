@@ -1,4 +1,4 @@
-"""RPA 资源 RPC 服务端（FastStream RabbitRouter，2.18.0 新增）。
+"""RPA 资源 RPC 服务端（FastStream RabbitBroker，2.18.0 新增）。
 
 RPA-Browser 作为 RPC 服务端，暴露 `get_resource_detail` 方法，供 be-message
 （RPC 客户端）按 `message.rpa.rpc.get_resource_detail` 同步调用，获取 RPA
@@ -12,7 +12,14 @@ RPA-Browser 作为 RPC 服务端，暴露 `get_resource_detail` 方法，供 be-
 2. handler 返回 `StandardResponse{code, msg, data}`，FastStream 自动序列化发送到 reply_to
 3. 异常在 RPC 边界由 `rpc_safe` 翻译成 `error_response` 回包，避免客户端超时
 
-生命周期：本模块定义 `router`（RabbitRouter），由 main.py 的 lifespan 显式
+⚠️ 本模块刻意使用**普通 `RabbitBroker`（非 FastAPI 集成）**：
+`RabbitBroker` 的 FD 配置没有 FastAPI 的 `get_dependent`，FastStream 会自动
+「decode 消息体 → 注入单个 params 参数」，因此这里 `@broker.subscriber` 是正确写法。
+反过来在 FastAPI 集成的 `RabbitRouter` 上必须用 `@router.subscriber`，否则 handler
+会直接收到原始 `RabbitMessage`（详见 be-message-service/app/core/broker.py 的说明），
+切勿把本模块改用 RabbitRouter 而不改装饰器。
+
+生命周期：本模块定义 `broker`（RabbitBroker），由 main.py 的 lifespan 显式
 `start()` / `stop()` 管理（RPA 非 FastStream FastAPI 应用，不走 include_router）。
 """
 
