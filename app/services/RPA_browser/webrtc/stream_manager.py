@@ -142,9 +142,7 @@ class WebRTCStreamManager:
 
         pages = session.all_pages
         if page_index >= len(pages):
-            raise IndexError(
-                f"页面索引 {page_index} 超出范围 (共 {len(pages)} 个页面)"
-            )
+            raise IndexError(f"页面索引 {page_index} 超出范围 (共 {len(pages)} 个页面)")
 
         # 幂等重连：同一观看者再次 offer 时先关掉自己的旧连接（只影响自己）
         await self.close_viewer(viewer_id)
@@ -383,9 +381,7 @@ class WebRTCStreamManager:
             try:
                 await source.producer.set_degraded(degraded)
             except Exception as e:
-                logger.error(
-                    f"设置帧源降级状态失败 page_index={page_index}: {e}"
-                )
+                logger.error(f"设置帧源降级状态失败 page_index={page_index}: {e}")
 
     async def suspend_streams(self) -> None:
         """挂起本会话的所有流（关闭观看者与帧源，**保留浏览器实例**）。
@@ -395,9 +391,7 @@ class WebRTCStreamManager:
         """
         if not self._viewers:
             return
-        logger.info(
-            f"闲置挂起：关闭 {len(self._viewers)} 个观看者流（保留浏览器实例）"
-        )
+        logger.info(f"闲置挂起：关闭 {len(self._viewers)} 个观看者流（保留浏览器实例）")
         await self.close_all_streams()
 
     # ── 查询 ──
@@ -416,7 +410,9 @@ class WebRTCStreamManager:
             if include_admin or not viewer.is_admin
         ]
 
-    def viewer_summaries(self, include_admin: bool = False) -> list[BrowserSessionViewerData]:
+    def viewer_summaries(
+        self, include_admin: bool = False
+    ) -> list[BrowserSessionViewerData]:
         """观看者摘要 —— 会话状态 SSE 与 `/webrtc/status` **共用的同一构造**。
 
         两条出口字段因此完全一致（此前 status 版本多一个 `idle_seconds`，

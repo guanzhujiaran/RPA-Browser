@@ -2,16 +2,43 @@
 from app.models.execution.action_params import ActionMetadata, BuiltinActionType
 from typing import Type
 from app.services.execution.actions.interaction import (
-    ClickAction, InputAction, ScrollAction, WaitAction, HoverAction, GetTextAction, GetWindowAction,
+    ClickAction,
+    InputAction,
+    ScrollAction,
+    WaitAction,
+    HoverAction,
+    GetTextAction,
+    GetWindowAction,
 )
 from app.services.execution.actions.navigation import NavigateAction, NewPageAction
 from app.services.execution.actions.screenshot import ScreenshotAction
 from app.services.execution.actions.llm import LLMAction
 from app.services.execution.actions.fetch_external_data import FetchExternalDataAction
+from app.services.execution.actions.mark_resource_result import MarkResourceResultAction
+from app.services.execution.actions.random_pick import RandomPickAction
 from app.services.execution.actions.debug import PrintAction
 from app.services.execution.actions.control_flow import LoopAction, IfElseAction
 from typing import Dict
-AllActionType = ClickAction | InputAction | ScrollAction | WaitAction | HoverAction | GetTextAction | GetWindowAction | NavigateAction | NewPageAction | ScreenshotAction | LLMAction | FetchExternalDataAction | PrintAction | LoopAction | IfElseAction
+
+AllActionType = (
+    ClickAction
+    | InputAction
+    | ScrollAction
+    | WaitAction
+    | HoverAction
+    | GetTextAction
+    | GetWindowAction
+    | NavigateAction
+    | NewPageAction
+    | ScreenshotAction
+    | LLMAction
+    | FetchExternalDataAction
+    | MarkResourceResultAction
+    | RandomPickAction
+    | PrintAction
+    | LoopAction
+    | IfElseAction
+)
 BUILTIN_ACTION_MAP: Dict[str, Type[AllActionType]] = {
     BuiltinActionType.CLICK: ClickAction,
     BuiltinActionType.INPUT: InputAction,
@@ -25,6 +52,8 @@ BUILTIN_ACTION_MAP: Dict[str, Type[AllActionType]] = {
     BuiltinActionType.SCREENSHOT: ScreenshotAction,
     BuiltinActionType.LLM: LLMAction,
     BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataAction,
+    BuiltinActionType.MARK_RESOURCE_RESULT: MarkResourceResultAction,
+    BuiltinActionType.RANDOM_PICK: RandomPickAction,
     BuiltinActionType.PRINT: PrintAction,
     BuiltinActionType.LOOP: LoopAction,
     BuiltinActionType.IF_ELSE: IfElseAction,
@@ -51,5 +80,5 @@ __all__ = [
     "get_all_actions_metadata",
     "get_action_metadata",
     "BuiltinActionType",
-    "AllActionType"
+    "AllActionType",
 ]

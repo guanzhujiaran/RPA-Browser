@@ -7,12 +7,17 @@ Base Action - 操作基类 (简化 OOP 设计)
 3. execute() 无需传参：所有属性在初始化时已赋值
 4. input_vars/output_vars：输入输出变量管理
 """
+
 from bili_common.models import StrEnumAutoDoc
 from sqlmodel import SQLModel
 from typing import TypeVar
 from typing import Generic
 import types
-from app.models.execution.action_params import BuiltinActionName, BuiltinActionType, AllActionResult
+from app.models.execution.action_params import (
+    BuiltinActionName,
+    BuiltinActionType,
+    AllActionResult,
+)
 import contextlib
 from typing import Type
 from app.models.execution.action_params import ActionMetadata
@@ -20,12 +25,14 @@ from botright.playwright_mock import Page
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, List, Dict
+
 ParamsT = TypeVar("ParamsT", bound=SQLModel)
 DataT = TypeVar("DataT", default=Any)
 
 
 class ExecutionPhase(StrEnumAutoDoc):
     """执行阶段"""
+
     VALIDATION = "validation"
     PRE_EXECUTION = "pre_execution"
     EXECUTION = "execution"
@@ -36,6 +43,7 @@ class ExecutionPhase(StrEnumAutoDoc):
 @dataclass
 class ActionResult(Generic[DataT]):
     """操作执行结果（泛型版本，DataT 为结果数据类型）"""
+
     success: bool = False
     data: DataT | None = None
     error: str | None = None
@@ -69,8 +77,7 @@ class BaseAction(ABC, Generic[ParamsT]):
     # 由 ExecutionEngine 在创建实例后注入，供操作日志采集串联执行链路
     exec_meta: Dict[str, Any] = field(default_factory=dict)
     _logs: List[str] = field(default_factory=list, repr=False)
-    _phase: ExecutionPhase = field(
-        default=ExecutionPhase.VALIDATION, repr=False)
+    _phase: ExecutionPhase = field(default=ExecutionPhase.VALIDATION, repr=False)
 
     def _merge_output_vars(self, action_result: ActionResult) -> None:
         """
@@ -90,10 +97,10 @@ class BaseAction(ABC, Generic[ParamsT]):
         # 将 data 转为 dict（支持 dict 和模型实例）
         if isinstance(data, dict):
             data_dict = data
-        elif hasattr(data, 'model_dump'):
+        elif hasattr(data, "model_dump"):
             data_dict = data.model_dump()
         else:
-            self.variables['last_output'] = data
+            self.variables["last_output"] = data
             return
 
         # 如果有 output_vars，按顺序把 data 的值赋给 output_vars 中对应的变量名
@@ -103,14 +110,14 @@ class BaseAction(ABC, Generic[ParamsT]):
                 if i < len(data_values):
                     self.variables[var_name] = data_values[i]
 
-        self.variables['last_output'] = data
+        self.variables["last_output"] = data
 
     @classmethod
     def _convert_params(cls, params: Any) -> Any:
         """将 dict 类型的 params 转换为对应的 Pydantic 模型实例"""
         if not isinstance(params, dict):
             return params
-        params_annotation = cls.__annotations__.get('params')
+        params_annotation = cls.__annotations__.get("params")
         if params_annotation is None:
             return params
         actual_type = params_annotation
@@ -141,18 +148,18 @@ class BaseAction(ABC, Generic[ParamsT]):
         safe_variables = variables or {}
 
         kwargs: Dict = {
-            'action_id': getattr(cls, 'action_id', BuiltinActionType.COMPOSITE),
-            'action_type': getattr(cls, 'action_type', BuiltinActionType.COMPOSITE),
-            'mid': mid,
-            'page': page,
-            'params': safe_params,
-            'timeout': timeout,
-            'input_vars': safe_input,
-            'output_vars': safe_output,
-            'variables': safe_variables,
+            "action_id": getattr(cls, "action_id", BuiltinActionType.COMPOSITE),
+            "action_type": getattr(cls, "action_type", BuiltinActionType.COMPOSITE),
+            "mid": mid,
+            "page": page,
+            "params": safe_params,
+            "timeout": timeout,
+            "input_vars": safe_input,
+            "output_vars": safe_output,
+            "variables": safe_variables,
         }
         if action_name is not None:
-            kwargs['_action_name'] = action_name
+            kwargs["_action_name"] = action_name
         return cls(**kwargs)
 
     @property
@@ -247,7 +254,8 @@ class BaseAction(ABC, Generic[ParamsT]):
             )
         self._merge_output_vars(action_result)
         action_result.variables = {
-            k: v for k, v in self.variables.items() if not callable(v)}
+            k: v for k, v in self.variables.items() if not callable(v)
+        }
         return action_result
 
     def preview(self) -> dict:

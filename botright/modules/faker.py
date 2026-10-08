@@ -28,7 +28,9 @@ class Faker(AsyncObject):
         await asyncio.gather(*threads)
 
     @staticmethod
-    def adjust_browser_version(useragent: str, browser_type: str, browser_version: str) -> str:
+    def adjust_browser_version(
+        useragent: str, browser_type: str, browser_version: str
+    ) -> str:
         """
         Adjust the browser version in a user agent string.
 
@@ -40,16 +42,24 @@ class Faker(AsyncObject):
         Returns:
             str: The adjusted user agent string.
         """
-        ua_browser_version = [word for word in useragent.split() if browser_type.capitalize() + "/" in word]
+        ua_browser_version = [
+            word
+            for word in useragent.split()
+            if browser_type.capitalize() + "/" in word
+        ]
         browser_version_list = browser_version.split(".")[:2] + ["0", "0"]
         browser_version = ".".join(browser_version_list)
-        return useragent.replace(ua_browser_version[0], f"{browser_type}/{browser_version}")
+        return useragent.replace(
+            ua_browser_version[0], f"{browser_type}/{browser_version}"
+        )
 
     async def get_computer(self) -> None:
         """
         Generate fake computer-related data such as user agent, vendor, GPU information, screen dimensions, etc.
         """
-        self.fingerprint = self.botright.fingerprint or self.botright.fingerprint_generator.generate()
+        self.fingerprint = (
+            self.botright.fingerprint or self.botright.fingerprint_generator.generate()
+        )
 
     async def get_locale(self, proxy: ProxyManager) -> None:
         """

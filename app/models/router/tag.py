@@ -1,8 +1,10 @@
 """
 Router 模块 - 路由标签定义
 """
+
 from bili_common.models import StrEnumAutoDoc
 import sys
+
 
 class RouterTag(StrEnumAutoDoc):
     # === 浏览器配置管理 ===

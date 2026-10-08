@@ -3,6 +3,7 @@
 
 负责管理内置操作和用户自定义操作的注册、查找。
 """
+
 from typing import Any, Dict
 
 from sqlmodel import select
@@ -27,7 +28,9 @@ class ActionRegistry:
     def __init__(self):
         self._builtin_map: dict[str, type[BaseAction]] = dict(BUILTIN_ACTION_MAP)
 
-    async def get_action_class_for_user(self, action_id: str) -> type[BaseAction] | None:
+    async def get_action_class_for_user(
+        self, action_id: str
+    ) -> type[BaseAction] | None:
         """
         获取操作类（先查内置，再查用户自定义）
 
@@ -80,12 +83,15 @@ class ActionRegistry:
             if custom:
                 steps = custom.steps  # List[WorkflowStep] from JSON, may be raw dicts
                 # 确保每个 step dict 都有 action_type 字段
-                return [_ensure_action_type(s) if isinstance(s, dict) else s for s in steps]
+                return [
+                    _ensure_action_type(s) if isinstance(s, dict) else s for s in steps
+                ]
         return None
 
     def get_action_metadata(self, action_id: str) -> ActionMetadata | None:
         """获取操作元数据"""
         from app.models.execution.action_params import BuiltinActionType as BT
+
         try:
             return BT(action_id).metadata
         except ValueError:

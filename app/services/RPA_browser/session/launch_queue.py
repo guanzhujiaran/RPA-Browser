@@ -213,9 +213,7 @@ class BrowserLaunchQueue:
 
     # ────────────────────────── 取号 / 放行 ──────────────────────────
 
-    def reserve(
-        self, mid: int, browser_id: int, *, is_vip: bool
-    ) -> LaunchTicket:
+    def reserve(self, mid: int, browser_id: int, *, is_vip: bool) -> LaunchTicket:
         """同步取号（不阻塞）：创建/复用排队凭证，并尝试立即放行。
 
         调用方拿到凭证后自行决定是「直接启动」还是「等待放行」。

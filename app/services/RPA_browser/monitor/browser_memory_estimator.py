@@ -201,7 +201,7 @@ class BrowserMemoryEstimator:
         for arg in cmdline:
             if not arg.startswith(_USER_DATA_DIR_ARG):
                 continue
-            path = arg[len(_USER_DATA_DIR_ARG):].rstrip("/")
+            path = arg[len(_USER_DATA_DIR_ARG) :].rstrip("/")
             if path == base_dir or path.startswith(base_dir + os.sep):
                 return path
             if path == base_real or path.startswith(base_real + os.sep):

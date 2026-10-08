@@ -1,5 +1,7 @@
 # from typing import Optional  # Python 3.10+ 使用 | None 语法
-from app.models.common.exceptions.base_exception import BrowserNotifyConfNotFoundException
+from app.models.common.exceptions.base_exception import (
+    BrowserNotifyConfNotFoundException,
+)
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 

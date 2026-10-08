@@ -8,7 +8,10 @@ from app.services.RPA_browser.monitor.browser_memory_estimator import (
     BrowserMemoryEstimator,
     browser_memory_estimator,
 )
-from app.services.RPA_browser.monitor.memory_monitor import MemoryMonitor, memory_monitor
+from app.services.RPA_browser.monitor.memory_monitor import (
+    MemoryMonitor,
+    memory_monitor,
+)
 
 __all__ = [
     "MemoryMonitor",

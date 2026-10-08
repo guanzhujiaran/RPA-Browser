@@ -1,10 +1,15 @@
 """
 测试控制流操作
 """
+
 import pytest
 from playwright.async_api import Page
 
-from app.models.execution.action_params import LoopParams, IfElseParams, create_workflow_step
+from app.models.execution.action_params import (
+    LoopParams,
+    IfElseParams,
+    create_workflow_step,
+)
 from app.models.execution.condition_models import (
     ConditionRule,
     ParamsCondition,
@@ -40,7 +45,10 @@ class TestLoopAction:
             params=LoopParams(
                 count=3,
                 loopBranch=[
-                    create_workflow_step(action_id="click", params={"selector": ".item:nth-child({{state.loop.index}})"}),
+                    create_workflow_step(
+                        action_id="click",
+                        params={"selector": ".item:nth-child({{state.loop.index}})"},
+                    ),
                 ],
             ),
         )
@@ -67,7 +75,13 @@ class TestLoopAction:
             params=LoopParams(
                 items=["a", "b"],
                 loopBranch=[
-                    create_workflow_step(action_id="input", params={"selector": "#input_{{state.loop.current_item}}", "value": "value_{{state.loop.current_item}}"}),
+                    create_workflow_step(
+                        action_id="input",
+                        params={
+                            "selector": "#input_{{state.loop.current_item}}",
+                            "value": "value_{{state.loop.current_item}}",
+                        },
+                    ),
                 ],
             ),
         )
@@ -132,9 +146,7 @@ class TestIfElseAction:
         from app.services.execution.actions.control_flow import IfElseAction
 
         await self.page.set_content(
-            "<html><body>"
-            "<button id='true_btn'>True</button>"
-            "</body></html>"
+            "<html><body><button id='true_btn'>True</button></body></html>"
         )
 
         action = IfElseAction.new_action(
@@ -151,7 +163,9 @@ class TestIfElseAction:
                     ),
                 ),
                 TrueBranch=[
-                    create_workflow_step(action_id="click", params={"selector": "#true_btn"}),
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#true_btn"}
+                    ),
                 ],
                 FalseBranch=[],
             ),
@@ -166,9 +180,7 @@ class TestIfElseAction:
         from app.services.execution.actions.control_flow import IfElseAction
 
         await self.page.set_content(
-            "<html><body>"
-            "<button id='false_btn'>False</button>"
-            "</body></html>"
+            "<html><body><button id='false_btn'>False</button></body></html>"
         )
 
         action = IfElseAction.new_action(
@@ -186,7 +198,9 @@ class TestIfElseAction:
                 ),
                 TrueBranch=[],
                 FalseBranch=[
-                    create_workflow_step(action_id="click", params={"selector": "#false_btn"}),
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#false_btn"}
+                    ),
                 ],
             ),
         )
@@ -225,9 +239,7 @@ class TestIfElseAction:
         from app.services.execution.actions.control_flow import IfElseAction
 
         await self.page.set_content(
-            "<html><body>"
-            "<div id='content'>Content</div>"
-            "</body></html>"
+            "<html><body><div id='content'>Content</div></body></html>"
         )
 
         action = IfElseAction.new_action(

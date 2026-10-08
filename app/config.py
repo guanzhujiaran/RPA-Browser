@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 「推送 / 服务标识」配置片段与推送渠道配置模型统一来自 bili-common（单一来源）
 from bili_common.core.push_settings import PushNotifySettingsMixin
+
 # 兼容 re-export：存量 `app.config.PushChannelConfig` 的引用无需改动
 from bili_common.models.push import PushChannelConfig
 
@@ -241,6 +242,22 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 心跳必须小于网关空闲超时（be-gateway ProxyEndPort.js: 180s）。
     browser_session_sse_heartbeat_interval: int = 15  # SSE 心跳间隔（秒）
 
+    # ── 业务时区（签到 / 日统计的自然日判定统一走 app/utils/time_util.py）──
+    # 签到 JSON 配置（app/data/sign_in_rewards.json）的 timezone 优先级更高，
+    # 此处作为冷启动兜底。
+    app_timezone: str = "Asia/Shanghai"
+
+    # ── 工作流计费心跳（详见 docs/浏览器使用时长与会员权益计划书.md §8）──
+    workflow_billing_heartbeat_interval: int = 300  # 定时任务运行中预扣间隔（秒）
+
+    # ── Casdoor 支付对账（详见计划书 §3.3；Basic auth 使用应用 client 凭证）──
+    casdoor_endpoint: str = (
+        ""  # Casdoor 站点根地址，如 https://casdoor.example.com；空=未启用支付对账
+    )
+    casdoor_client_id: str = ""
+    casdoor_client_secret: str = ""
+    casdoor_verify_timeout: float = 5.0  # 对账请求超时（秒）
+
     # ── 多观看者并发直播（详见 docs/rpa-多观看者并发直播计划书.md）──
     # 同一 page 只允许一个 screencast，因此帧源为页级共享；每个观看者各持一条
     # PeerConnection 与媒体轨道（暂停 / 档位 / 可见性均为观看者级）。
@@ -254,7 +271,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # ── 浏览器启动内存准入与排队 ──
     # 启动浏览器前先检查系统可用内存：内存充足立即放行；不足则进入启动队列排队。
     # 队列分两条：VIP 队列优先于普通用户队列；VIP 身份来自 x-bili-vip-status 请求头。
-    browser_launch_queue_enabled: bool = True  # 是否启用内存准入排队（关闭=不做任何限制）
+    browser_launch_queue_enabled: bool = (
+        True  # 是否启用内存准入排队（关闭=不做任何限制）
+    )
     browser_launch_min_available_memory_mb: int = (
         1024  # 启动单个浏览器所需的「最小可用内存」(MB)，低于该值拒绝放行
     )
@@ -288,7 +307,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     browser_memory_sample_window: int = 20  # 内存样本滑动窗口长度
     browser_memory_min_samples: int = 3  # 至少积累多少样本才用实测值覆盖基准值
     browser_memory_safety_factor: float = 1.1  # 实测值的安全系数（额外留出的余量）
-    browser_memory_min_sample_mb: int = 64  # 低于该值的采样视为噪声（进程未真正起来），丢弃
+    browser_memory_min_sample_mb: int = (
+        64  # 低于该值的采样视为噪声（进程未真正起来），丢弃
+    )
 
     # ── 并发护栏（除内存外的硬性上限，双保险防 OOM）──
     browser_launch_max_memory_percent: float = (

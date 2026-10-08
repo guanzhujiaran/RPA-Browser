@@ -2,6 +2,7 @@
 安全校验依赖注入函数
 用于验证浏览器ID是否属于特定用户MID
 """
+
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.common.exceptions.base_exception import (
@@ -13,7 +14,9 @@ from bili_common.models.interaction import InteractionBizTypeEnum
 from bili_common.models.depends import (
     BrowserReqAuthInfo,
 )
-from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
+from app.services.RPA_browser.fingerprint.browser_fingerprint_service import (
+    BrowserFingerprintService,
+)
 from app.services.RPA_browser.permission_config_service import PermissionConfigService
 from app.utils.depends.mid_depends import (
     AuthInfo,
@@ -79,6 +82,7 @@ async def verify_browser_ownership(
         HTTPException: 当浏览器不属于用户或不存在时抛出
     """
     return await _verify_browser_ownership_core(browser_id, auth_info, session)
+
 
 def _is_browser_monitor_admin(auth_info: AuthInfo) -> bool:
     """是否具备「浏览器监管」身份：root，或持有 RPA_BROWSER 域 VIEW / BAN 位"""
@@ -148,11 +152,12 @@ async def verify_fingerprint_limit(
     )
 
     # 获取当前用户的指纹数量
-    current_count = await BrowserFingerprintService.count_fingerprint(auth_info.mid, session)
+    current_count = await BrowserFingerprintService.count_fingerprint(
+        auth_info.mid, session
+    )
 
     # 检查是否超出限制
     if current_count >= max_fingerprints:
-        raise FingerprintLimitExceededException(
-            max_fingerprints=max_fingerprints)
+        raise FingerprintLimitExceededException(max_fingerprints=max_fingerprints)
 
     return auth_info

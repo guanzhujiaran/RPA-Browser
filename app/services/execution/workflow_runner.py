@@ -13,6 +13,7 @@
     2. 定时运行允许自动拉起浏览器会话（headless），无需人工先开会话。
     3. 本模块所有异常都被收敛为「运行失败」，绝不向上抛出打断调度线程。
 """
+
 from __future__ import annotations
 
 import time
@@ -23,6 +24,7 @@ from loguru import logger
 
 from app.models.database.workflow.models import (
     UserWorkflow,
+    WorkflowRunRecord,
     WorkflowRunStatusEnum,
     WorkflowRunTriggerEnum,
 )
@@ -70,7 +72,9 @@ async def _load_normalized_steps(workflow: UserWorkflow) -> List[Any]:
             step = workflow_step_adapter.validate_python(_ensure_action_type(step))
         normalized.append(step)
     if not normalized:
-        raise WorkflowRunnerError(f"关联的动作没有任何步骤: {workflow.custom_action_id}")
+        raise WorkflowRunnerError(
+            f"关联的动作没有任何步骤: {workflow.custom_action_id}"
+        )
     return normalized
 
 
@@ -92,7 +96,9 @@ async def _notify_failure(
         from app.utils.depends.session_manager import DatabaseSessionManager
 
         async with DatabaseSessionManager.async_session() as session:
-            config = await BrowserService(mid).get_notification_config(session, browser_id)
+            config = await BrowserService(mid).get_notification_config(
+                session, browser_id
+            )
         if not config:
             logger.info(f"[WorkflowRunner] 未配置推送通知，跳过失败通知: run={run_id}")
             return False
@@ -150,6 +156,41 @@ async def run_workflow(
     try:
         target_browser_id = await _resolve_target_browser_id(workflow, browser_id)
         steps = await _load_normalized_steps(workflow)
+        # 跨进程并发防护：同一浏览器同一时间只允许一个工作流执行（计划书 §8.6）
+        # 会话内的内存互斥（entry.workflow_run_id）只在单进程内有效，多实例部署时
+        # 必须靠运行记录表兜底，否则同一会话会被两个工作流共用 → 双份计费 / 统计错乱。
+        from sqlmodel import select
+
+        from app.utils.depends.session_manager import DatabaseSessionManager
+
+        async with DatabaseSessionManager.async_session() as guard_session:
+            running_run_id = (
+                await guard_session.exec(
+                    select(WorkflowRunRecord.run_id).where(
+                        WorkflowRunRecord.mid == str(mid),
+                        WorkflowRunRecord.browser_id == str(target_browser_id),
+                        WorkflowRunRecord.status == WorkflowRunStatusEnum.RUNNING,
+                    )
+                )
+            ).first()
+        if running_run_id:
+            raise WorkflowRunnerError(
+                f"该浏览器已有工作流在执行（run={running_run_id}），"
+                "请调整定时计划避免同浏览器并发"
+            )
+        # 时长权益校验：仅定时任务消耗时长（计划书 §3.1）；手动运行不校验不扣费
+        if trigger_source == WorkflowRunTriggerEnum.SCHEDULE:
+            from app.services.membership.membership_service import MembershipService
+            from app.utils.depends.session_manager import DatabaseSessionManager
+
+            async with DatabaseSessionManager.async_session() as membership_session:
+                allowed = await MembershipService.check_run_allowed(
+                    mid, membership_session
+                )
+            if not allowed:
+                raise WorkflowRunnerError(
+                    "时长余额不足：定时任务需要时长或月卡（签到/兑换码可获取）"
+                )
     except WorkflowRunnerError as exc:
         target = browser_id if browser_id is not None else workflow.browser_id
         run = await workflow_run_crud_svr.create_running(
@@ -205,6 +246,7 @@ async def run_workflow(
     execution_id = run.run_id
 
     error_message: str | None = None
+    billed_started: float | None = None  # 计费计时起点（会话获取成功后才有值）
     results_data: List[Dict[str, Any]] = []
     status = WorkflowRunStatusEnum.SUCCESS
 
@@ -213,8 +255,17 @@ async def run_workflow(
         entry = await live_service.get_or_create_browser_session_entry(
             mid=mid, browser_id=target_browser_id, headless=False
         )
+        # 同浏览器并发防护：一个浏览器会话同一时间只允许一个工作流执行
+        # （避免 workflow_run_id 相互覆盖导致双份计费/统计、熔断误伤，见计划书 §8.6）
+        if entry.workflow_run_id:
+            raise WorkflowRunnerError(
+                f"该浏览器已有工作流在执行（run={entry.workflow_run_id}），"
+                "请调整定时计划避免同浏览器并发"
+            )
         # 进入执行期互斥：运行期间禁止调试类接口操作同一会话（直播为只读拉流，不受影响）
         live_service.begin_workflow_run(mid, target_browser_id, run.run_id)
+        # 计费计时起点：会话成功获取后（见计划书 §5 计费接入点）
+        billed_started = time.time()
         page = await entry.browser_session.get_current_page()
 
         plugins = await workflow_crud_svr.get_enabled_plugins(workflow.workflow_id)
@@ -260,6 +311,19 @@ async def run_workflow(
 
     # 退出执行期互斥：无论成功 / 失败 / 异常都必须解除，避免会话被永久锁在「执行中」
     live_service.end_workflow_run(mid, target_browser_id)
+
+    # ---------- 时长结算与使用统计（仅定时任务计费；手动只记统计，见计划书 §3.1） ----------
+    if billed_started is not None:
+        from app.services.membership.membership_service import MembershipService
+
+        await MembershipService.settle_workflow_run(
+            mid=mid,
+            browser_id=target_browser_id,
+            run_seconds=time.time() - billed_started,
+            workflow_id=workflow.workflow_id,
+            run_id=run.run_id,
+            is_scheduled=trigger_source == WorkflowRunTriggerEnum.SCHEDULE,
+        )
 
     # ---------- 汇总落库 ----------
     total = len(results_data)

@@ -48,11 +48,13 @@ from app.services.execution.scope import Scope
 
 # ─── Action Executor 协议 ──────────────────────────────
 
+
 class ActionExecutor(Protocol):
     """执行单个 action 的可调用对象。
 
     (action_id, resolved_params, scope, output_vars) → ActionResult
     """
+
     async def __call__(
         self,
         action_id: str,
@@ -64,9 +66,11 @@ class ActionExecutor(Protocol):
 
 # ─── Step 节点 (sealed union) ──────────────────────────
 
+
 @dataclass
 class StepNode(ABC):
     """步骤节点基类。"""
+
     action_id: str
     condition: ConditionRule | None = None
     retry: int = 0
@@ -102,6 +106,7 @@ class AtomicStep(StepNode):
         input_vars:  输入变量，执行前合并到 scope（供后续步骤的 {{var}} 引用）
         output_vars: 输出变量名列表，结果按 data.values() 顺序赋值
     """
+
     params: dict[str, Any] = field(default_factory=dict)
     input_vars: dict[str, Any] = field(default_factory=dict)
     output_vars: list[str] = field(default_factory=list)
@@ -136,6 +141,7 @@ class LoopStep(StepNode):
         loop_index_var:  循环索引作用域名（默认 "loop_index"）
         param_mapping:   参数映射 {目标参数名: 源字段路径}
     """
+
     body: Pipeline = field(default_factory=lambda: Pipeline([]))
     count: int | None = None
     loop_condition: str | None = None
@@ -180,7 +186,7 @@ class LoopStep(StepNode):
         for target_key, source_path in self.param_mapping.items():
             source_str = str(source_path)
             if source_str.startswith(f"{self.loop_item_var}."):
-                field_path = source_str[len(self.loop_item_var) + 1:]
+                field_path = source_str[len(self.loop_item_var) + 1 :]
                 resolved[target_key] = self._extract_field(item, field_path)
             elif source_str == self.loop_item_var:
                 resolved[target_key] = item
@@ -190,7 +196,9 @@ class LoopStep(StepNode):
                 resolved[target_key] = self._extract_field(scope.snapshot(), source_str)
         return resolved
 
-    def _inject_mapped_params(self, pipeline: Pipeline, mapped: dict[str, Any]) -> Pipeline:
+    def _inject_mapped_params(
+        self, pipeline: Pipeline, mapped: dict[str, Any]
+    ) -> Pipeline:
         """将映射参数注入 Pipeline 中每个 AtomicStep 的 params"""
         if not mapped:
             return pipeline
@@ -221,7 +229,9 @@ class LoopStep(StepNode):
             action_name="loop",
         )
 
-    async def _loop_by_items(self, scope: Scope, executor: ActionExecutor, items: list[Any]) -> list[ActionResult]:
+    async def _loop_by_items(
+        self, scope: Scope, executor: ActionExecutor, items: list[Any]
+    ) -> list[ActionResult]:
         """遍历 items 列表执行循环体"""
         results = []
         for i, item_value in enumerate(items):
@@ -232,22 +242,30 @@ class LoopStep(StepNode):
             ir = await body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                if not await self._handle_iteration_error(
+                    scope, executor, self.body, ir, results
+                ):
                     break
         return results
 
-    async def _loop_by_count(self, scope: Scope, executor: ActionExecutor) -> list[ActionResult]:
+    async def _loop_by_count(
+        self, scope: Scope, executor: ActionExecutor
+    ) -> list[ActionResult]:
         results = []
         for i in range(self.count):
             scope.set(self.loop_index_var, i)
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                if not await self._handle_iteration_error(
+                    scope, executor, self.body, ir, results
+                ):
                     break
         return results
 
-    async def _loop_by_while(self, scope: Scope, executor: ActionExecutor) -> list[ActionResult]:
+    async def _loop_by_while(
+        self, scope: Scope, executor: ActionExecutor
+    ) -> list[ActionResult]:
         from app.services.execution.actions.control_flow import safe_evaluate_condition
 
         results = []
@@ -257,12 +275,16 @@ class LoopStep(StepNode):
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                if not await self._handle_iteration_error(
+                    scope, executor, self.body, ir, results
+                ):
                     break
             i += 1
         return results
 
-    async def _loop_by_until(self, scope: Scope, executor: ActionExecutor) -> list[ActionResult]:
+    async def _loop_by_until(
+        self, scope: Scope, executor: ActionExecutor
+    ) -> list[ActionResult]:
         from app.services.execution.actions.control_flow import safe_evaluate_condition
 
         results = []
@@ -272,7 +294,9 @@ class LoopStep(StepNode):
             ir = await self.body.execute(scope, executor)
             results.extend(ir)
             if ir and not ir[-1].success:
-                if not await self._handle_iteration_error(scope, executor, self.body, ir, results):
+                if not await self._handle_iteration_error(
+                    scope, executor, self.body, ir, results
+                ):
                     break
             if safe_evaluate_condition(self.loop_until, scope.snapshot()):
                 break
@@ -335,6 +359,7 @@ class IfElseStep(StepNode):
         true_body:      Pipeline | None
         false_body:     Pipeline | None
     """
+
     condition_rule: ConditionRule | None = None
     true_body: Pipeline | None = None
     false_body: Pipeline | None = None
@@ -353,13 +378,17 @@ class IfElseStep(StepNode):
         selected = self.true_body if take_true else self.false_body
         branch_name = "true" if take_true else "false"
         if selected is None:
-            return ActionResult(success=True, action_id=self.action_id, action_name="if_else")
+            return ActionResult(
+                success=True, action_id=self.action_id, action_name="if_else"
+            )
 
         results = await selected.execute(scope, executor)
         branch_failed = results and not results[-1].success
 
         if branch_failed:
-            return await self._handle_branch_error(scope, executor, selected, results, branch_name)
+            return await self._handle_branch_error(
+                scope, executor, selected, results, branch_name
+            )
 
         return ActionResult(
             success=True,
@@ -388,7 +417,9 @@ class IfElseStep(StepNode):
             scope.pop()
 
         if self.on_error == OnErrorEnum.CONTINUE:
-            logger.warning(f"if_else 分支 {branch_name} 失败但忽略: {last_result.error}")
+            logger.warning(
+                f"if_else 分支 {branch_name} 失败但忽略: {last_result.error}"
+            )
             return ActionResult(
                 success=True,
                 data={"branch": branch_name, "results": results},
@@ -398,7 +429,9 @@ class IfElseStep(StepNode):
 
         if self.on_error == OnErrorEnum.RETRY and self.retry > 0:
             for retry_i in range(self.retry):
-                logger.info(f"if_else 重试分支 {branch_name} ({retry_i + 1}/{self.retry})")
+                logger.info(
+                    f"if_else 重试分支 {branch_name} ({retry_i + 1}/{self.retry})"
+                )
                 retry_results = await selected.execute(scope, executor)
                 results.extend(retry_results)
                 if retry_results and retry_results[-1].success:
@@ -420,6 +453,7 @@ class IfElseStep(StepNode):
 
 # ─── Pipeline — 步骤序列 ───────────────────────────────
 
+
 @dataclass
 class Pipeline:
     """步骤序列。
@@ -434,6 +468,7 @@ class Pipeline:
     时间复杂度：O(N)，N 为步骤数。
     空间复杂度：O(N)，存储结果列表。
     """
+
     steps: list[StepNode]
 
     async def execute(
@@ -471,12 +506,16 @@ class Pipeline:
 
                 # ── 根据 on_error 策略决定后续行为 ──
                 if step.on_error == OnErrorEnum.CONTINUE:
-                    logger.warning(f"步骤 {step.action_id} 失败但继续执行: {result.error}")
+                    logger.warning(
+                        f"步骤 {step.action_id} 失败但继续执行: {result.error}"
+                    )
                     continue
 
                 if step.on_error == OnErrorEnum.RETRY and step.retry > 0:
                     for retry_i in range(step.retry):
-                        logger.info(f"重试 {step.action_id} ({retry_i + 1}/{step.retry})")
+                        logger.info(
+                            f"重试 {step.action_id} ({retry_i + 1}/{step.retry})"
+                        )
                         result = await step.execute(scope, executor)
                         if result.success:
                             break
@@ -489,16 +528,22 @@ class Pipeline:
 
             except Exception as e:
                 logger.error(f"步骤异常: {step.action_id} - {e}")
-                results.append(ActionResult(
-                    success=False, error=str(e), execution_time=0,
-                    action_id=step.action_id, action_name=step.action_id,
-                ))
+                results.append(
+                    ActionResult(
+                        success=False,
+                        error=str(e),
+                        execution_time=0,
+                        action_id=step.action_id,
+                        action_name=step.action_id,
+                    )
+                )
                 break
 
         return results
 
 
 # ─── Builder — 从 WorkflowStep 构建 StepNode ────────────
+
 
 class PipelineBuilder:
     """将 WorkflowStep 列表编译为 Pipeline IR。
@@ -532,23 +577,41 @@ class PipelineBuilder:
         nodes: list[StepNode] = []
         for s in steps:
             action_id = PipelineBuilder._get_attr(s, "action_id", "")
-            action_type = PipelineBuilder._get_attr(s, "action_type") or PipelineBuilder._get_attr(s, "action_id", "")
+            action_type = PipelineBuilder._get_attr(
+                s, "action_type"
+            ) or PipelineBuilder._get_attr(s, "action_id", "")
             condition = PipelineBuilder._get_attr(s, "condition")
 
             # LOOP
             if action_type == BuiltinActionType.LOOP:
                 children = PipelineBuilder._get_children(s)
-                count = getattr(s, "count", None) or PipelineBuilder._get_param(s, "count")
-                loop_while = getattr(s, "loop_while", None) or PipelineBuilder._get_param(s, "loop_while")
-                loop_until = getattr(s, "loop_until", None) or PipelineBuilder._get_param(s, "loop_until")
-                loop_source = PipelineBuilder._get_param(s, "loop_source") or "fixed_count"
+                count = getattr(s, "count", None) or PipelineBuilder._get_param(
+                    s, "count"
+                )
+                loop_while = getattr(
+                    s, "loop_while", None
+                ) or PipelineBuilder._get_param(s, "loop_while")
+                loop_until = getattr(
+                    s, "loop_until", None
+                ) or PipelineBuilder._get_param(s, "loop_until")
+                loop_source = (
+                    PipelineBuilder._get_param(s, "loop_source") or "fixed_count"
+                )
                 loop_items_var = PipelineBuilder._get_param(s, "loop_items_var")
-                loop_item_var = PipelineBuilder._get_param(s, "loop_item_var") or "loop_item"
-                loop_index_var = PipelineBuilder._get_param(s, "loop_index_var") or "loop_index"
+                loop_item_var = (
+                    PipelineBuilder._get_param(s, "loop_item_var") or "loop_item"
+                )
+                loop_index_var = (
+                    PipelineBuilder._get_param(s, "loop_index_var") or "loop_index"
+                )
                 param_mapping = PipelineBuilder._get_param(s, "param_mapping")
-                on_error = OnErrorEnum(PipelineBuilder._get_attr(s, "on_error", "stop") or "stop")
+                on_error = OnErrorEnum(
+                    PipelineBuilder._get_attr(s, "on_error", "stop") or "stop"
+                )
                 on_error_raw = PipelineBuilder._get_attr(s, "on_error_branch")
-                on_error_branch = PipelineBuilder.build(on_error_raw) if on_error_raw else None
+                on_error_branch = (
+                    PipelineBuilder.build(on_error_raw) if on_error_raw else None
+                )
 
                 # 确定迭代次数
                 if loop_source == "fixed_count":
@@ -557,44 +620,64 @@ class PipelineBuilder:
                     count = None  # variable/expression 模式不设 count
 
                 # 向后兼容旧字段
-                old_loop_count = getattr(s, "loop_count", None) or PipelineBuilder._get_param(s, "loop_count")
+                old_loop_count = getattr(
+                    s, "loop_count", None
+                ) or PipelineBuilder._get_param(s, "loop_count")
                 if count is None and old_loop_count is not None:
                     count = old_loop_count
 
-                nodes.append(LoopStep(
-                    action_id=action_id,
-                    condition=condition,
-                    on_error=on_error,
-                    on_error_branch=on_error_branch,
-                    body=PipelineBuilder.build(children) if children else Pipeline([]),
-                    count=count,
-                    loop_condition=loop_while,
-                    loop_until=loop_until,
-                    loop_items_var=loop_items_var if loop_source != "fixed_count" else None,
-                    loop_item_var=loop_item_var,
-                    loop_index_var=loop_index_var,
-                    param_mapping=param_mapping,
-                ))
+                nodes.append(
+                    LoopStep(
+                        action_id=action_id,
+                        condition=condition,
+                        on_error=on_error,
+                        on_error_branch=on_error_branch,
+                        body=PipelineBuilder.build(children)
+                        if children
+                        else Pipeline([]),
+                        count=count,
+                        loop_condition=loop_while,
+                        loop_until=loop_until,
+                        loop_items_var=loop_items_var
+                        if loop_source != "fixed_count"
+                        else None,
+                        loop_item_var=loop_item_var,
+                        loop_index_var=loop_index_var,
+                        param_mapping=param_mapping,
+                    )
+                )
 
             # IF_ELSE
             elif action_type == BuiltinActionType.IF_ELSE:
                 true_raw = PipelineBuilder._get_param(s, "TrueBranch")
                 false_raw = PipelineBuilder._get_param(s, "FalseBranch")
                 rule_raw = PipelineBuilder._get_param(s, "condition")
-                rule = ConditionRule.model_validate(rule_raw) if isinstance(rule_raw, dict) else rule_raw
-                on_error = OnErrorEnum(PipelineBuilder._get_attr(s, "on_error", "stop") or "stop")
+                rule = (
+                    ConditionRule.model_validate(rule_raw)
+                    if isinstance(rule_raw, dict)
+                    else rule_raw
+                )
+                on_error = OnErrorEnum(
+                    PipelineBuilder._get_attr(s, "on_error", "stop") or "stop"
+                )
                 on_error_raw = PipelineBuilder._get_attr(s, "on_error_branch")
-                on_error_branch = PipelineBuilder.build(on_error_raw) if on_error_raw else None
+                on_error_branch = (
+                    PipelineBuilder.build(on_error_raw) if on_error_raw else None
+                )
 
-                nodes.append(IfElseStep(
-                    action_id=action_id,
-                    condition=condition,
-                    on_error=on_error,
-                    on_error_branch=on_error_branch,
-                    condition_rule=rule,
-                    true_body=PipelineBuilder.build(true_raw) if true_raw else None,
-                    false_body=PipelineBuilder.build(false_raw) if false_raw else None,
-                ))
+                nodes.append(
+                    IfElseStep(
+                        action_id=action_id,
+                        condition=condition,
+                        on_error=on_error,
+                        on_error_branch=on_error_branch,
+                        condition_rule=rule,
+                        true_body=PipelineBuilder.build(true_raw) if true_raw else None,
+                        false_body=PipelineBuilder.build(false_raw)
+                        if false_raw
+                        else None,
+                    )
+                )
 
             # Atomic / Composite (default)
             else:
@@ -602,19 +685,27 @@ class PipelineBuilder:
                 input_vars = PipelineBuilder._get_attr(s, "input_vars", None) or {}
                 output_vars = PipelineBuilder._get_attr(s, "output_vars", None) or []
                 retry = PipelineBuilder._get_attr(s, "retry", 0) or 0
-                on_error = OnErrorEnum(PipelineBuilder._get_attr(s, "on_error", "stop") or "stop")
+                on_error = OnErrorEnum(
+                    PipelineBuilder._get_attr(s, "on_error", "stop") or "stop"
+                )
                 on_error_raw = PipelineBuilder._get_attr(s, "on_error_branch")
-                on_error_branch = PipelineBuilder.build(on_error_raw) if on_error_raw else None
-                nodes.append(AtomicStep(
-                    action_id=action_id,
-                    condition=condition,
-                    retry=retry,
-                    on_error=on_error,
-                    on_error_branch=on_error_branch,
-                    params=params if isinstance(params, dict) else params.model_dump(),
-                    input_vars=input_vars if isinstance(input_vars, dict) else {},
-                    output_vars=output_vars,
-                ))
+                on_error_branch = (
+                    PipelineBuilder.build(on_error_raw) if on_error_raw else None
+                )
+                nodes.append(
+                    AtomicStep(
+                        action_id=action_id,
+                        condition=condition,
+                        retry=retry,
+                        on_error=on_error,
+                        on_error_branch=on_error_branch,
+                        params=params
+                        if isinstance(params, dict)
+                        else params.model_dump(),
+                        input_vars=input_vars if isinstance(input_vars, dict) else {},
+                        output_vars=output_vars,
+                    )
+                )
 
         return Pipeline(steps=nodes)
 

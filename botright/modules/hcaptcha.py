@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Optional
 from hcaptcha_challenger import AgentConfig
 from hcaptcha_challenger.agent import AgentV
 from app.config import settings
+
 if TYPE_CHECKING:
     from botright.extended_typing import BrowserContext, Page
 
@@ -25,7 +26,9 @@ class hCaptcha:
         self.page = page
 
         self.retry_times = 8
-        self.hcaptcha_agent = AgentV(page=page, agent_config=AgentConfig(GEMINI_API_KEY=settings.GEMINI_API_KEY))
+        self.hcaptcha_agent = AgentV(
+            page=page, agent_config=AgentConfig(GEMINI_API_KEY=settings.GEMINI_API_KEY)
+        )
 
     async def mock_captcha(self, rq_data: str) -> None:
         """
@@ -38,8 +41,14 @@ class hCaptcha:
         """
 
         async def mock_json(route, request):
-            payload = {**request.post_data_json, "rqdata": rq_data, "hl": "en"} if rq_data else request.post_data_json
-            response = await self.page.request.post(request.url, form=payload, headers=request.headers)
+            payload = (
+                {**request.post_data_json, "rqdata": rq_data, "hl": "en"}
+                if rq_data
+                else request.post_data_json
+            )
+            response = await self.page.request.post(
+                request.url, form=payload, headers=request.headers
+            )
             await route.fulfill(response=response)
 
         await self.page.route("https://hcaptcha.com/getcaptcha/**", mock_json)
@@ -76,8 +85,11 @@ class hCaptcha:
 
         return f"Exceeded maximum retry times of {self.retry_times}"
 
-    async def get_hcaptcha(self, site_key: Optional[str] = "00000000-0000-0000-0000-000000000000",
-                           rq_data: Optional[str] = None) -> Optional[str]:
+    async def get_hcaptcha(
+        self,
+        site_key: Optional[str] = "00000000-0000-0000-0000-000000000000",
+        rq_data: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Get an hCaptcha token for a specific site.
 

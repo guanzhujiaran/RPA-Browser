@@ -1,6 +1,7 @@
 """
 测试结构化条件模型 —— 覆盖原子条件、复合条件、边界情况
 """
+
 import pytest
 from app.models.execution.condition_models import (
     ConditionRule,
@@ -17,54 +18,102 @@ class TestParamsCondition:
     """原子条件测试"""
 
     def test_boolean_true_match(self):
-        c = ParamsCondition(field="flag", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)
+        c = ParamsCondition(
+            field="flag",
+            condition_value_type=ConditionValueType.BOOLEAN,
+            condition_value=True,
+        )
         assert evaluate_condition(c, {"flag": True}) is True
 
     def test_boolean_false_match(self):
-        c = ParamsCondition(field="flag", condition_value_type=ConditionValueType.BOOLEAN, condition_value=False)
+        c = ParamsCondition(
+            field="flag",
+            condition_value_type=ConditionValueType.BOOLEAN,
+            condition_value=False,
+        )
         assert evaluate_condition(c, {"flag": False}) is True
 
     def test_boolean_mismatch(self):
-        c = ParamsCondition(field="flag", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)
+        c = ParamsCondition(
+            field="flag",
+            condition_value_type=ConditionValueType.BOOLEAN,
+            condition_value=True,
+        )
         assert evaluate_condition(c, {"flag": False}) is False
 
     def test_boolean_wrong_type(self):
-        c = ParamsCondition(field="flag", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)
+        c = ParamsCondition(
+            field="flag",
+            condition_value_type=ConditionValueType.BOOLEAN,
+            condition_value=True,
+        )
         with pytest.raises(ConditionEvaluateError):
             evaluate_condition(c, {"flag": "not_bool"})
 
     def test_null_match(self):
-        c = ParamsCondition(field="val", condition_value_type=ConditionValueType.NULL, condition_value=None)
+        c = ParamsCondition(
+            field="val",
+            condition_value_type=ConditionValueType.NULL,
+            condition_value=None,
+        )
         assert evaluate_condition(c, {"val": None}) is True
 
     def test_null_mismatch(self):
-        c = ParamsCondition(field="val", condition_value_type=ConditionValueType.NULL, condition_value=None)
+        c = ParamsCondition(
+            field="val",
+            condition_value_type=ConditionValueType.NULL,
+            condition_value=None,
+        )
         assert evaluate_condition(c, {"val": "not_none"}) is False
 
     def test_string_match(self):
-        c = ParamsCondition(field="status", condition_value_type=ConditionValueType.STRING, condition_value="ok")
+        c = ParamsCondition(
+            field="status",
+            condition_value_type=ConditionValueType.STRING,
+            condition_value="ok",
+        )
         assert evaluate_condition(c, {"status": "ok"}) is True
 
     def test_string_mismatch(self):
-        c = ParamsCondition(field="status", condition_value_type=ConditionValueType.STRING, condition_value="ok")
+        c = ParamsCondition(
+            field="status",
+            condition_value_type=ConditionValueType.STRING,
+            condition_value="ok",
+        )
         assert evaluate_condition(c, {"status": "fail"}) is False
 
     def test_missing_field(self):
-        c = ParamsCondition(field="missing", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)
+        c = ParamsCondition(
+            field="missing",
+            condition_value_type=ConditionValueType.BOOLEAN,
+            condition_value=True,
+        )
         with pytest.raises(ConditionEvaluateError):
             evaluate_condition(c, {"other": True})
 
     def test_validation_boolean_rejects_string(self):
         with pytest.raises(ValueError):
-            ParamsCondition(field="x", condition_value_type=ConditionValueType.BOOLEAN, condition_value="not_bool")
+            ParamsCondition(
+                field="x",
+                condition_value_type=ConditionValueType.BOOLEAN,
+                condition_value="not_bool",
+            )
 
     def test_validation_null_rejects_value(self):
         with pytest.raises(ValueError):
-            ParamsCondition(field="x", condition_value_type=ConditionValueType.NULL, condition_value="not_none")
+            ParamsCondition(
+                field="x",
+                condition_value_type=ConditionValueType.NULL,
+                condition_value="not_none",
+            )
 
     def test_validation_string_rejects_bool(self):
         with pytest.raises(ValueError):
-            ParamsCondition(field="x", condition_value_type=ConditionValueType.STRING, condition_value=True)
+            ParamsCondition(
+                field="x",
+                condition_value_type=ConditionValueType.STRING,
+                condition_value=True,
+            )
 
 
 class TestConditionRuleSimple:
@@ -73,14 +122,22 @@ class TestConditionRuleSimple:
     def test_and_single_true(self):
         rule = ConditionRule(
             logic=LogicOperator.AND,
-            condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True),
+            condition=ParamsCondition(
+                field="a",
+                condition_value_type=ConditionValueType.BOOLEAN,
+                condition_value=True,
+            ),
         )
         assert evaluate_rule(rule, {"a": True}) is True
 
     def test_and_single_false(self):
         rule = ConditionRule(
             logic=LogicOperator.AND,
-            condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True),
+            condition=ParamsCondition(
+                field="a",
+                condition_value_type=ConditionValueType.BOOLEAN,
+                condition_value=True,
+            ),
         )
         assert evaluate_rule(rule, {"a": False}) is False
 
@@ -90,7 +147,11 @@ class TestConditionRuleSimple:
             rules=[
                 ConditionRule(
                     logic=LogicOperator.AND,
-                    condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True),
+                    condition=ParamsCondition(
+                        field="a",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    ),
                 ),
             ],
         )
@@ -101,7 +162,11 @@ class TestConditionRuleSimple:
         """变量不存在时，默认视为条件不满足（不抛异常）"""
         rule = ConditionRule(
             logic=LogicOperator.AND,
-            condition=ParamsCondition(field="missing", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True),
+            condition=ParamsCondition(
+                field="missing",
+                condition_value_type=ConditionValueType.BOOLEAN,
+                condition_value=True,
+            ),
         )
         assert evaluate_rule(rule, {"other": True}) is False
 
@@ -109,7 +174,11 @@ class TestConditionRuleSimple:
         """strict=True 时，变量不存在应该抛异常"""
         rule = ConditionRule(
             logic=LogicOperator.AND,
-            condition=ParamsCondition(field="missing", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True),
+            condition=ParamsCondition(
+                field="missing",
+                condition_value_type=ConditionValueType.BOOLEAN,
+                condition_value=True,
+            ),
         )
         with pytest.raises(ConditionEvaluateError):
             evaluate_rule(rule, {"other": True}, strict=True)
@@ -129,8 +198,20 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.AND,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="b", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="a",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="b",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is True
@@ -140,8 +221,20 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.AND,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="c", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="a",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="c",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is False
@@ -151,8 +244,20 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.AND,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="missing", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="a",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="missing",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is False
@@ -164,8 +269,20 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.OR,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="c", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="c",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="a",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is True
@@ -175,8 +292,20 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.OR,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="c", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="c", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="c",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="c",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is False
@@ -186,8 +315,20 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.OR,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="missing", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="missing",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="a",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is True
@@ -202,11 +343,29 @@ class TestConditionRuleCompound:
                 ConditionRule(
                     logic=LogicOperator.AND,
                     rules=[
-                        ConditionRule(condition=ParamsCondition(field="c", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                        ConditionRule(condition=ParamsCondition(field="b", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                        ConditionRule(
+                            condition=ParamsCondition(
+                                field="c",
+                                condition_value_type=ConditionValueType.BOOLEAN,
+                                condition_value=True,
+                            )
+                        ),
+                        ConditionRule(
+                            condition=ParamsCondition(
+                                field="b",
+                                condition_value_type=ConditionValueType.BOOLEAN,
+                                condition_value=True,
+                            )
+                        ),
                     ],
                 ),
-                ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="a",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is True
@@ -219,11 +378,29 @@ class TestConditionRuleCompound:
                 ConditionRule(
                     logic=LogicOperator.OR,
                     rules=[
-                        ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                        ConditionRule(condition=ParamsCondition(field="c", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                        ConditionRule(
+                            condition=ParamsCondition(
+                                field="a",
+                                condition_value_type=ConditionValueType.BOOLEAN,
+                                condition_value=True,
+                            )
+                        ),
+                        ConditionRule(
+                            condition=ParamsCondition(
+                                field="c",
+                                condition_value_type=ConditionValueType.BOOLEAN,
+                                condition_value=True,
+                            )
+                        ),
                     ],
                 ),
-                ConditionRule(condition=ParamsCondition(field="b", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="b",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ok) is True
@@ -236,8 +413,20 @@ class TestConditionRuleCompound:
                 ConditionRule(
                     logic=LogicOperator.AND,
                     rules=[
-                        ConditionRule(condition=ParamsCondition(field="c", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                        ConditionRule(condition=ParamsCondition(field="b", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                        ConditionRule(
+                            condition=ParamsCondition(
+                                field="c",
+                                condition_value_type=ConditionValueType.BOOLEAN,
+                                condition_value=True,
+                            )
+                        ),
+                        ConditionRule(
+                            condition=ParamsCondition(
+                                field="b",
+                                condition_value_type=ConditionValueType.BOOLEAN,
+                                condition_value=True,
+                            )
+                        ),
                     ],
                 ),
             ],
@@ -253,9 +442,27 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.AND,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="logged_in", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="error", condition_value_type=ConditionValueType.NULL, condition_value=None)),
-                ConditionRule(condition=ParamsCondition(field="role", condition_value_type=ConditionValueType.STRING, condition_value="admin")),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="logged_in",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="error",
+                        condition_value_type=ConditionValueType.NULL,
+                        condition_value=None,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="role",
+                        condition_value_type=ConditionValueType.STRING,
+                        condition_value="admin",
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ctx) is True
@@ -266,9 +473,27 @@ class TestConditionRuleCompound:
         rule = ConditionRule(
             logic=LogicOperator.AND,
             rules=[
-                ConditionRule(condition=ParamsCondition(field="logged_in", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                ConditionRule(condition=ParamsCondition(field="error", condition_value_type=ConditionValueType.NULL, condition_value=None)),
-                ConditionRule(condition=ParamsCondition(field="role", condition_value_type=ConditionValueType.STRING, condition_value="admin")),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="logged_in",
+                        condition_value_type=ConditionValueType.BOOLEAN,
+                        condition_value=True,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="error",
+                        condition_value_type=ConditionValueType.NULL,
+                        condition_value=None,
+                    )
+                ),
+                ConditionRule(
+                    condition=ParamsCondition(
+                        field="role",
+                        condition_value_type=ConditionValueType.STRING,
+                        condition_value="admin",
+                    )
+                ),
             ],
         )
         assert evaluate_rule(rule, vars_ctx) is False
@@ -281,9 +506,19 @@ class TestConditionRuleValidation:
         with pytest.raises(ValueError):
             ConditionRule(
                 logic=LogicOperator.AND,
-                condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True),
+                condition=ParamsCondition(
+                    field="a",
+                    condition_value_type=ConditionValueType.BOOLEAN,
+                    condition_value=True,
+                ),
                 rules=[
-                    ConditionRule(condition=ParamsCondition(field="b", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                    ConditionRule(
+                        condition=ParamsCondition(
+                            field="b",
+                            condition_value_type=ConditionValueType.BOOLEAN,
+                            condition_value=True,
+                        )
+                    ),
                 ],
             )
 
@@ -296,7 +531,19 @@ class TestConditionRuleValidation:
             ConditionRule(
                 logic=LogicOperator.NOT,
                 rules=[
-                    ConditionRule(condition=ParamsCondition(field="a", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
-                    ConditionRule(condition=ParamsCondition(field="b", condition_value_type=ConditionValueType.BOOLEAN, condition_value=True)),
+                    ConditionRule(
+                        condition=ParamsCondition(
+                            field="a",
+                            condition_value_type=ConditionValueType.BOOLEAN,
+                            condition_value=True,
+                        )
+                    ),
+                    ConditionRule(
+                        condition=ParamsCondition(
+                            field="b",
+                            condition_value_type=ConditionValueType.BOOLEAN,
+                            condition_value=True,
+                        )
+                    ),
                 ],
             )

@@ -1,6 +1,7 @@
 """
 测试截图操作
 """
+
 import pytest
 from playwright.async_api import Page
 
@@ -38,7 +39,9 @@ class TestScreenshotAction:
         """测试指定元素截图"""
         from app.services.execution.actions.screenshot import ScreenshotAction
 
-        await self.page.set_content("<html><body><div id='target' style='height: 50px;'>Target</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div id='target' style='height: 50px;'>Target</div></body></html>"
+        )
 
         action = ScreenshotAction.new_action(
             mid=1,

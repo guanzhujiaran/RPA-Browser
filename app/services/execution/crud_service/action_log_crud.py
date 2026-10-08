@@ -8,6 +8,7 @@
  自定义操作见 CompositeActionModel 的 log_* 字段，内置操作见 settings.action_log_*，
  不再有独立的采集配置表。）
 """
+
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
@@ -98,7 +99,8 @@ class ActionLogCrudService:
     ) -> List[ActionLogRecord]:
         conditions = cls._build_filters(mid, **filters)
         order_col = (
-            ActionLogRecord.id.desc() if order_desc  # type: ignore[attr-defined]
+            ActionLogRecord.id.desc()
+            if order_desc  # type: ignore[attr-defined]
             else ActionLogRecord.id.asc()  # type: ignore[attr-defined]
         )
         async with DatabaseSessionManager.async_session() as session:
@@ -157,9 +159,7 @@ class ActionLogCrudService:
         """按条件批量清理日志"""
         conditions = cls._build_filters(mid, **filters)
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(
-                sa_delete(ActionLogRecord).where(*conditions)
-            )
+            result = await session.exec(sa_delete(ActionLogRecord).where(*conditions))
             await session.commit()
             return result.rowcount or 0
 
@@ -192,14 +192,16 @@ class ActionLogCrudService:
             success_cnt = int(success_cnt or 0)
             total += cnt
             total_success += success_cnt
-            items.append({
-                "action_id": action_id,
-                "action_name": action_name or "",
-                "total": cnt,
-                "success": success_cnt,
-                "failed": cnt - success_cnt,
-                "avg_execution_time": round(float(avg_time or 0.0), 4),
-            })
+            items.append(
+                {
+                    "action_id": action_id,
+                    "action_name": action_name or "",
+                    "total": cnt,
+                    "success": success_cnt,
+                    "failed": cnt - success_cnt,
+                    "avg_execution_time": round(float(avg_time or 0.0), 4),
+                }
+            )
 
         return {
             "days": days,

@@ -18,7 +18,6 @@ from app.models.core.browser.fingerprint import (
 from app.models.base.base_sqlmodel import BaseSQLModel
 
 
-
 class UserBrowserUserId(BaseSQLModel):
     """用户浏览器令牌基础模型"""
 
@@ -30,7 +29,7 @@ class UserBrowserUserId(BaseSQLModel):
         return str(self.mid)
 
 
-class UserBrowserInfoBase(UserBrowserUserId,BaseBrowserId):
+class UserBrowserInfoBase(UserBrowserUserId, BaseBrowserId):
     """用户浏览器信息基础模型"""
 
     # 对外发布 ID 一律雪花 ID（见规则 snowflake-id.mdc）：主键由应用层
@@ -46,14 +45,15 @@ class UserBrowserInfoBase(UserBrowserUserId,BaseBrowserId):
 
 
 class UserBrowserServerSideDefaultSetting(UserBrowserInfoBase):
-    default_proxy_server:str | None = settings.default_proxy_server
-    default_platform:PlatformEnum | None = PlatformEnum.windows
-    default_browser:BrowserEnum | None = BrowserEnum.chrome
-    default_lang:str | None = "zh-CN"
-    default_timezone:str | None = "Asia/Shanghai"
-    default_viewport_width:int | None = 1920
-    default_viewport_height:int | None = 1080
-    default_timeout:int | None = 30000
+    default_proxy_server: str | None = settings.default_proxy_server
+    default_platform: PlatformEnum | None = PlatformEnum.windows
+    default_browser: BrowserEnum | None = BrowserEnum.chrome
+    default_lang: str | None = "zh-CN"
+    default_timezone: str | None = "Asia/Shanghai"
+    default_viewport_width: int | None = 1920
+    default_viewport_height: int | None = 1080
+    default_timeout: int | None = 30000
+
 
 class UserBrowserDefaultSetting(UserBrowserServerSideDefaultSetting, table=True):
     """用户浏览器默认设置模型
@@ -62,6 +62,7 @@ class UserBrowserDefaultSetting(UserBrowserServerSideDefaultSetting, table=True)
     现在统一通过“自定义动作”或“工作流”来实现。
     此处仅保留最基础的指纹和浏览器环境默认值。
     """
+
     default_proxy_server: str | None = Field(default=None)
 
     # === 指纹默认配置 ===
@@ -91,9 +92,8 @@ class UserBrowserDefaultSetting(UserBrowserServerSideDefaultSetting, table=True)
     default_viewport_height: int | None = Field(
         ..., ge=600, le=2160, description="默认视口高度"
     )
-    default_timeout: int | None = Field(
-        ..., ge=1000, description="默认超时时间(毫秒)"
-    )
+    default_timeout: int | None = Field(..., ge=1000, description="默认超时时间(毫秒)")
+
 
 class UserBrowserInfoWithoutPlugin(
     UserBrowserInfoBase, BaseFingerprintBrowserInitParams
@@ -140,6 +140,7 @@ class UserBrowserDefaultSettingRequest(SQLModel):
 
 class UserBrowserDefaultSettingResponse(SQLModel):
     """用户浏览器默认设置响应模型"""
+
     default_proxy_server: str | None = None
 
     # === 指纹默认配置 ===

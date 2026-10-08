@@ -9,6 +9,7 @@
 
 使用 unittest.mock 模拟 broker.start() 与 broker.publish()，不需要真实 RabbitMQ。
 """
+
 import asyncio
 
 import pytest
@@ -96,7 +97,9 @@ def test_rpa_wrapper_delegates():
     注意：薄封装模块顶部用 `from ... import publish_push_message` 绑定了旧引用，
     因此需 patch 薄封装模块命名空间里的名字，而不是 bili_common 模块。
     """
-    with patch.object(rpa_message_pub, "publish_push_message", new=AsyncMock()) as mock_pub:
+    with patch.object(
+        rpa_message_pub, "publish_push_message", new=AsyncMock()
+    ) as mock_pub:
         asyncio.run(publish_message("t", "c", config={"bark_push": "https://x"}))
         mock_pub.assert_awaited_once()
         kwargs = mock_pub.await_args.kwargs
@@ -116,6 +119,8 @@ def test_publish_failure_propagates():
         with pytest.raises(RuntimeError, match="mq down"):
             asyncio.run(
                 mp.publish_push_message(
-                    title="t", content="c", amqp_url="amqp://guest:guest@localhost:5672/"
+                    title="t",
+                    content="c",
+                    amqp_url="amqp://guest:guest@localhost:5672/",
                 )
             )

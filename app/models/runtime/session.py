@@ -7,6 +7,7 @@ Runtime 模块 - 会话管理模型
 from sqlmodel import SQLModel, Field
 from pydantic import computed_field
 
+
 class BrowserSessionGetParams(SQLModel):
     mid: int
     browser_id: int
@@ -27,6 +28,7 @@ class BrowserSessionRemoveParams(BrowserSessionGetParams):
 class SessionCreateParams(BrowserSessionCreateParams):
     mid: int
     browser_id: int
+
     @computed_field
     @property
     def mid_str(self) -> str:

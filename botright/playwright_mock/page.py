@@ -179,14 +179,24 @@ class Page(PlaywrightPage):
 
         if self.browser.mask_fingerprint:
             user_agent_metadata = {
-                "brands": self.fingerprint.navigator.userAgentData.get("brands",[]),
-                "fullVersionList": self.fingerprint.navigator.userAgentData.get('fullVersionList',[]),
-                "fullVersion": self.fingerprint.navigator.userAgentData.get('uaFullVersion','144.0.7559.109'),
+                "brands": self.fingerprint.navigator.userAgentData.get("brands", []),
+                "fullVersionList": self.fingerprint.navigator.userAgentData.get(
+                    "fullVersionList", []
+                ),
+                "fullVersion": self.fingerprint.navigator.userAgentData.get(
+                    "uaFullVersion", "144.0.7559.109"
+                ),
                 "platform": self.fingerprint.navigator.platform,
-                "architecture": self.fingerprint.navigator.userAgentData.get('architecture','x86'),
-                "bitness": self.fingerprint.navigator.userAgentData.get('bitness','64'),
-                "platformVersion": self.fingerprint.navigator.userAgentData.get('platformVersion','10.0.0'),
-                "model": self.fingerprint.navigator.userAgentData.get('model',''),
+                "architecture": self.fingerprint.navigator.userAgentData.get(
+                    "architecture", "x86"
+                ),
+                "bitness": self.fingerprint.navigator.userAgentData.get(
+                    "bitness", "64"
+                ),
+                "platformVersion": self.fingerprint.navigator.userAgentData.get(
+                    "platformVersion", "10.0.0"
+                ),
+                "model": self.fingerprint.navigator.userAgentData.get("model", ""),
                 "mobile": False,
             }
 

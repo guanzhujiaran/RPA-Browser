@@ -11,6 +11,7 @@ RPC 协议已简化：
 
 使用 unittest.mock 模拟 rpc_client.call 与 httpx.AsyncClient。
 """
+
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from typing import Any
@@ -31,6 +32,7 @@ from app.models.execution.rpc_method_params import (
 
 # ========== 辅助函数 ==========
 
+
 def _make_httpx_response(
     *,
     status_code: int = 200,
@@ -41,6 +43,7 @@ def _make_httpx_response(
     """构造一个 httpx.Response 对象用于测试"""
     if json_data is not None:
         import json as _json
+
         content = _json.dumps(json_data).encode("utf-8")
         hdrs = {"content-type": "application/json"}
         if headers:
@@ -63,6 +66,7 @@ def _make_rpc_error_response(msg: str, code: int = 500) -> dict[str, Any]:
 
 # ========== RPC 模式测试 ==========
 
+
 class TestFetchExternalDataRpcMode:
     """获取外部数据操作 - RPC 模式测试"""
 
@@ -78,7 +82,8 @@ class TestFetchExternalDataRpcMode:
                 method=HttpMethodEnum.GET,
                 method_name=RpcMethodName.GET_RESERVE_LOTTERY,
                 get_reserve_lottery_params=GetReserveLotteryRpcParams(
-                    page_num=1, page_size=20),
+                    page_num=1, page_size=20
+                ),
             ),
         )
 
@@ -304,6 +309,7 @@ class TestFetchExternalDataRpcMode:
 
 # ========== HTTP 模式测试 ==========
 
+
 class TestFetchExternalDataHttpMode:
     """获取外部数据操作 - HTTP 模式测试"""
 
@@ -326,12 +332,15 @@ class TestFetchExternalDataHttpMode:
             json_data={"ok": True},
         )
 
-        with patch(
-            "app.services.execution.actions.fetch_external_data.httpx.AsyncClient",
-        ) as mock_client_cls, patch(
-            "app.services.execution.actions.fetch_external_data.rpc_client.call",
-            new=AsyncMock(),
-        ) as mock_rpc_call:
+        with (
+            patch(
+                "app.services.execution.actions.fetch_external_data.httpx.AsyncClient",
+            ) as mock_client_cls,
+            patch(
+                "app.services.execution.actions.fetch_external_data.rpc_client.call",
+                new=AsyncMock(),
+            ) as mock_rpc_call,
+        ):
             mock_client = MagicMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -598,12 +607,14 @@ class TestFetchExternalDataHttpMode:
 
 # ========== 参数校验测试 ==========
 
+
 class TestFetchExternalDataParamsValidation:
     """获取外部数据操作参数校验测试"""
 
     def test_both_method_name_and_url_rejected(self):
         """测试同时提供 method_name 和 url 应被拒绝"""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError) as exc_info:
             FetchExternalDataParams(
                 method_name=RpcMethodName.GET_RESERVE_LOTTERY,
@@ -614,6 +625,7 @@ class TestFetchExternalDataParamsValidation:
     def test_neither_method_name_nor_url_rejected(self):
         """测试既不提供 method_name 也不提供 url 应被拒绝"""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError) as exc_info:
             FetchExternalDataParams()
         assert "必须提供" in str(exc_info.value)
@@ -646,6 +658,7 @@ class TestFetchExternalDataParamsValidation:
     def test_none_method_name_without_url_rejected(self):
         """测试 method_name=NONE 且无 url 应被拒绝（必须提供 url）"""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError) as exc_info:
             FetchExternalDataParams(method_name=RpcMethodName.NONE)
         assert "必须提供" in str(exc_info.value)

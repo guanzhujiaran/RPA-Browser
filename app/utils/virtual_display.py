@@ -81,7 +81,9 @@ async def ensure_virtual_display() -> str | None:
         await asyncio.sleep(0.1)
 
     os.environ["DISPLAY"] = display
-    logger.info(f"已启动虚拟显示 Xvfb {display} ({settings.xvfb_screen})，DISPLAY={display}")
+    logger.info(
+        f"已启动虚拟显示 Xvfb {display} ({settings.xvfb_screen})，DISPLAY={display}"
+    )
     return display
 
 

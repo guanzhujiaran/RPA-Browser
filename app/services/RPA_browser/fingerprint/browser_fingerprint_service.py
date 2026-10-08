@@ -83,9 +83,11 @@ class BrowserFingerprintService:
             create_params = BrowserFingerprintCreateParams(
                 fingerprint_int=params.fingerprint_int
             )
-            user_default_settings = await BrowserFingerprintService.get_user_default_settings(
-                mid=mid,
-                session=session,
+            user_default_settings = (
+                await BrowserFingerprintService.get_user_default_settings(
+                    mid=mid,
+                    session=session,
+                )
             )
             # 生成指纹数据
             fingerprint_data: BaseFingerprintBrowserInitParams = (
@@ -112,7 +114,9 @@ class BrowserFingerprintService:
 
         # 检查 custom_name 是否重复
         custom_name = update_data.get("custom_name")
-        if params.browser_id is None and (custom_name is None or not custom_name.strip()):
+        if params.browser_id is None and (
+            custom_name is None or not custom_name.strip()
+        ):
             # 创建场景：名称为空时生成默认名称（同一用户下唯一）
             custom_name = f"浏览器_{browser_info.browser_id}"
             update_data["custom_name"] = custom_name
@@ -161,9 +165,11 @@ class BrowserFingerprintService:
         """
         创建浏览器指纹信息
         """
-        user_default_settings = await BrowserFingerprintService.get_user_default_settings(
-            mid=mid,
-            session=session,
+        user_default_settings = (
+            await BrowserFingerprintService.get_user_default_settings(
+                mid=mid,
+                session=session,
+            )
         )
         # 生成指纹数据
         fingerprint_data: BaseFingerprintBrowserInitParams = (

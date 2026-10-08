@@ -21,11 +21,14 @@ from app.models.core.browser.fingerprint import BaseFingerprintBrowserInitParams
 from app.services.RPA_browser.base.base_engines import BaseUndetectedPlaywright
 from app.utils.decorator import log_class_decorator
 from app.utils.depends.session_manager import DatabaseSessionManager
-from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
+from app.services.RPA_browser.fingerprint.browser_fingerprint_service import (
+    BrowserFingerprintService,
+)
 from pydantic import computed_field
 from app.config import settings
 from app.services.RPA_browser.webrtc.stream_manager import WebRTCStreamManager
 from loguru import logger
+
 # 🔑 全局锁字典，用于保护浏览器创建过程（key: f"{mid}_{browser_id}"）
 _browser_creation_locks: Dict[str, asyncio.Lock] = {}
 _global_browser_lock = asyncio.Lock()  # 用于保护 _browser_creation_locks 字典本身
@@ -77,6 +80,7 @@ class SessionInfo:
     尽量不要直接实例化：走 `WebRTCEnabledSession.new`（新建）或
     `from_init_data` / `_apply_init_data`（由初始化结果构造 / 原地回写）
     """
+
     playwright_instance: BaseUndetectedPlaywright
     browser_context: BrowserContext
     browser_generator: AsyncGenerator[BrowserContext, Any]
@@ -145,11 +149,13 @@ class SessionInfo:
         """获取所有页面信息列表（自动为每个页面设置 page_id）"""
         ret_list = []
         for idx, p in enumerate(self.all_pages):
-            ret_list.append(PageInfo(
-                index=idx,
-                url=p.url,
-                title=await p.title(),
-            ))
+            ret_list.append(
+                PageInfo(
+                    index=idx,
+                    url=p.url,
+                    title=await p.title(),
+                )
+            )
         return ret_list
 
 
@@ -258,8 +264,7 @@ class WebRTCEnabledSession(SessionInfo):
 
             # 关闭浏览器上下文
             if self.browser_context and not (
-                self.browser_context.pages and self.browser_context.pages[0].is_closed(
-                )
+                self.browser_context.pages and self.browser_context.pages[0].is_closed()
             ):
                 await self.browser_context.close()
 
@@ -327,7 +332,8 @@ class WebRTCEnabledSession(SessionInfo):
         # 禁用下载功能
         self._disable_downloads(page)
         self.logger.info(
-            f"📄 创建新页面，当前页面总数: {len(self.browser_context.pages)}/{self.max_pages}")
+            f"📄 创建新页面，当前页面总数: {len(self.browser_context.pages)}/{self.max_pages}"
+        )
         return page
 
     def _disable_downloads(self, page: Page) -> None:
@@ -411,7 +417,7 @@ class WebRTCEnabledSession(SessionInfo):
 
         if page_index < 0 or page_index >= len(all_pages):
             raise IndexError(
-                f"页面索引 {page_index} 超出范围，可用范围: 0-{len(all_pages)-1}"
+                f"页面索引 {page_index} 超出范围，可用范围: 0-{len(all_pages) - 1}"
             )
 
         target_page = all_pages[page_index]
@@ -445,7 +451,7 @@ class WebRTCEnabledSession(SessionInfo):
 
         if page_index < 0 or page_index >= len(all_pages):
             raise IndexError(
-                f"页面索引 {page_index} 超出范围，可用范围: 0-{len(all_pages)-1}"
+                f"页面索引 {page_index} 超出范围，可用范围: 0-{len(all_pages) - 1}"
             )
 
         target_page = all_pages[page_index]
@@ -502,14 +508,13 @@ class WebRTCEnabledSession(SessionInfo):
 
                 # 🔑 调试日志：记录指纹信息类型和字段
                 logger.debug(f"指纹信息类型: {type(fingerprint_info).__name__}")
-                fingerprint_dict = fingerprint_info.model_dump(
-                    exclude_none=True)
+                fingerprint_dict = fingerprint_info.model_dump(exclude_none=True)
                 logger.debug(f"指纹信息字段: {list(fingerprint_dict.keys())}")
 
                 # 🔑 确保 fingerprint 字段存在（如果为 None 会被 exclude_none 排除）
-                if 'fingerprint' not in fingerprint_dict:
+                if "fingerprint" not in fingerprint_dict:
                     logger.warning(f"⚠️ fingerprint 字段不存在或为 None，设置为默认值 0")
-                    fingerprint_dict['fingerprint'] = 0
+                    fingerprint_dict["fingerprint"] = 0
 
                 fingerprint_params = BaseFingerprintBrowserInitParams(
                     **fingerprint_dict
@@ -519,7 +524,8 @@ class WebRTCEnabledSession(SessionInfo):
                     mid=mid, browser_id=browser_id, headless=headless
                 )
                 browser_generator = playwright_instance.launch_browser_span(
-                    fingerprint_params)
+                    fingerprint_params
+                )
                 browser_context = await anext(browser_generator)
 
                 return InitSessionRes(

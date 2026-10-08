@@ -55,7 +55,7 @@ class PermissionConfigService:
             level_name="level5", level_value=5, permissions=[5, 6], max_fingerprints=5
         ),
         PermissionLevelConfig(
-            level_name="level6", level_value=6, permissions=[6], max_fingerprints=100
+            level_name="level6", level_value=6, permissions=[6], max_fingerprints=20
         ),
         PermissionLevelConfig(
             level_name="root", level_value=99, permissions=[6], max_fingerprints=999999
@@ -79,7 +79,11 @@ class PermissionConfigService:
         async with aiofiles.open(cls.CONFIG_FILE, "r", encoding="utf-8") as f:
             content = await f.read()
             data = json.loads(content)
-            return PermissionConfigData(levels=[PermissionLevelConfig(**item) for item in data.get("levels", [])])
+            return PermissionConfigData(
+                levels=[
+                    PermissionLevelConfig(**item) for item in data.get("levels", [])
+                ]
+            )
 
     @classmethod
     async def _save_config_data(cls, config_data: PermissionConfigData):

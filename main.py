@@ -47,9 +47,13 @@ async def lifespan(app: FastAPI):
     # 参照 FastapiApp lifespan 模式：先执行 alembic upgrade head，再检查 Schema 一致性
     if settings.alembic_auto_migrate:
         if not await run_alembic_upgrade_head():
-            raise RuntimeError("alembic upgrade head 执行失败，请检查数据库连接与迁移脚本")
+            raise RuntimeError(
+                "alembic upgrade head 执行失败，请检查数据库连接与迁移脚本"
+            )
         if not await check_schemas():
-            raise RuntimeError("数据库 Schema 与模型不一致，请先手动执行 alembic upgrade head")
+            raise RuntimeError(
+                "数据库 Schema 与模型不一致，请先手动执行 alembic upgrade head"
+            )
 
     await init_dependencies()
 

@@ -21,7 +21,11 @@ from app.models.notify.request_models import (
 )
 from app.models.router.router_prefix import NotifyRouterPath
 from .base import new_notify_router
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from app.services.RPA_browser.browser import BrowserService
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -282,7 +286,6 @@ async def test_notify_router(
         )
 
     except Exception as e:
-
         loguru.logger.error(f"测试推送通知失败: {str(e)}")
         return error_response(
             code=ResponseCode.INTERNAL_ERROR,

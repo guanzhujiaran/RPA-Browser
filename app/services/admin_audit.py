@@ -3,6 +3,7 @@
 提供 log_admin_action，供各 admin 治理接口在成功执行后记录操作痕迹。
 审计写入失败仅告警，不影响主业务流程。
 """
+
 from datetime import datetime
 from loguru import logger
 

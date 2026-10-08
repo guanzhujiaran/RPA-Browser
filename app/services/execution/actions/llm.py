@@ -1,6 +1,7 @@
 """
 LLM Action — 基于 LangChain ChatOpenAI，支持结构化输出
 """
+
 from __future__ import annotations
 
 import json
@@ -60,6 +61,7 @@ def _create_model_from_schema(
 
 # ── LLMAction ──────────────────────────────────────────────
 
+
 class LLMAction(BaseAction[LLMParams]):
     """LLM 对话操作（基于 LangChain ChatOpenAI，支持 structured output）"""
 
@@ -100,20 +102,26 @@ class LLMAction(BaseAction[LLMParams]):
         start_time = time.time()
 
         # 参数校验
-        valid, error_msg, validated_params = self.validate_params_with_model(self.params)
+        valid, error_msg, validated_params = self.validate_params_with_model(
+            self.params
+        )
         if not valid or not validated_params:
             return ActionResult(
-                success=False, error=error_msg,
+                success=False,
+                error=error_msg,
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
         prompt = validated_params.prompt
         if not prompt:
             return ActionResult(
-                success=False, error="prompt 不能为空",
+                success=False,
+                error="prompt 不能为空",
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
         messages = [
@@ -133,21 +141,27 @@ class LLMAction(BaseAction[LLMParams]):
             )
 
             if validated_params.response_schema:
-                result = await self._call_structured(chat_model, messages, validated_params)
+                result = await self._call_structured(
+                    chat_model, messages, validated_params
+                )
             else:
                 result = await self._call_text(chat_model, messages, validated_params)
 
             return ActionResult(
-                success=True, data=result,
+                success=True,
+                data=result,
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
         except Exception as e:
             return ActionResult(
-                success=False, error=str(e),
+                success=False,
+                error=str(e),
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
     async def _call_text(
@@ -159,12 +173,19 @@ class LLMAction(BaseAction[LLMParams]):
         """纯文本模式"""
         ai_message: AIMessage = await chat_model.ainvoke(messages)
         usage = _extract_usage(ai_message)
-        content = ai_message.content if isinstance(ai_message.content, str) else str(ai_message.content)
+        content = (
+            ai_message.content
+            if isinstance(ai_message.content, str)
+            else str(ai_message.content)
+        )
         response_model = ai_message.response_metadata.get("model_name", params.model)
 
         return LLMResult(
-            content=content, role="assistant", model=response_model,
-            usage=usage, is_structured=False,
+            content=content,
+            role="assistant",
+            model=response_model,
+            usage=usage,
+            is_structured=False,
         )
 
     async def _call_structured(
@@ -176,21 +197,31 @@ class LLMAction(BaseAction[LLMParams]):
         """结构化输出模式：LangChain with_structured_output 自动保证数据符合 schema"""
         schema_model = _create_model_from_schema(params.response_schema)  # type: ignore[arg-type]
         structured_chat = chat_model.with_structured_output(
-            schema_model, method="json_schema",
+            schema_model,
+            method="json_schema",
         )
         ai_result: BaseModel = await structured_chat.ainvoke(messages)
         structured_data = ai_result.model_dump()
         content_text = json.dumps(structured_data, ensure_ascii=False, indent=2)
 
-        usage = _extract_usage(getattr(ai_result, "usage_metadata", getattr(ai_result, "response_metadata", {})))
+        usage = _extract_usage(
+            getattr(
+                ai_result, "usage_metadata", getattr(ai_result, "response_metadata", {})
+            )
+        )
 
         return LLMResult(
-            content=content_text, role="assistant", model=params.model,
-            usage=usage, is_structured=True, structured_data=structured_data,
+            content=content_text,
+            role="assistant",
+            model=params.model,
+            usage=usage,
+            is_structured=True,
+            structured_data=structured_data,
         )
 
 
 # ── 工具函数 ───────────────────────────────────────────────
+
 
 def _extract_usage(msg: Any) -> Dict[str, int]:
     """从消息中提取 token 用量"""

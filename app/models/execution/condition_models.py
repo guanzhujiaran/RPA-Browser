@@ -7,32 +7,36 @@
 from __future__ import annotations
 
 from bili_common.models import StrEnumAutoDoc
-from typing import  List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 # ---- 枚举 ----
 
+
 class ConditionValueType(StrEnumAutoDoc):
     """条件值类型 —— 限制用户只能使用这三种类型做判断"""
+
     BOOLEAN = "BOOLEAN"  # True / False
-    NULL = "NULL"        # None
-    STRING = "STRING"    # 字符串精确匹配
+    NULL = "NULL"  # None
+    STRING = "STRING"  # 字符串精确匹配
 
 
 class LogicOperator(StrEnumAutoDoc):
     """逻辑运算符 —— 支持 AND / OR / NOT 组合多个原子条件"""
+
     AND = "AND"
     OR = "OR"
     NOT = "NOT"
 
 
 # ---- 条件值类型别名 ----
-ConditionValue = bool| None| str
+ConditionValue = bool | None | str
 
 
 # ---- 原子条件 ----
+
 
 class ParamsCondition(BaseModel):
     """单个原子条件：检查 variables 上下文中某字段值是否匹配期望值
@@ -94,6 +98,7 @@ class ParamsCondition(BaseModel):
 
 # ---- 复合条件规则 ----
 
+
 class ConditionRule(BaseModel):
     """可递归组合的条件规则 —— 支持 AND / OR / NOT 组合多个原子条件
 
@@ -126,7 +131,9 @@ class ConditionRule(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    logic: LogicOperator = Field(default=LogicOperator.AND, description="组合逻辑: AND / OR / NOT")
+    logic: LogicOperator = Field(
+        default=LogicOperator.AND, description="组合逻辑: AND / OR / NOT"
+    )
     condition: Optional[ParamsCondition] = Field(
         default=None, description="原子条件（叶子节点，与 rules 互斥）"
     )
@@ -140,7 +147,9 @@ class ConditionRule(BaseModel):
         has_c = self.condition is not None
         has_r = self.rules is not None and len(self.rules) > 0
         if has_c and has_r:
-            raise ValueError("condition（原子条件）与 rules（子规则）互斥，只能提供其中一个")
+            raise ValueError(
+                "condition（原子条件）与 rules（子规则）互斥，只能提供其中一个"
+            )
         if not has_c and not has_r:
             raise ValueError("必须提供 condition（原子条件）或 rules（子规则列表）")
         if self.logic == LogicOperator.NOT:
@@ -150,6 +159,7 @@ class ConditionRule(BaseModel):
 
 
 # ---- 轻量评估函数（纯 Python 逻辑，零 eval） ----
+
 
 class ConditionEvaluateError(Exception):
     """条件评估异常"""
@@ -199,7 +209,9 @@ def evaluate_condition(condition: ParamsCondition, variables: dict) -> bool:
     raise ConditionEvaluateError(f"不支持的条件值类型: {cvt}")
 
 
-def evaluate_rule(rule: ConditionRule, variables: dict, *, strict: bool = False) -> bool:
+def evaluate_rule(
+    rule: ConditionRule, variables: dict, *, strict: bool = False
+) -> bool:
     """递归评估 ConditionRule（完全不使用 eval，纯 Python 逻辑）
 
     Args:

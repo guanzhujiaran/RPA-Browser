@@ -8,6 +8,7 @@
 4. 通过 ExecutionEngine 执行
 5. 验证执行结果
 """
+
 from app.models.execution.action_params import create_workflow_step
 from app.models.execution.request_params import WorkflowExecutionRequest
 from app.models.execution.request_params import ActionExecutionRequest
@@ -26,7 +27,11 @@ from app.models.database.workflow.models import (
     BuiltinActionType,
 )
 from app.models.execution.action_params import PluginConfig
-from app.services.execution.crud_service import action_crud_svr, plugin_crud_svr, workflow_crud_svr
+from app.services.execution.crud_service import (
+    action_crud_svr,
+    plugin_crud_svr,
+    workflow_crud_svr,
+)
 from app.services.execution.engine import ExecutionEngine
 from app.models.database.workflow.models import CompositeActionModel
 
@@ -48,10 +53,12 @@ class TestExecutionEngineDatabaseWorkflow:
             with suppress(Exception):
                 from sqlmodel import select
                 from app.utils.depends.session_manager import DatabaseSessionManager
+
                 async with DatabaseSessionManager.async_session() as session:
                     result = await session.exec(
                         select(CompositeActionModel).where(
-                            CompositeActionModel.action_id == action_id)
+                            CompositeActionModel.action_id == action_id
+                        )
                     )
                     if action := result.first():
                         await action_crud_svr.delete(action.id)
@@ -62,10 +69,16 @@ class TestExecutionEngineDatabaseWorkflow:
                     await plugin_crud_svr.delete(plugin.id)
 
     async def _execute_workflow_from_db(
-        self, req: WorkflowExecutionRequest, *, plugins=None,
+        self,
+        req: WorkflowExecutionRequest,
+        *,
+        plugins=None,
     ):
         """辅助方法：从 DB 加载步骤并执行工作流，替代旧的 execute_workflow_with_session"""
-        from app.models.execution.action_params import _ensure_action_type, workflow_step_adapter
+        from app.models.execution.action_params import (
+            _ensure_action_type,
+            workflow_step_adapter,
+        )
 
         action_model = await action_crud_svr.get_by_action_id(req.action_id)
         if not action_model:
@@ -85,7 +98,9 @@ class TestExecutionEngineDatabaseWorkflow:
             plugins=plugins or [],
         )
 
-    async def _create_custom_action(self, name: str, steps: list, **kwargs) -> CompositeActionModel:
+    async def _create_custom_action(
+        self, name: str, steps: list, **kwargs
+    ) -> CompositeActionModel:
         """创建自定义操作并入库"""
         action_id = f"ca_{uuid.uuid4().hex[:12]}"
 
@@ -103,7 +118,9 @@ class TestExecutionEngineDatabaseWorkflow:
         self.test_action_ids.append(action_id)
         return action
 
-    async def _create_plugin(self, name: str, hook_type: str, custom_action_id: str) -> UserPlugin:
+    async def _create_plugin(
+        self, name: str, hook_type: str, custom_action_id: str
+    ) -> UserPlugin:
         """创建插件并关联到自定义操作"""
         plugin_id = f"plugin_{uuid.uuid4().hex[:8]}"
 
@@ -176,10 +193,14 @@ class TestExecutionEngineDatabaseWorkflow:
         )
 
         steps = [
-            {"action_id": "input", "params": {
-                "selector": "#username", "value": "{{user_name}}"}},
-            {"action_id": "input", "params": {
-                "selector": "#password", "value": "{{user_pass}}"}},
+            {
+                "action_id": "input",
+                "params": {"selector": "#username", "value": "{{user_name}}"},
+            },
+            {
+                "action_id": "input",
+                "params": {"selector": "#password", "value": "{{user_pass}}"},
+            },
             {"action_id": "click", "params": {"selector": "#login"}},
         ]
 
@@ -228,8 +249,7 @@ class TestExecutionEngineDatabaseWorkflow:
         base_action = await self._create_custom_action(
             name="基础操作",
             steps=[
-                {"action_id": "navigate", "params": {
-                    "url": "https://example.com"}},
+                {"action_id": "navigate", "params": {"url": "https://example.com"}},
             ],
         )
 
@@ -277,7 +297,11 @@ class TestExecutionEngineDatabaseWorkflow:
 
         # 从 action_model 获取 steps
         action_model = await action_crud_svr.get_by_action_id(base_action.action_id)
-        from app.models.execution.action_params import _ensure_action_type, workflow_step_adapter
+        from app.models.execution.action_params import (
+            _ensure_action_type,
+            workflow_step_adapter,
+        )
+
         normalized_steps = []
         for s in action_model.steps:
             if isinstance(s, dict):
@@ -373,9 +397,7 @@ class TestExecutionEngineDatabaseWorkflow:
 
         await self.page.goto("about:blank")
         await self.page.set_content(
-            "<html><body>"
-            "<button id='btn'>Click Me</button>"
-            "</body></html>"
+            "<html><body><button id='btn'>Click Me</button></body></html>"
         )
 
         outer_action = await self._create_custom_action(
@@ -416,8 +438,7 @@ class TestExecutionEngineDatabaseWorkflow:
         failed_action = await self._create_custom_action(
             name="失败测试操作",
             steps=[
-                {"action_id": "navigate", "params": {
-                    "url": "https://example.com"}},
+                {"action_id": "navigate", "params": {"url": "https://example.com"}},
                 {"action_id": "click", "params": {"selector": "#nonexistent"}},
                 {"action_id": "screenshot", "params": {}},
             ],
@@ -467,8 +488,7 @@ class TestExecutionEngineDatabaseWorkflow:
                         create_workflow_step(
                             action_id="click",
                             action_type="click",
-                            params={
-                                "selector": ".item[data-index=\"{{loop_index}}\"]"},
+                            params={"selector": '.item[data-index="{{loop_index}}"]'},
                         )
                     ],
                 ),
@@ -567,18 +587,18 @@ class TestExecutionEngineDatabaseWorkflow:
         3. 验证变量正确传递
         """
         await self.page.set_content(
-            "<html><body>"
-            "<div id='content'>Original Content</div>"
-            "</body></html>"
+            "<html><body><div id='content'>Original Content</div></body></html>"
         )
 
         action = await self._create_custom_action(
             name="变量传递测试",
             steps=[
-                {"action_id": "screenshot", "params": {},
-                    "output_var": "screenshot_data"},
-                {"action_id": "navigate", "params": {
-                    "url": "https://example.com"}},
+                {
+                    "action_id": "screenshot",
+                    "params": {},
+                    "output_var": "screenshot_data",
+                },
+                {"action_id": "navigate", "params": {"url": "https://example.com"}},
             ],
         )
 

@@ -15,18 +15,20 @@ def _status_for_biz_code(code: int | None) -> int:
     业务失败由 body 的 `code` 表达，HTTP 非 200 只用于 HTTP 层语义。
     """
     return http_status_for_code(code)
+
+
 from app.models.consts.enums import ConfigRunningModeEnum
 import traceback
 from app.config import settings
 from sqlalchemy.exc import DisconnectionError, OperationalError
-from app.models.common.exceptions.base_exception import BaseException as CustomBaseException
+from app.models.common.exceptions.base_exception import (
+    BaseException as CustomBaseException,
+)
 
 from loguru import logger
 
 
-async def http_exception_handler(
-    _: Request, exc: StarletteHTTPException
-) -> Response:
+async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> Response:
     """处理HTTP异常，如404等"""
     if exc.status_code == 404:
         response = StandardResponse(
@@ -70,9 +72,7 @@ async def validation_exception_handler(
     )
 
 
-async def custom_exception_handler(
-    _: Request, exc: CustomBaseException
-) -> Response:
+async def custom_exception_handler(_: Request, exc: CustomBaseException) -> Response:
     """处理自定义业务异常
 
     HTTP 状态码按业务码推导（业务码 → 200；HTTP 语义码 400~599 → 同值），
@@ -100,8 +100,7 @@ async def global_exception_handler(_: Request, exc: Exception) -> Response:
     # 检查是否为数据库连接丢失错误
     is_database_error = isinstance(exc, (DisconnectionError, OperationalError))
     is_connection_lost = is_database_error and (
-        "Lost connection" in str(
-            exc) or "MySQL server has gone away" in str(exc)
+        "Lost connection" in str(exc) or "MySQL server has gone away" in str(exc)
     )
 
     # 检查是否为自定义业务异常（有 code 和 msg 属性）
@@ -126,7 +125,9 @@ async def global_exception_handler(_: Request, exc: Exception) -> Response:
         status_code = 503
         error_message = "数据库连接丢失，请稍后重试"
         response_code = ResponseCode.SERVICE_UNAVAILABLE
-        logger.warning(f"Database connection lost (ID: {error_id}): {exc}\n{error_details['traceback']}")
+        logger.warning(
+            f"Database connection lost (ID: {error_id}): {exc}\n{error_details['traceback']}"
+        )
     elif is_custom_exception:
         # 自定义业务异常，使用异常中定义的 code 和 msg；
         # HTTP 状态码按业务码推导（业务码 → 200；HTTP 语义码 400~599 → 同值）
@@ -204,5 +205,6 @@ async def database_connection_handler(_: Request, exc: Exception) -> Response:
     )
 
     return JSONResponse(
-        content=response.model_dump(), status_code=503  # Service Unavailable
+        content=response.model_dump(),
+        status_code=503,  # Service Unavailable
     )

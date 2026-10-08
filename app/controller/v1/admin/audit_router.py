@@ -2,6 +2,7 @@
 
 提供审计日志的分页查询，供中台「操作审计」界面展示治理操作痕迹。
 """
+
 from fastapi import APIRouter, Depends
 from sqlmodel import SQLModel, Field, select, func
 
@@ -17,6 +18,7 @@ router = APIRouter()  # tag 由 admin/__init__.py 聚合父路由统一提供，
 
 class AuditListItemResponse(SQLModel):
     """审计日志列表项响应"""
+
     id: int
     admin_mid: int
     action: str

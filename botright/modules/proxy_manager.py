@@ -52,13 +52,23 @@ class ProxyManager(AsyncObject):
 
         if self.proxy:
             self.split_proxy()
-            self.proxy = f"{self.username}:{self.password}@{self.ip}:{self.port}" if self.username else f"{self.ip}:{self.port}"
+            self.proxy = (
+                f"{self.username}:{self.password}@{self.ip}:{self.port}"
+                if self.username
+                else f"{self.ip}:{self.port}"
+            )
             self.plain_proxy = f"http://{self.proxy}"
-            self._phttpx = httpx.AsyncClient(proxies={"all://": self.plain_proxy}, verify=False)
+            self._phttpx = httpx.AsyncClient(
+                proxies={"all://": self.plain_proxy}, verify=False
+            )
             self.http_proxy = {"http": self.plain_proxy, "https": self.plain_proxy}
 
             if self.username:
-                self.browser_proxy = {"server": f"{self.ip}:{self.port}", "username": self.username, "password": self.password}
+                self.browser_proxy = {
+                    "server": f"{self.ip}:{self.port}",
+                    "username": self.username,
+                    "password": self.password,
+                }
             else:
                 self.browser_proxy = {"server": self.plain_proxy}
 
@@ -111,7 +121,13 @@ class ProxyManager(AsyncObject):
         Args:
             httpx_client (httpx.AsyncClient): The HTTPX client to use for proxy checks.
         """
-        get_ip_apis = ["https://api.ipify.org/?format=json", "https://api.myip.com/", "https://get.geojs.io/v1/ip.json", "https://api.ip.sb/jsonip", "https://l2.io/ip.json"]
+        get_ip_apis = [
+            "https://api.ipify.org/?format=json",
+            "https://api.myip.com/",
+            "https://get.geojs.io/v1/ip.json",
+            "https://api.ip.sb/jsonip",
+            "https://l2.io/ip.json",
+        ]
 
         for get_ip_api in get_ip_apis:
             with suppress(Exception):
@@ -119,13 +135,39 @@ class ProxyManager(AsyncObject):
                 ip = ip_request.json().get("ip")
                 break
         else:
-            raise ProxyCheckError("Could not get IP-Address of Proxy (Proxy is Invalid/Timed Out)")
+            raise ProxyCheckError(
+                "Could not get IP-Address of Proxy (Proxy is Invalid/Timed Out)"
+            )
 
         get_geo_apis = {
-            "http://ip-api.com/json/<IP>": ["country", "countryCode", "lat", "lon", "timezone"],
-            "https://ipapi.co/<IP>/json": ["country_name", "country", "latitude", "longitude", "timezone"],
-            "https://api.techniknews.net/ipgeo/<IP>": ["country", "countryCode", "lat", "lon", "timezone"],
-            "https://get.geojs.io/v1/ip/geo/<IP>.json": ["country", "country_code", "latitude", "longitude", "timezone"],
+            "http://ip-api.com/json/<IP>": [
+                "country",
+                "countryCode",
+                "lat",
+                "lon",
+                "timezone",
+            ],
+            "https://ipapi.co/<IP>/json": [
+                "country_name",
+                "country",
+                "latitude",
+                "longitude",
+                "timezone",
+            ],
+            "https://api.techniknews.net/ipgeo/<IP>": [
+                "country",
+                "countryCode",
+                "lat",
+                "lon",
+                "timezone",
+            ],
+            "https://get.geojs.io/v1/ip/geo/<IP>.json": [
+                "country",
+                "country_code",
+                "latitude",
+                "longitude",
+                "timezone",
+            ],
         }
 
         for get_geo_api, api_names in get_geo_apis.items():
@@ -144,4 +186,6 @@ class ProxyManager(AsyncObject):
                 assert self.country
                 break
         else:
-            raise ProxyCheckError("Could not get GeoInformation from proxy (Proxy is Probably not Indexed)")
+            raise ProxyCheckError(
+                "Could not get GeoInformation from proxy (Proxy is Probably not Indexed)"
+            )

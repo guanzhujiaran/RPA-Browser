@@ -1,11 +1,16 @@
 """
 页面管理路由 - 提供页面列表、切换、关闭等功能
 """
+
 from numpy.ma import count
 from app.services.RPA_browser.session.live_service import live_service
 from fastapi import Depends
 from bili_common.models.depends import BrowserReqAuthInfo
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.services.RPA_browser.session.live_service import LiveService
 from app.utils.depends.security_depends import verify_browser_ownership
@@ -39,17 +44,13 @@ async def get_pages_list(
 
     try:
         # 获取浏览器会话
-        entry = live_service.get_browser_session_entry(
-            mid, int(browser_id)
-        )
+        entry = live_service.get_browser_session_entry(mid, int(browser_id))
         if not entry:
             return success_response(data=PagesListResponse())
         # 🔑 调用 service 层方法获取页面列表（包含是否激活）
         pages = await entry.browser_session.get_all_page_infos()
 
-        return success_response(data=PagesListResponse(
-            pages=pages
-        ))
+        return success_response(data=PagesListResponse(pages=pages))
     except Exception as e:
         loguru.logger.error(f"获取页面列表失败: {e}")
         return error_response(
@@ -99,7 +100,9 @@ async def switch_page(
 
         # 🔑 获取浏览器会话
         entry = await live_service.get_or_create_browser_session_entry(
-            mid, int(browser_id), headless=False,
+            mid,
+            int(browser_id),
+            headless=False,
             is_vip=is_vip_user(browser_info.auth_info),
         )
 
@@ -115,9 +118,7 @@ async def switch_page(
         await page.bring_to_front()
 
         return success_response(
-            data={
-                "note": "如果使用 WebRTC 视频流，请重新调用 /webrtc/offer 接口"
-            }
+            data={"note": "如果使用 WebRTC 视频流，请重新调用 /webrtc/offer 接口"}
         )
 
     except Exception as e:
@@ -169,7 +170,9 @@ async def close_page(
 
         # 获取浏览器会话
         session = await live_service.get_or_create_browser_session_entry(
-            mid, int(browser_id), headless=False,
+            mid,
+            int(browser_id),
+            headless=False,
             is_vip=is_vip_user(browser_info.auth_info),
         )
 

@@ -1,6 +1,7 @@
 """
 插件 CRUD 服务
 """
+
 from app.models.workflow.models import FilterType, SortBy, SortOrder
 from typing import List
 from datetime import datetime
@@ -35,12 +36,13 @@ class PluginCrudService:
             valid_hook_types = [hook.value for hook in PluginHookEnum]
             if hook_type not in valid_hook_types:
                 raise ValueError(
-                    f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}")
+                    f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}"
+                )
 
             action_result = await session.exec(
                 select(CompositeActionModel).where(
-                    (CompositeActionModel.action_id == custom_action_id) &
-                    (CompositeActionModel.is_enabled == true())
+                    (CompositeActionModel.action_id == custom_action_id)
+                    & (CompositeActionModel.is_enabled == true())
                 )
             )
             action_model = action_result.first()
@@ -86,8 +88,8 @@ class PluginCrudService:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(UserPlugin).where(
-                    (UserPlugin.hook_type == hook_type) &
-                    (UserPlugin.is_enabled == true())
+                    (UserPlugin.hook_type == hook_type)
+                    & (UserPlugin.is_enabled == true())
                 )
             )
             return result.all()
@@ -119,18 +121,21 @@ class PluginCrudService:
         async with DatabaseSessionManager.async_session() as session:
             query = select(func.count(1))
             if filter_type == FilterType.PRIVATE:
-                query = query.where((UserPlugin.mid == str(mid))
-                                    & (UserPlugin.is_public == false()))
+                query = query.where(
+                    (UserPlugin.mid == str(mid)) & (UserPlugin.is_public == false())
+                )
             elif filter_type == FilterType.PUBLIC:
                 query = query.where(UserPlugin.is_public == true())
             elif filter_type == FilterType.COMMUNITY:
-                query = query.where((UserPlugin.mid != str(mid))
-                                    & (UserPlugin.is_public == true()))
+                query = query.where(
+                    (UserPlugin.mid != str(mid)) & (UserPlugin.is_public == true())
+                )
             elif filter_type == FilterType.VERIFIED:
                 query = query.where(UserPlugin.is_verified == true())
             else:
-                query = query.where((UserPlugin.mid == str(mid))
-                                    | (UserPlugin.is_public == true()))
+                query = query.where(
+                    (UserPlugin.mid == str(mid)) | (UserPlugin.is_public == true())
+                )
 
             result = await session.exec(query)
             return result.one()
@@ -142,26 +147,28 @@ class PluginCrudService:
         limit: int = 100,
         filter_type: FilterType = FilterType.ALL,
         sort_by: SortBy = SortBy.UPDATED_AT,
-        sort_order: SortOrder = SortOrder.DESC
+        sort_order: SortOrder = SortOrder.DESC,
     ) -> Sequence[UserPlugin]:
         async with DatabaseSessionManager.async_session() as session:
             query = select(UserPlugin)
             if filter_type == FilterType.PRIVATE:
-                query = query.where((UserPlugin.mid == str(mid))
-                                    & (UserPlugin.is_public == false()))
+                query = query.where(
+                    (UserPlugin.mid == str(mid)) & (UserPlugin.is_public == false())
+                )
             elif filter_type == FilterType.PUBLIC:
                 query = query.where(UserPlugin.is_public == true())
             elif filter_type == FilterType.COMMUNITY:
-                query = query.where((UserPlugin.mid != str(mid))
-                                    & (UserPlugin.is_public == true()))
+                query = query.where(
+                    (UserPlugin.mid != str(mid)) & (UserPlugin.is_public == true())
+                )
             elif filter_type == FilterType.VERIFIED:
                 query = query.where(UserPlugin.is_verified == true())
             else:
-                query = query.where((UserPlugin.mid == str(mid))
-                                    | (UserPlugin.is_public == true()))
+                query = query.where(
+                    (UserPlugin.mid == str(mid)) | (UserPlugin.is_public == true())
+                )
 
-            sort_field = getattr(UserPlugin, sort_by.value,
-                                 UserPlugin.updated_at)
+            sort_field = getattr(UserPlugin, sort_by.value, UserPlugin.updated_at)
             if sort_order == SortOrder.ASC:
                 query = query.order_by(col(sort_field).asc())
             else:
@@ -192,21 +199,29 @@ class PluginCrudService:
                 valid_hook_types = [hook.value for hook in PluginHookEnum]
                 if hook_type not in valid_hook_types:
                     raise ValueError(
-                        f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}")
+                        f"无效的钩子类型 '{hook_type}'。有效的钩子类型包括: {', '.join(valid_hook_types)}"
+                    )
                 model.hook_type = hook_type
 
-            if custom_action_id is not None and custom_action_id != model.custom_action_id:
+            if (
+                custom_action_id is not None
+                and custom_action_id != model.custom_action_id
+            ):
                 action_result = await session.exec(
                     select(CompositeActionModel).where(
-                        (CompositeActionModel.action_id == custom_action_id) &
-                        (CompositeActionModel.is_enabled == true())
+                        (CompositeActionModel.action_id == custom_action_id)
+                        & (CompositeActionModel.is_enabled == true())
                     )
                 )
                 action_model = action_result.first()
                 if not action_model:
-                    raise ValueError(f"自定义动作 '{custom_action_id}' 不存在或已被禁用")
+                    raise ValueError(
+                        f"自定义动作 '{custom_action_id}' 不存在或已被禁用"
+                    )
 
-                if not action_model.is_public and str(action_model.mid) != str(model.mid):
+                if not action_model.is_public and str(action_model.mid) != str(
+                    model.mid
+                ):
                     raise ValueError(f"无权使用私有的自定义动作 '{custom_action_id}'")
 
                 model.custom_action_id = custom_action_id
@@ -214,9 +229,9 @@ class PluginCrudService:
             if name is not None and name != model.name:
                 existing = await session.exec(
                     select(UserPlugin).where(
-                        (UserPlugin.mid == model.mid) &
-                        (UserPlugin.name == name) &
-                        (UserPlugin.id != id)
+                        (UserPlugin.mid == model.mid)
+                        & (UserPlugin.name == name)
+                        & (UserPlugin.id != id)
                     )
                 )
                 if existing.first():
@@ -256,8 +271,9 @@ class PluginCrudService:
     async def enable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(
-                    is_enabled=true(), updated_at=datetime.now())
+                update(UserPlugin)
+                .where(UserPlugin.id == id)
+                .values(is_enabled=true(), updated_at=datetime.now())
             )
             await session.commit()
             return True
@@ -266,14 +282,17 @@ class PluginCrudService:
     async def disable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserPlugin).where(UserPlugin.id == id).values(
-                    is_enabled=False, updated_at=datetime.now())
+                update(UserPlugin)
+                .where(UserPlugin.id == id)
+                .values(is_enabled=False, updated_at=datetime.now())
             )
             await session.commit()
             return True
 
     @staticmethod
-    async def list_forks(plugin_id: int, skip: int = 0, limit: int = 50) -> List[UserPlugin]:
+    async def list_forks(
+        plugin_id: int, skip: int = 0, limit: int = 50
+    ) -> List[UserPlugin]:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(UserPlugin)
@@ -285,7 +304,9 @@ class PluginCrudService:
             return result.all()
 
     @staticmethod
-    async def fork(id: int, target_mid: int, new_name: str | None = None) -> UserPlugin | None:
+    async def fork(
+        id: int, target_mid: int, new_name: str | None = None
+    ) -> UserPlugin | None:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(select(UserPlugin).where(UserPlugin.id == id))
             original = result.first()
@@ -301,8 +322,7 @@ class PluginCrudService:
 
             existing = await session.exec(
                 select(UserPlugin).where(
-                    (UserPlugin.mid == target_mid) & (
-                        UserPlugin.name == new_name)
+                    (UserPlugin.mid == target_mid) & (UserPlugin.name == new_name)
                 )
             )
             if existing.first():

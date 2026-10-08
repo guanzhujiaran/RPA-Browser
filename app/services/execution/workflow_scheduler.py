@@ -9,6 +9,7 @@
     - cron 表达式为 5 段（分 时 日 月 周），与 `SchedulerManager.add_cron_job` 一致
     - 调度回调内的异常全部收敛，绝不打断调度器线程
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -62,7 +63,9 @@ def build_cron_trigger(cron_expression: str) -> CronTrigger:
     )
 
 
-def compute_next_run(cron_expression: str, now: datetime | None = None) -> datetime | None:
+def compute_next_run(
+    cron_expression: str, now: datetime | None = None
+) -> datetime | None:
     """推导下次触发时间（仅用于展示 / 排障，失败返回 None）
 
     注意：apscheduler 返回带时区的 datetime，而库内其余时间字段均为本地 naive，
@@ -77,7 +80,9 @@ def compute_next_run(cron_expression: str, now: datetime | None = None) -> datet
             next_run = next_run.astimezone().replace(tzinfo=None)
         return next_run
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[WorkflowScheduler] 推导下次运行时间失败: {cron_expression}, {exc}")
+        logger.warning(
+            f"[WorkflowScheduler] 推导下次运行时间失败: {cron_expression}, {exc}"
+        )
         return None
 
 
@@ -153,9 +158,7 @@ async def register_all_workflow_jobs() -> int:
     for workflow in workflows:
         if await sync_workflow_job(workflow):
             registered += 1
-    logger.info(
-        f"✅ 工作流定时任务注册完成: {registered}/{len(workflows)} 个已注册"
-    )
+    logger.info(f"✅ 工作流定时任务注册完成: {registered}/{len(workflows)} 个已注册")
     return registered
 
 
@@ -172,7 +175,9 @@ async def run_workflow_job(workflow_id: str) -> None:
             return
 
         if not workflow.is_enabled:
-            logger.info(f"[WorkflowScheduler] 工作流已停用，跳过本次执行: {workflow_id}")
+            logger.info(
+                f"[WorkflowScheduler] 工作流已停用，跳过本次执行: {workflow_id}"
+            )
             return
 
         await run_workflow(workflow, trigger_source=WorkflowRunTriggerEnum.SCHEDULE)

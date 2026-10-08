@@ -9,6 +9,7 @@ from app.models.runtime.control import BrowserCleanupPolicy
 
 class AdminSessionInfo(SQLModel):
     """管理员会话信息"""
+
     mid: int = Field(description="用户ID")
     browser_id: int = Field(description="浏览器实例ID")
     session_key: str = Field(description="会话键")
@@ -22,12 +23,14 @@ class AdminSessionInfo(SQLModel):
 
 class AdminAllSessionsResponse(SQLModel):
     """管理员获取所有会话响应"""
+
     total: int = Field(description="总会话数")
     sessions: list[AdminSessionInfo] = Field(description="会话列表")
 
 
 class AdminLiveStreamInfo(SQLModel):
     """管理员直播流信息"""
+
     session_key: str = Field(description="会话键")
     mid: int = Field(description="用户ID")
     browser_id: int = Field(description="浏览器实例ID")
@@ -37,6 +40,7 @@ class AdminLiveStreamInfo(SQLModel):
 
 class AdminWebRTCConnectionInfo(SQLModel):
     """管理员 WebRTC 连接信息"""
+
     connection_key: str = Field(description="连接键")
     mid: int = Field(description="用户ID")
     browser_id: int = Field(description="浏览器实例ID")
@@ -45,21 +49,26 @@ class AdminWebRTCConnectionInfo(SQLModel):
     connection_state: str = Field(description="连接状态")
 
 
-
 class BrowserSessionConfigResponse(SQLModel):
     """浏览器会话配置响应"""
+
     auto_cleanup: bool = Field(description="是否启用自动清理")
     max_idle_time: int = Field(description="最大闲置时间（秒）")
     cleanup_interval: int = Field(description="清理检查间隔（秒）")
-    expiration_time: int | None = Field(None, description="会话过期时间（秒），None表示不过期")
+    expiration_time: int | None = Field(
+        None, description="会话过期时间（秒），None表示不过期"
+    )
 
 
 class UpdateBrowserSessionConfigRequest(SQLModel):
     """更新浏览器会话配置请求"""
+
     auto_cleanup: bool | None = Field(None, description="是否启用自动清理")
     max_idle_time: int | None = Field(None, description="最大闲置时间（秒）", ge=60)
     cleanup_interval: int | None = Field(None, description="清理检查间隔（秒）", ge=60)
-    expiration_time: int | None = Field(None, description="会话过期时间（秒），None表示不过期", ge=300)
+    expiration_time: int | None = Field(
+        None, description="会话过期时间（秒），None表示不过期", ge=300
+    )
 
 
 __all__ = [

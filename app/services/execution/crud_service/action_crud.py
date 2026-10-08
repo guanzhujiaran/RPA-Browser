@@ -1,13 +1,19 @@
 """
 操作 CRUD 服务
 """
+
 from sqlalchemy import or_, and_, true
 from typing import Any, Dict, List
 from datetime import datetime
 import uuid
 from sqlmodel import select, delete
 
-from app.models.database.workflow.models import CompositeActionModel, BuiltinActionType, TagModel, CompositeActionTagLink
+from app.models.database.workflow.models import (
+    CompositeActionModel,
+    BuiltinActionType,
+    TagModel,
+    CompositeActionTagLink,
+)
 from app.models.execution.action_params import BaseWorkflowStep
 from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -70,8 +76,12 @@ class ActionCrudService:
                 )
             )
             models = result.all()
-            model_map: Dict[str, CompositeActionModel] = {m.action_id: m for m in models}
-            tags_map = await ActionCrudService._get_tags_for_actions(session, [m.id for m in models])
+            model_map: Dict[str, CompositeActionModel] = {
+                m.action_id: m for m in models
+            }
+            tags_map = await ActionCrudService._get_tags_for_actions(
+                session, [m.id for m in models]
+            )
 
         detail_map: Dict[str, Dict] = {}
         for aid in deduped:
@@ -86,7 +96,9 @@ class ActionCrudService:
                 "action_id": model.action_id,
                 "name": model.name,
                 "version": model.version,
-                "action_type": str(model.action_type.value) if hasattr(model.action_type, "value") else str(model.action_type),
+                "action_type": str(model.action_type.value)
+                if hasattr(model.action_type, "value")
+                else str(model.action_type),
                 "description": model.description or "",
                 "mid": model.mid,
                 "tags": tags_map.get(model.id, []),
@@ -120,7 +132,9 @@ class ActionCrudService:
                 for key in ("TrueBranch", "FalseBranch", "loopBranch"):
                     branch = params.get(key)
                     if isinstance(branch, list):
-                        ActionCrudService._annotate_steps_with_action_details(branch, detail_map)
+                        ActionCrudService._annotate_steps_with_action_details(
+                            branch, detail_map
+                        )
 
     @staticmethod
     async def _get_tags_for_action(session, action_db_id: int) -> list[str]:
@@ -133,7 +147,9 @@ class ActionCrudService:
         return list(result.all())
 
     @staticmethod
-    async def _get_tags_for_actions(session, action_db_ids: list[int]) -> dict[int, list[str]]:
+    async def _get_tags_for_actions(
+        session, action_db_ids: list[int]
+    ) -> dict[int, list[str]]:
         """批量获取多个动作的标签列表"""
         if not action_db_ids:
             return {}
@@ -151,8 +167,9 @@ class ActionCrudService:
     async def _set_tags_for_action(session, action_db_id: int, tags: list[str]) -> None:
         """设置动作的标签（替换模式：先删旧关联，再建新关联）"""
         await session.exec(
-            delete(CompositeActionTagLink)
-            .where(CompositeActionTagLink.composite_action_id == action_db_id)
+            delete(CompositeActionTagLink).where(
+                CompositeActionTagLink.composite_action_id == action_db_id
+            )
         )
         for tag_name in tags:
             tag_name = tag_name.strip()
@@ -185,9 +202,11 @@ class ActionCrudService:
             return await ActionCrudService._get_tags_for_actions(session, action_db_ids)
 
     @staticmethod
-    async def validate_steps_referenced_actions(steps: List[Dict], mid: int | str) -> None:
+    async def validate_steps_referenced_actions(
+        steps: List[Dict], mid: int | str
+    ) -> None:
         """校验 steps 中所有引用的 ca_ 操作是否可访问（不允许越权）
-        
+
         在执行路径中调用，提前在校验阶段拦截越权引用。
 
         Raises:
@@ -232,17 +251,17 @@ class ActionCrudService:
         # 同时将 Pydantic 模型实例转为 dict，避免 JSON 序列化错误
         def _normalize_step(s: Dict | BaseWorkflowStep) -> dict:
             if not isinstance(s, dict):
-                if hasattr(s, 'model_dump'):
-                    s = s.model_dump(exclude_none=True, mode='json')
+                if hasattr(s, "model_dump"):
+                    s = s.model_dump(exclude_none=True, mode="json")
                 else:
                     s = dict(s) if s else {}
-            if 'action_type' not in s and 'action_id' in s:
-                if s['action_id'].startswith('ca_'):
-                    s['action_type'] = BuiltinActionType.COMPOSITE.value
+            if "action_type" not in s and "action_id" in s:
+                if s["action_id"].startswith("ca_"):
+                    s["action_type"] = BuiltinActionType.COMPOSITE.value
                 else:
-                    s['action_type'] = s['action_id']
-            if 'children' in s and s['children']:
-                s['children'] = [_normalize_step(c) for c in s['children']]
+                    s["action_type"] = s["action_id"]
+            if "children" in s and s["children"]:
+                s["children"] = [_normalize_step(c) for c in s["children"]]
             return s
 
         normalized_steps = [_normalize_step(s) for s in (steps or [])]
@@ -250,8 +269,8 @@ class ActionCrudService:
         async with DatabaseSessionManager.async_session() as session:
             existing = await session.exec(
                 select(CompositeActionModel).where(
-                    (CompositeActionModel.mid == mid) & (
-                        CompositeActionModel.name == name)
+                    (CompositeActionModel.mid == mid)
+                    & (CompositeActionModel.name == name)
                 )
             )
             if existing.first():
@@ -297,7 +316,9 @@ class ActionCrudService:
     @staticmethod
     async def get_by_id(id: int) -> CompositeActionModel | None:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == id))
+            result = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == id)
+            )
             return result.first()
 
     @staticmethod
@@ -306,7 +327,8 @@ class ActionCrudService:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(CompositeActionModel).where(
-                    CompositeActionModel.action_id == action_id)
+                    CompositeActionModel.action_id == action_id
+                )
             )
             return result.first()
 
@@ -317,20 +339,22 @@ class ActionCrudService:
             return {}
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(CompositeActionModel.action_id, CompositeActionModel.name)
-                .where(CompositeActionModel.action_id.in_(action_ids))
+                select(CompositeActionModel.action_id, CompositeActionModel.name).where(
+                    CompositeActionModel.action_id.in_(action_ids)
+                )
             )
             return {row[0]: row[1] for row in result.all()}
 
     @staticmethod
-    def _apply_search_filters(query, name: str | None = None, tag: str | None = None, tag_exact: bool = True):
+    def _apply_search_filters(
+        query, name: str | None = None, tag: str | None = None, tag_exact: bool = True
+    ):
         """为查询添加 name 模糊搜索和 tag 筛选条件"""
         if name:
             query = query.where(CompositeActionModel.name.ilike(f"%{name}%"))
         if tag:
-            tag_subquery = (
-                select(CompositeActionTagLink.composite_action_id)
-                .join(TagModel, TagModel.id == CompositeActionTagLink.tag_id)
+            tag_subquery = select(CompositeActionTagLink.composite_action_id).join(
+                TagModel, TagModel.id == CompositeActionTagLink.tag_id
             )
             if tag_exact:
                 tag_subquery = tag_subquery.where(TagModel.name == tag)
@@ -356,13 +380,17 @@ class ActionCrudService:
             elif filter_type == "public":
                 query = query.where(CompositeActionModel.is_public == true())
             elif filter_type == "community":
-                query = query.where((CompositeActionModel.mid != str(mid)) & (
-                    CompositeActionModel.is_public == true()))
+                query = query.where(
+                    (CompositeActionModel.mid != str(mid))
+                    & (CompositeActionModel.is_public == true())
+                )
             elif filter_type == "verified":
                 query = query.where(CompositeActionModel.is_verified == true())
             else:
-                query = query.where((CompositeActionModel.mid == str(mid)) | (
-                    CompositeActionModel.is_public == true()))
+                query = query.where(
+                    (CompositeActionModel.mid == str(mid))
+                    | (CompositeActionModel.is_public == true())
+                )
 
             query = ActionCrudService._apply_search_filters(query, name, tag, tag_exact)
             result = await session.exec(query)
@@ -389,18 +417,23 @@ class ActionCrudService:
             elif filter_type == "public":
                 query = query.where(CompositeActionModel.is_public == true())
             elif filter_type == "community":
-                query = query.where((CompositeActionModel.mid != str(mid)) & (
-                    CompositeActionModel.is_public == true()))
+                query = query.where(
+                    (CompositeActionModel.mid != str(mid))
+                    & (CompositeActionModel.is_public == true())
+                )
             elif filter_type == "verified":
                 query = query.where(CompositeActionModel.is_verified == true())
             else:
-                query = query.where((CompositeActionModel.mid == str(mid)) | (
-                    CompositeActionModel.is_public == true()))
+                query = query.where(
+                    (CompositeActionModel.mid == str(mid))
+                    | (CompositeActionModel.is_public == true())
+                )
 
             query = ActionCrudService._apply_search_filters(query, name, tag, tag_exact)
 
-            sort_field = getattr(CompositeActionModel,
-                                 sort_by, CompositeActionModel.updated_at)
+            sort_field = getattr(
+                CompositeActionModel, sort_by, CompositeActionModel.updated_at
+            )
             if sort_order == "asc":
                 query = query.order_by(col(sort_field).asc())
             else:
@@ -437,7 +470,9 @@ class ActionCrudService:
         log_retention_days: int | None = None,
     ) -> CompositeActionModel | None:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == id))
+            result = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == id)
+            )
             model = result.first()
             if not model:
                 return None
@@ -445,9 +480,9 @@ class ActionCrudService:
             if name is not None and name != model.name:
                 existing = await session.exec(
                     select(CompositeActionModel).where(
-                        (CompositeActionModel.mid == model.mid) &
-                        (CompositeActionModel.name == name) &
-                        (CompositeActionModel.id != id)
+                        (CompositeActionModel.mid == model.mid)
+                        & (CompositeActionModel.name == name)
+                        & (CompositeActionModel.id != id)
                     )
                 )
                 if existing.first():
@@ -505,7 +540,9 @@ class ActionCrudService:
     @staticmethod
     async def delete(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == id))
+            result = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == id)
+            )
             model = result.first()
             if not model:
                 return False
@@ -518,8 +555,9 @@ class ActionCrudService:
                 )
 
             await session.exec(
-                delete(CompositeActionTagLink)
-                .where(CompositeActionTagLink.composite_action_id == model.id)
+                delete(CompositeActionTagLink).where(
+                    CompositeActionTagLink.composite_action_id == model.id
+                )
             )
 
             await session.delete(model)
@@ -529,7 +567,9 @@ class ActionCrudService:
     @staticmethod
     async def enable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == id))
+            result = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == id)
+            )
             model = result.first()
             if not model:
                 return False
@@ -541,7 +581,9 @@ class ActionCrudService:
     @staticmethod
     async def disable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == id))
+            result = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == id)
+            )
             model = result.first()
             if not model:
                 return False
@@ -551,7 +593,9 @@ class ActionCrudService:
             return True
 
     @staticmethod
-    async def list_forks(action_id: int, skip: int = 0, limit: int = 50) -> List[CompositeActionModel]:
+    async def list_forks(
+        action_id: int, skip: int = 0, limit: int = 50
+    ) -> List[CompositeActionModel]:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(CompositeActionModel)
@@ -563,9 +607,13 @@ class ActionCrudService:
             return result.all()
 
     @staticmethod
-    async def fork(id: int, target_mid: int, new_name: str | None = None) -> CompositeActionModel | None:
+    async def fork(
+        id: int, target_mid: int, new_name: str | None = None
+    ) -> CompositeActionModel | None:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == id))
+            result = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == id)
+            )
             original = result.first()
             if not original:
                 return None
@@ -579,8 +627,8 @@ class ActionCrudService:
 
             existing = await session.exec(
                 select(CompositeActionModel).where(
-                    (CompositeActionModel.mid == target_mid) & (
-                        CompositeActionModel.name == new_name)
+                    (CompositeActionModel.mid == target_mid)
+                    & (CompositeActionModel.name == new_name)
                 )
             )
             if existing.first():
@@ -597,8 +645,9 @@ class ActionCrudService:
                 icon_id=original.icon_id,
                 timeout=original.timeout,
                 is_composite=original.is_composite,
-                parameters_schema=original.parameters_schema.copy(
-                ) if original.parameters_schema else [],
+                parameters_schema=original.parameters_schema.copy()
+                if original.parameters_schema
+                else [],
                 steps=original.steps.copy() if original.steps else [],
                 input_vars=original.input_vars.copy() if original.input_vars else [],
                 output_vars=original.output_vars.copy() if original.output_vars else [],
@@ -615,15 +664,20 @@ class ActionCrudService:
 
             session.add(new_model)
             await session.exec(
-                update(CompositeActionModel).where(CompositeActionModel.id == original.id).values(
-                    forks_count=CompositeActionModel.forks_count + 1)
+                update(CompositeActionModel)
+                .where(CompositeActionModel.id == original.id)
+                .values(forks_count=CompositeActionModel.forks_count + 1)
             )
 
             await session.commit()
             await session.refresh(new_model)
-            original_tags = await ActionCrudService._get_tags_for_action(session, original.id)
+            original_tags = await ActionCrudService._get_tags_for_action(
+                session, original.id
+            )
             if original_tags:
-                await ActionCrudService._set_tags_for_action(session, new_model.id, original_tags)
+                await ActionCrudService._set_tags_for_action(
+                    session, new_model.id, original_tags
+                )
                 await session.commit()
                 await session.refresh(new_model)
             return new_model
@@ -634,8 +688,14 @@ class ActionCrudService:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(TagModel.name)
-                .join(CompositeActionTagLink, CompositeActionTagLink.tag_id == TagModel.id)
-                .join(CompositeActionModel, CompositeActionModel.id == CompositeActionTagLink.composite_action_id)
+                .join(
+                    CompositeActionTagLink, CompositeActionTagLink.tag_id == TagModel.id
+                )
+                .join(
+                    CompositeActionModel,
+                    CompositeActionModel.id
+                    == CompositeActionTagLink.composite_action_id,
+                )
                 .where(CompositeActionModel.mid == str(mid))
                 .distinct()
             )
@@ -649,11 +709,15 @@ class ActionCrudService:
         elif filter_type == "public":
             return CompositeActionModel.is_public == true()
         elif filter_type == "community":
-            return (CompositeActionModel.mid != str(mid)) & (CompositeActionModel.is_public == true())
+            return (CompositeActionModel.mid != str(mid)) & (
+                CompositeActionModel.is_public == true()
+            )
         elif filter_type == "verified":
             return CompositeActionModel.is_verified == true()
         else:
-            return (CompositeActionModel.mid == str(mid)) | (CompositeActionModel.is_public == true())
+            return (CompositeActionModel.mid == str(mid)) | (
+                CompositeActionModel.is_public == true()
+            )
 
     @staticmethod
     async def search_tags_by_user(
@@ -671,15 +735,25 @@ class ActionCrudService:
 
         async with DatabaseSessionManager.async_session() as session:
             query = (
-                select(TagModel.name, func.count(CompositeActionModel.id).label("count"))
-                .join(CompositeActionTagLink, CompositeActionTagLink.tag_id == TagModel.id)
-                .join(CompositeActionModel, CompositeActionModel.id == CompositeActionTagLink.composite_action_id)
+                select(
+                    TagModel.name, func.count(CompositeActionModel.id).label("count")
+                )
+                .join(
+                    CompositeActionTagLink, CompositeActionTagLink.tag_id == TagModel.id
+                )
+                .join(
+                    CompositeActionModel,
+                    CompositeActionModel.id
+                    == CompositeActionTagLink.composite_action_id,
+                )
                 .where(ActionCrudService._apply_filter_type(mid, filter_type))
                 .group_by(TagModel.name)
             )
             if keyword:
                 query = query.where(TagModel.name.ilike(f"%{keyword}%"))
-            query = query.order_by(func.count(CompositeActionModel.id).desc()).limit(limit)
+            query = query.order_by(func.count(CompositeActionModel.id).desc()).limit(
+                limit
+            )
             result = await session.exec(query)
             return [{"name": row[0], "count": row[1]} for row in result.all()]
 

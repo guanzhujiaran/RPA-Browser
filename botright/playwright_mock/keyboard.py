@@ -24,5 +24,7 @@ class Keyboard(PlaywrightKeyboard):
         delay = int(delay)
 
         for char in text:
-            await self._origin_type(text=char, delay=random.randint(delay - 50, delay + 50))
+            await self._origin_type(
+                text=char, delay=random.randint(delay - 50, delay + 50)
+            )
         await self._page.wait_for_timeout(random.randint(4, 8) * 100)

@@ -22,6 +22,7 @@ from app.services.RPA_browser.browser_session_pool.session_pool_model import (
 @dataclass
 class BrowserSessionEntry:
     """浏览器会话条目"""
+
     mid: int
     browser_id: int
     browser_session: WebRTCEnabledSession
@@ -32,8 +33,7 @@ class BrowserSessionEntry:
     current_operation_priority: OperationPriority = OperationPriority.NORMAL
     automation_paused_time: int = 0
     manual_operation_start_time: int = 0
-    cleanup_policy: BrowserCleanupPolicy = field(
-        default_factory=BrowserCleanupPolicy)
+    cleanup_policy: BrowserCleanupPolicy = field(default_factory=BrowserCleanupPolicy)
     created_at: int = field(default_factory=lambda: int(time.time()))
     lifecycle_state: SessionLifecycleState = SessionLifecycleState.ACTIVE
     expires_at: int | None = None
@@ -88,7 +88,9 @@ class BrowserSessionEntry:
 
         # 闲置关实例：一旦进入宽限期，以「宽限截止」作为临期时间
         if self.terminate_scheduled_at:
-            calculated = self.terminate_scheduled_at + settings.browser_session_terminate_grace
+            calculated = (
+                self.terminate_scheduled_at + settings.browser_session_terminate_grace
+            )
         # 未进入宽限时，给出预计的关实例时间
         elif self.is_idle and self.no_active_connections:
             idle_expires = self.last_activity + policy.max_idle_time
@@ -96,7 +98,6 @@ class BrowserSessionEntry:
                 calculated = idle_expires
 
         return calculated
-
 
     @property
     def browser_running(self) -> bool:

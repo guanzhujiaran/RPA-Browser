@@ -29,7 +29,11 @@ from sqlalchemy import func, select
 
 from datetime import datetime
 
-from bili_common.models.response import StandardResponse, error_response, success_response
+from bili_common.models.response import (
+    StandardResponse,
+    error_response,
+    success_response,
+)
 from bili_common.rpc.base import rpa_rpc_routing_key_for
 from bili_common.rpc.rpa import (
     AttachTagParams,
@@ -55,7 +59,11 @@ from bili_common.rpc.rpa import (
 from bili_common.rpc.safe import rpc_safe
 
 from app.config import settings
-from app.models.database.admin.models import ApprovalRequest, ResourceTag, ResourceTagRel
+from app.models.database.admin.models import (
+    ApprovalRequest,
+    ResourceTag,
+    ResourceTagRel,
+)
 from app.models.database.browser.info import UserBrowserInfo
 from app.models.database.workflow.models import (
     CompositeActionModel,
@@ -77,16 +85,22 @@ async def _load_resource(biz_type: str, biz_id: int):
     """按 bizType 加载资源实体（None=类型不支持或资源不存在）。"""
     async with DatabaseSessionManager.async_session() as session:
         if biz_type == "rpa_action":
-            r = await session.exec(select(CompositeActionModel).where(CompositeActionModel.id == biz_id))
+            r = await session.exec(
+                select(CompositeActionModel).where(CompositeActionModel.id == biz_id)
+            )
             return r.first()
         if biz_type == "rpa_workflow":
-            r = await session.exec(select(UserWorkflow).where(UserWorkflow.id == biz_id))
+            r = await session.exec(
+                select(UserWorkflow).where(UserWorkflow.id == biz_id)
+            )
             return r.first()
         if biz_type == "rpa_plugin":
             r = await session.exec(select(UserPlugin).where(UserPlugin.id == biz_id))
             return r.first()
         if biz_type == "rpa_browser":
-            r = await session.exec(select(UserBrowserInfo).where(UserBrowserInfo.browser_id == biz_id))
+            r = await session.exec(
+                select(UserBrowserInfo).where(UserBrowserInfo.browser_id == biz_id)
+            )
             return r.first()
         if biz_type == "rpa_tag":
             r = await session.exec(select(ResourceTag).where(ResourceTag.id == biz_id))
@@ -118,7 +132,11 @@ def _to_detail(biz_type: str, biz_id: int, resource) -> ResourceDetail:
     author = getattr(resource, "original_mid", None) or getattr(resource, "mid", None)
     # browser 用 custom_name，作者取 mid
     if biz_type == "rpa_browser":
-        name = getattr(resource, "custom_name", None) or getattr(resource, "name", None) or ""
+        name = (
+            getattr(resource, "custom_name", None)
+            or getattr(resource, "name", None)
+            or ""
+        )
         author = getattr(resource, "mid", None)
     # tag 无 original_mid/mid，作者取 created_by（供 be-message 驳回通知）
     if biz_type == "rpa_tag":
@@ -244,13 +262,17 @@ async def rpc_review_resource(
     biz_type = params.bizType
     if params.decision not in ("approved", "rejected"):
         return success_response(
-            data=ReviewResourceResult(success=False, message="decision 必须为 approved / rejected")
+            data=ReviewResourceResult(
+                success=False, message="decision 必须为 approved / rejected"
+            )
         )
     # rpa_tag：标签不走 rpa_approval 发布审批单，直接置审核状态 + 上架时间
     if biz_type == "rpa_tag":
         async with DatabaseSessionManager.async_session() as session:
             tag = (
-                await session.exec(select(ResourceTag).where(ResourceTag.id == params.bizId))
+                await session.exec(
+                    select(ResourceTag).where(ResourceTag.id == params.bizId)
+                )
             ).first()
             if tag is None:
                 return success_response(
@@ -344,12 +366,16 @@ async def rpc_create_tag(
     async with DatabaseSessionManager.async_session() as session:
         name = (params.name or "").strip()
         if not name:
-            return success_response(data=CreateTagResult(success=False, message="标签名不能为空"))
+            return success_response(
+                data=CreateTagResult(success=False, message="标签名不能为空")
+            )
         existing = (
             await session.exec(select(ResourceTag).where(ResourceTag.name == name))
         ).first()
         if existing is not None:
-            return success_response(data=CreateTagResult(success=False, message="标签名称已存在"))
+            return success_response(
+                data=CreateTagResult(success=False, message="标签名称已存在")
+            )
         tag = ResourceTag(
             name=name,
             color=params.color or "#409EFF",
@@ -360,8 +386,12 @@ async def rpc_create_tag(
         session.add(tag)
         await session.commit()
         await session.refresh(tag)
-    logger.info(f"[RpaRpcServer] create_tag: id={tag.id} name={name} createdMid={params.createdMid}")
-    return success_response(data=CreateTagResult(success=True, id=tag.id), msg="标签已提交，待审核")
+    logger.info(
+        f"[RpaRpcServer] create_tag: id={tag.id} name={name} createdMid={params.createdMid}"
+    )
+    return success_response(
+        data=CreateTagResult(success=True, id=tag.id), msg="标签已提交，待审核"
+    )
 
 
 @broker.subscriber(rpa_rpc_routing_key_for(RpaRpcMethodName.ATTACH_TAG))
@@ -372,13 +402,19 @@ async def rpc_attach_tag(
     """为资源关联标签（attach_tag）；仅可关联 `normal` 标签。"""
     async with DatabaseSessionManager.async_session() as session:
         tag = (
-            await session.exec(select(ResourceTag).where(ResourceTag.id == params.tagId))
+            await session.exec(
+                select(ResourceTag).where(ResourceTag.id == params.tagId)
+            )
         ).first()
         if tag is None:
-            return success_response(data=AttachTagResult(success=False, message="标签不存在"))
+            return success_response(
+                data=AttachTagResult(success=False, message="标签不存在")
+            )
         if tag.audit_status != "normal":
             return success_response(
-                data=AttachTagResult(success=False, message="该标签尚未审核通过，暂不可关联")
+                data=AttachTagResult(
+                    success=False, message="该标签尚未审核通过，暂不可关联"
+                )
             )
         existing = (
             await session.exec(
@@ -401,7 +437,9 @@ async def rpc_attach_tag(
         )
         session.add(rel)
         await session.commit()
-    logger.info(f"[RpaRpcServer] attach_tag: tagId={params.tagId} target={params.targetType}/{params.targetId}")
+    logger.info(
+        f"[RpaRpcServer] attach_tag: tagId={params.tagId} target={params.targetType}/{params.targetId}"
+    )
     return success_response(data=AttachTagResult(success=True), msg="已关联标签")
 
 
@@ -422,10 +460,14 @@ async def rpc_detach_tag(
             )
         ).first()
         if rel is None:
-            return success_response(data=DetachTagResult(success=False, message="关联不存在"))
+            return success_response(
+                data=DetachTagResult(success=False, message="关联不存在")
+            )
         await session.delete(rel)
         await session.commit()
-    logger.info(f"[RpaRpcServer] detach_tag: tagId={params.tagId} target={params.targetType}/{params.targetId}")
+    logger.info(
+        f"[RpaRpcServer] detach_tag: tagId={params.tagId} target={params.targetType}/{params.targetId}"
+    )
     return success_response(data=DetachTagResult(success=True), msg="已移除标签")
 
 

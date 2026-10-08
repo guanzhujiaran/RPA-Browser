@@ -3,7 +3,13 @@ from __future__ import annotations
 from bili_common.models import IntEnumAutoDoc, StrEnumAutoDoc
 import contextlib
 from typing import Any, Dict, Generic, Literal, Type, TypeVar
-from pydantic import Field, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import (
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from sqlmodel import SQLModel
 
 from app.models.execution.enums import (
@@ -30,13 +36,15 @@ from app.models.execution.rpc_method_params import (
 
 class OnErrorEnum(StrEnumAutoDoc):
     """步骤失败时的处理策略"""
-    STOP = "stop"          # 停止执行
+
+    STOP = "stop"  # 停止执行
     CONTINUE = "continue"  # 忽略错误继续
-    RETRY = "retry"        # 重试后停止
+    RETRY = "retry"  # 重试后停止
 
 
 class BuiltinActionDesc(StrEnumAutoDoc):
     """内置操作描述"""
+
     CLICK = "点击元素"
     INPUT = "输入文本"
     WAIT = "等待元素出现"
@@ -49,6 +57,8 @@ class BuiltinActionDesc(StrEnumAutoDoc):
     GET_TEXT = "获取元素文本"
     GET_WINDOW = "获取窗口属性"
     FETCH_EXTERNAL_DATA = "获取外部数据"
+    MARK_RESOURCE_RESULT = "记录资源处理结果"
+    RANDOM_PICK = "随机取值（从列表中随机选取）"
     PRINT = "打印变量替换后的参数（仅调试用，不执行实际操作）"
 
     IF_ELSE = "根据条件执行 true/false 分支"
@@ -58,6 +68,7 @@ class BuiltinActionDesc(StrEnumAutoDoc):
 
 class BuiltinActionName(StrEnumAutoDoc):
     """内置操作名称"""
+
     CLICK = "点击"
     INPUT = "输入"
     WAIT = "等待"
@@ -73,6 +84,8 @@ class BuiltinActionName(StrEnumAutoDoc):
     GET_TEXT = "获取文本"
     GET_WINDOW = "获取窗口"
     FETCH_EXTERNAL_DATA = "获取外部数据"
+    MARK_RESOURCE_RESULT = "记录资源结果"
+    RANDOM_PICK = "随机取值"
     PRINT = "打印参数"
 
 
@@ -93,22 +106,24 @@ class BuiltinActionIconId(IntEnumAutoDoc):
     """
 
     # 最终形态 = `s_33` 内该角色的 `i_*_<角色>_3.png`
-    CLICK = 28                # 冲田总司（粉发 + 武士刀）
-    INPUT = 65                # 阿尔托莉雅·卡斯特（白甲金冠 + 蓝缎带）
-    WAIT = 87                 # 摩根（白发黑冠）
-    SCROLL = 68               # 雨之魔女梣（白发白裙 + 花饰）
-    NAVIGATE = 3              # 阿尔托莉雅·潘德拉贡（白甲 + 王冠）
-    SCREENSHOT = 112          # 谜之女主角XX（蓝帽科幻）
-    LLM = 101                 # 梅塔特隆·贞德（白金翼装甲）
-    HOVER = 7                 # 阿尔托莉雅·潘德拉贡〔Alter〕（黑裙）
-    NEW_PAGE = 11             # 阿尔托莉雅·潘德拉贡〔Lily〕（白裙黑结）
-    GET_TEXT = 75             # 格蕾（灰斗篷 + 羽领）
-    GET_WINDOW = 14           # 尼禄·克劳狄乌斯（红白礼服 + 狮首）
+    CLICK = 28  # 冲田总司（粉发 + 武士刀）
+    INPUT = 65  # 阿尔托莉雅·卡斯特（白甲金冠 + 蓝缎带）
+    WAIT = 87  # 摩根（白发黑冠）
+    SCROLL = 68  # 雨之魔女梣（白发白裙 + 花饰）
+    NAVIGATE = 3  # 阿尔托莉雅·潘德拉贡（白甲 + 王冠）
+    SCREENSHOT = 112  # 谜之女主角XX（蓝帽科幻）
+    LLM = 101  # 梅塔特隆·贞德（白金翼装甲）
+    HOVER = 7  # 阿尔托莉雅·潘德拉贡〔Alter〕（黑裙）
+    NEW_PAGE = 11  # 阿尔托莉雅·潘德拉贡〔Lily〕（白裙黑结）
+    GET_TEXT = 75  # 格蕾（灰斗篷 + 羽领）
+    GET_WINDOW = 14  # 尼禄·克劳狄乌斯（红白礼服 + 狮首）
     FETCH_EXTERNAL_DATA = 121  # 所多玛之兽／德拉科（黑甲红角）
-    PRINT = 41                # 贞德（银冠 + 蓝绿礼服）
-    LOOP = 23                 # 莫德雷德（红装马尾）
-    COMPOSITE = 115           # 谜之偶像X〔Alter〕（霓虹绿 + 眼镜）
-    IF_ELSE = 84              # 贞德〔Alter〕（白发黑红）
+    MARK_RESOURCE_RESULT = 122  # 通用去重回写（前端回落内置图标即可）
+    RANDOM_PICK = 124  # 随机取值（前端回落内置图标即可）
+    PRINT = 41  # 贞德（银冠 + 蓝绿礼服）
+    LOOP = 23  # 莫德雷德（红装马尾）
+    COMPOSITE = 115  # 谜之偶像X〔Alter〕（霓虹绿 + 眼镜）
+    IF_ELSE = 84  # 贞德〔Alter〕（白发黑红）
 
 
 # 内置操作默认图标的系列编号：**复用现有图库系列** `Saber脸/s_33_FGO状态图`
@@ -120,6 +135,7 @@ BUILTIN_ACTION_ICON_SERIES = 33
 
 class BuiltinActionType(StrEnumAutoDoc):
     """内置操作类型"""
+
     CLICK = "click"
     INPUT = "input"
     WAIT = "wait"
@@ -132,6 +148,8 @@ class BuiltinActionType(StrEnumAutoDoc):
     GET_TEXT = "get_text"
     GET_WINDOW = "get_window"
     FETCH_EXTERNAL_DATA = "fetch_external_data"
+    MARK_RESOURCE_RESULT = "mark_resource_result"
+    RANDOM_PICK = "random_pick"
     PRINT = "print"
 
     LOOP = "loop"
@@ -170,15 +188,17 @@ class BuiltinActionType(StrEnumAutoDoc):
         params_model = self.params_model
         json_schema: dict[str, Any] = {}
         parameters: list[ActionParameter] = []
-        if hasattr(params_model, 'model_json_schema'):
+        if hasattr(params_model, "model_json_schema"):
             with contextlib.suppress(Exception):
                 json_schema = params_model.model_json_schema()
-                properties = json_schema.get('properties', {})
+                properties = json_schema.get("properties", {})
                 for prop_name, prop_schema in properties.items():
-                    parameters.append(ActionParameter(
-                        name=prop_name,
-                        json_schema=prop_schema,
-                    ))
+                    parameters.append(
+                        ActionParameter(
+                            name=prop_name,
+                            json_schema=prop_schema,
+                        )
+                    )
         icon_series, icon_id = self.icon
         return ActionMetadata(
             id=self,
@@ -194,24 +214,28 @@ class BuiltinActionType(StrEnumAutoDoc):
 
 class ActionParameter(SQLModel):
     """操作参数定义（内部使用）"""
+
     name: str = Field(description="参数名称")
     json_schema: Dict = Field(description="完整的 JSON Schema")
 
 
 class ActionMetadata(SQLModel):
     """操作元数据（内部使用）"""
+
     id: BuiltinActionType = Field(description="操作ID")
     name: str = Field(description="操作名称")
     type: BuiltinActionType = Field(description="操作类型")
     description: str = Field(default="", description="操作描述")
     icon_series: int = Field(
-        default=0, description="默认展示图标系列编号（0 表示由前端内置图标兜底）")
+        default=0, description="默认展示图标系列编号（0 表示由前端内置图标兜底）"
+    )
     icon_id: int = Field(
-        default=0, description="默认展示图标在系列内的编号（0 表示由前端内置图标兜底）")
+        default=0, description="默认展示图标在系列内的编号（0 表示由前端内置图标兜底）"
+    )
     parameters: list[ActionParameter] = Field(
-        default_factory=list, description="参数列表")
-    json_schema: Dict | None = Field(
-        default=None, description="完整的 JSON Schema")
+        default_factory=list, description="参数列表"
+    )
+    json_schema: Dict | None = Field(default=None, description="完整的 JSON Schema")
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
     retry_on_error: bool = Field(default=False, description="错误时重试")
     retry_times: int = Field(default=0, description="重试次数")
@@ -221,13 +245,16 @@ class ActionMetadata(SQLModel):
 
 class ActionMetadataResponse(SQLModel):
     """操作元数据响应（API 返回）"""
+
     action_id: str = Field(description="预设操作ID")
     action_type: BuiltinActionType = Field(description="操作类型")
     name: str = Field(default="", description="操作中文名")
     icon_series: int = Field(
-        default=0, description="默认展示图标系列编号（0 表示前端内置图标兜底）")
+        default=0, description="默认展示图标系列编号（0 表示前端内置图标兜底）"
+    )
     icon_id: int = Field(
-        default=0, description="默认展示图标在系列内的编号（0 表示前端内置图标兜底）")
+        default=0, description="默认展示图标在系列内的编号（0 表示前端内置图标兜底）"
+    )
     json_schema: Dict = Field(description="完整的 JSON Schema")
 
 
@@ -236,6 +263,7 @@ class ActionMetadataResponse(SQLModel):
 
 class Position(SQLModel):
     """坐标位置模型"""
+
     x: float = Field(description="X 坐标（像素）")
     y: float = Field(description="Y 坐标（像素）")
 
@@ -246,38 +274,51 @@ class ActionLogOption(SQLModel):
     用户在执行参数中携带 log 字段即可声明该次执行的日志采集策略；
     自定义操作（ca_xxx）也可由其 CompositeActionModel 的 log_* 字段映射而来。
     """
+
     enabled: bool = Field(default=False, description="是否采集该操作的执行日志")
     record_params: bool = Field(default=True, description="是否记录变量替换后的入参")
     record_result: bool = Field(default=True, description="是否记录执行返回结果")
     record_variables: bool = Field(default=False, description="是否记录变量池快照")
     only_on_error: bool = Field(default=False, description="仅在执行失败时记录")
     max_payload_length: int = Field(
-        default=4000, description="params/result/variables 序列化后最大字符数，超出则截断；0 表示不限制")
-    retention_days: int = Field(
-        default=30, description="日志保留天数，0 表示永久保留")
+        default=4000,
+        description="params/result/variables 序列化后最大字符数，超出则截断；0 表示不限制",
+    )
+    retention_days: int = Field(default=30, description="日志保留天数，0 表示永久保留")
 
 
 class BaseActionParams(SQLModel):
     """操作参数基类 - 所有操作参数模型继承此类"""
-    timeout: float = Field(default=30000, ge=0, le=300000,
-                           description="最大等待时间（毫秒），默认为 30000。传入 0 禁用超时")
+
+    timeout: float = Field(
+        default=30000,
+        ge=0,
+        le=300000,
+        description="最大等待时间（毫秒），默认为 30000。传入 0 禁用超时",
+    )
     log: ActionLogOption | None = Field(
         default=None,
-        description="操作日志采集选项；为空时按 action 自有配置或服务端兜底决定")
+        description="操作日志采集选项；为空时按 action 自有配置或服务端兜底决定",
+    )
 
 
 class SelectorActionParams(BaseActionParams):
     """带元素选择器的操作参数基类"""
+
     selector: str | None = Field(
-        default=None, max_length=500, description="用于定位元素的选择器")
+        default=None, max_length=500, description="用于定位元素的选择器"
+    )
 
 
 class MouseActionParams(SelectorActionParams):
     """鼠标操作参数基类"""
+
     position: Position | None = Field(
-        default=None, description="相对于元素 padding box 左上角的坐标位置")
+        default=None, description="相对于元素 padding box 左上角的坐标位置"
+    )
     modifiers: list[KeyboardModifierEnum] | None = Field(
-        default=None, description="要按下的修饰键 (Alt/Control/Meta/Shift)")
+        default=None, description="要按下的修饰键 (Alt/Control/Meta/Shift)"
+    )
     force: bool = Field(default=False, description="是否绕过可操作性检查，默认为 false")
 
     @field_validator("position", mode="before")
@@ -292,45 +333,65 @@ class MouseActionParams(SelectorActionParams):
 
 class ClickParams(MouseActionParams):
     """点击操作参数 - 对应 locator.click()"""
+
     button: MouseButtonEnum = Field(
-        default=MouseButtonEnum.LEFT, description="要按下的鼠标按钮 (left/right/middle)，默认为 left")
-    click_count: int = Field(default=1, ge=1, le=3,
-                             description="点击次数，默认为 1。参见 UIEvent.detail")
-    delay: float = Field(default=0, ge=0, le=10000,
-                         description="mousedown 和 mouseup 之间等待的时间（毫秒），默认为 0")
+        default=MouseButtonEnum.LEFT,
+        description="要按下的鼠标按钮 (left/right/middle)，默认为 left",
+    )
+    click_count: int = Field(
+        default=1, ge=1, le=3, description="点击次数，默认为 1。参见 UIEvent.detail"
+    )
+    delay: float = Field(
+        default=0,
+        ge=0,
+        le=10000,
+        description="mousedown 和 mouseup 之间等待的时间（毫秒），默认为 0",
+    )
     trial: bool = Field(
-        default=False, description="仅执行可操作性检查而不执行实际操作，默认为 false")
+        default=False, description="仅执行可操作性检查而不执行实际操作，默认为 false"
+    )
 
 
 class InputParams(BaseActionParams):
     """输入操作参数 - 对应 locator.fill()"""
-    selector: str = Field(
-        max_length=500, description="用于定位输入框元素的选择器")
+
+    selector: str = Field(max_length=500, description="用于定位输入框元素的选择器")
     value: str = Field(max_length=10000, description="要输入的文本内容")
     force: bool = Field(default=False, description="是否绕过可操作性检查，默认为 false")
 
 
 class NavigateParams(BaseActionParams):
     """导航操作参数"""
+
     url: str = Field(max_length=2048, description="要导航到的 URL 地址")
     wait_until: WaitUntilEnum = Field(
-        default=WaitUntilEnum.LOAD, description="导航成功前的等待条件")
-    timeout: float = Field(default=30000, ge=1000, le=300000,
-                           description="导航操作的超时时间（毫秒）")
+        default=WaitUntilEnum.LOAD, description="导航成功前的等待条件"
+    )
+    timeout: float = Field(
+        default=30000, ge=1000, le=300000, description="导航操作的超时时间（毫秒）"
+    )
 
 
 class NewPageParams(BaseActionParams):
     """新建页面操作参数"""
+
     url: str | None = Field(
-        default=None, max_length=2048, description="新页面的初始 URL")
+        default=None, max_length=2048, description="新页面的初始 URL"
+    )
     wait_until: WaitUntilEnum = Field(
-        default=WaitUntilEnum.LOAD, description="导航等待条件（仅在提供 url 时生效）")
-    timeout: float = Field(default=30000, ge=1000, le=300000,
-                           description="导航超时时间（仅在提供 url 时生效）")
+        default=WaitUntilEnum.LOAD, description="导航等待条件（仅在提供 url 时生效）"
+    )
+    timeout: float = Field(
+        default=30000,
+        ge=1000,
+        le=300000,
+        description="导航超时时间（仅在提供 url 时生效）",
+    )
 
 
 class ScrollParams(SelectorActionParams):
     """滚动操作参数 - 对应 locator.scroll_into_view_if_needed()"""
+
     pass
 
 
@@ -339,25 +400,32 @@ class WaitParams(SelectorActionParams):
     等待操作参数 - 对应 locator.wait_for()
     如果元素已存在，立即返回True，否则等待超时后返回False
     """
+
     state: ElementStateEnum = Field(
-        default=ElementStateEnum.VISIBLE, description="等待的元素状态 (visible/hidden/attached/detached)")
+        default=ElementStateEnum.VISIBLE,
+        description="等待的元素状态 (visible/hidden/attached/detached)",
+    )
 
 
 class HoverParams(MouseActionParams):
     """悬停操作参数 - 对应 locator.hover()"""
+
     pass
 
 
 class GetTextParams(SelectorActionParams):
     """获取元素文本参数 - 对应 locator.all_inner_texts()"""
+
     separator: str = Field(
         default="\n",
         max_length=50,
-        description="多个匹配元素文本之间的分隔符，默认为换行符")
+        description="多个匹配元素文本之间的分隔符，默认为换行符",
+    )
 
 
 class GetWindowParams(BaseActionParams):
     """获取 window 属性参数 - 通过 page.evaluate 安全获取 window 对象属性"""
+
     property_path: str | None = Field(
         default=None,
         max_length=200,
@@ -374,13 +442,14 @@ class GetWindowParams(BaseActionParams):
     def validate_property_path(cls, v: str | None) -> str | None:
         """安全校验：仅允许点分隔标识符和数字索引方括号，禁止函数调用"""
         import re
+
         if v is None:
             return v
         v = v.strip()
         if not v:
             raise ValueError("property_path 不能为空")
         # 允许：标识符 . 标识符 [数字] 的任意组合，禁止函数调用 () 及其他运算符
-        if not re.fullmatch(r'[a-zA-Z_$][\w$]*((\.[a-zA-Z_$][\w$]*)|(\[\d+\]))*', v):
+        if not re.fullmatch(r"[a-zA-Z_$][\w$]*((\.[a-zA-Z_$][\w$]*)|(\[\d+\]))*", v):
             raise ValueError(
                 f"property_path 格式不合法: '{v}'。仅支持点分隔的属性路径和数字索引，如 'location.href'、'modules[0].name'，不允许函数调用、运算符或变量索引"
             )
@@ -396,31 +465,40 @@ class GetWindowParams(BaseActionParams):
 
 class ScreenshotParams(SelectorActionParams):
     """截图操作参数 - 对应 locator.screenshot() 或 page.screenshot()"""
+
     type: ScreenshotTypeEnum = Field(
-        default=ScreenshotTypeEnum.PNG, description="截图格式 (png/jpeg)")
-    quality: int = Field(default=80, ge=1, le=100,
-                         description="JPEG 图片质量（1-100），仅在 type=jpeg 时有效")
+        default=ScreenshotTypeEnum.PNG, description="截图格式 (png/jpeg)"
+    )
+    quality: int = Field(
+        default=80,
+        ge=1,
+        le=100,
+        description="JPEG 图片质量（1-100），仅在 type=jpeg 时有效",
+    )
     full_page: bool = Field(
-        default=False, description="是否截取整个可滚动页面（仅 page.screenshot 支持）")
+        default=False, description="是否截取整个可滚动页面（仅 page.screenshot 支持）"
+    )
     omit_background: bool = Field(
-        default=False, description="是否隐藏默认白色背景并截取透明背景（仅 png 格式支持）")
+        default=False,
+        description="是否隐藏默认白色背景并截取透明背景（仅 png 格式支持）",
+    )
 
 
 class LLMParams(BaseActionParams):
     """LLM 对话操作参数"""
+
     server_url: str = Field(max_length=2048, description="API 服务器地址")
     api_key: str = Field(max_length=500, description="API 密钥")
     model: str = Field(max_length=200, description="模型名称")
-    prompt: str = Field(default="", max_length=100000,
-                        description="单轮对话 prompt")
-    system_prompt: str = Field(
-        default="", max_length=10000, description="系统提示词")
-    temperature: float = Field(
-        default=0.7, ge=0.0, le=2.0, description="温度参数 0-2")
-    max_tokens: int = Field(default=2048, ge=1, le=100000,
-                            description="最大生成的 token 数")
-    timeout: float = Field(default=120000, ge=1000,
-                           le=600000, description="请求超时时间(毫秒)")
+    prompt: str = Field(default="", max_length=100000, description="单轮对话 prompt")
+    system_prompt: str = Field(default="", max_length=10000, description="系统提示词")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="温度参数 0-2")
+    max_tokens: int = Field(
+        default=2048, ge=1, le=100000, description="最大生成的 token 数"
+    )
+    timeout: float = Field(
+        default=120000, ge=1000, le=600000, description="请求超时时间(毫秒)"
+    )
     # 结构化输出
     response_schema: dict | None = Field(
         default=None,
@@ -436,55 +514,151 @@ class FetchExternalDataParams(BaseActionParams):
     - RPC 模式：每个 method_name 对应一个独立的强类型 SQLModel 参数字段
       （如 get_reserve_lottery_params），与 HTTP 的 params 字段互不影响，前端分开展示
     """
+
     method_name: RpcMethodName | None = Field(
         default=None,
         title="RPC 方法",
         description="RPC 方法名（StrEnum，从预设白名单中选择）。提供时走 RPC 模式。设为空值或 None 则走 HTTP 模式",
     )
     url: str | None = Field(
-        default=None, max_length=4096,
+        default=None,
+        max_length=4096,
         description="HTTP/HTTPS 请求地址（method_name 为空时必填，仅 HTTP 模式生效）",
     )
     method: HttpMethodEnum = Field(
-        default=HttpMethodEnum.GET,
-        description="HTTP 方法（仅 HTTP 模式生效）")
+        default=HttpMethodEnum.GET, description="HTTP 方法（仅 HTTP 模式生效）"
+    )
     headers: Dict[str, str] | None = Field(
-        default=None, description="HTTP 附加请求头（仅 HTTP 模式生效）")
+        default=None, description="HTTP 附加请求头（仅 HTTP 模式生效）"
+    )
     params: Dict[str, str] | None = Field(
-        default=None, description="HTTP URL 查询参数（仅 HTTP 模式生效）")
+        default=None, description="HTTP URL 查询参数（仅 HTTP 模式生效）"
+    )
     body_type: HttpBodyTypeEnum = Field(
         default=HttpBodyTypeEnum.NONE,
-        description="HTTP 请求体类型: none=无, json=JSON, form=表单, raw=原始文本（仅 HTTP 模式生效）")
+        description="HTTP 请求体类型: none=无, json=JSON, form=表单, raw=原始文本（仅 HTTP 模式生效）",
+    )
     body_json: Any | None = Field(
-        default=None, description="HTTP JSON 请求体（body_type=json 时生效，仅 HTTP 模式生效）")
+        default=None,
+        description="HTTP JSON 请求体（body_type=json 时生效，仅 HTTP 模式生效）",
+    )
     body_form: Dict[str, str] | None = Field(
-        default=None, description="HTTP 表单请求体（body_type=form 时生效，仅 HTTP 模式生效）")
+        default=None,
+        description="HTTP 表单请求体（body_type=form 时生效，仅 HTTP 模式生效）",
+    )
     body_raw: str | None = Field(
-        default=None, max_length=1000000, description="HTTP 原始文本请求体（body_type=raw 时生效，仅 HTTP 模式生效）")
+        default=None,
+        max_length=1000000,
+        description="HTTP 原始文本请求体（body_type=raw 时生效，仅 HTTP 模式生效）",
+    )
     raw_content_type: str | None = Field(
-        default=None, max_length=200,
-        description="HTTP 原始文本请求体的 Content-Type（body_type=raw 时生效，仅 HTTP 模式生效）")
+        default=None,
+        max_length=200,
+        description="HTTP 原始文本请求体的 Content-Type（body_type=raw 时生效，仅 HTTP 模式生效）",
+    )
     follow_redirects: bool = Field(
-        default=True, description="是否自动跟随重定向（仅 HTTP 模式生效）")
+        default=True, description="是否自动跟随重定向（仅 HTTP 模式生效）"
+    )
     proxy: str | None = Field(
-        default=None, max_length=500,
-        description="HTTP/HTTPS/SOCKS 代理地址（仅 HTTP 模式生效）")
-    timeout: float = Field(default=30000, ge=1000, le=300000,
-                           description="请求超时时间（毫秒）")
+        default=None,
+        max_length=500,
+        description="HTTP/HTTPS/SOCKS 代理地址（仅 HTTP 模式生效）",
+    )
+    timeout: float = Field(
+        default=30000, ge=1000, le=300000, description="请求超时时间（毫秒）"
+    )
     # RPC 模式专用：每个 method_name 对应独立的强类型 SQLModel 参数字段，与 HTTP params 完全分离
     # 前端根据当前选中的 method_name 仅展示对应字段的表单，各方法参数相互独立
     get_reserve_lottery_params: GetReserveLotteryRpcParams | None = Field(
-        default=None, description="get_reserve_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+        default=None,
+        description="get_reserve_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）",
+    )
     get_official_lottery_params: GetOfficialLotteryRpcParams | None = Field(
-        default=None, description="get_official_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+        default=None,
+        description="get_official_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）",
+    )
     get_charge_lottery_params: GetChargeLotteryRpcParams | None = Field(
-        default=None, description="get_charge_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+        default=None,
+        description="get_charge_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）",
+    )
     get_topic_lottery_params: GetTopicLotteryRpcParams | None = Field(
-        default=None, description="get_topic_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+        default=None,
+        description="get_topic_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）",
+    )
     get_all_lottery_params: GetAllLotteryRpcParams | None = Field(
-        default=None, description="get_all_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+        default=None,
+        description="get_all_lottery 方法请求参数（仅 RPC 模式且选择该方法时生效）",
+    )
     get_others_lot_dyn_list_params: GetOthersLotDynListRpcParams | None = Field(
-        default=None, description="get_others_lot_dyn_list 方法请求参数（仅 RPC 模式且选择该方法时生效）")
+        default=None,
+        description="get_others_lot_dyn_list 方法请求参数（仅 RPC 模式且选择该方法时生效）",
+    )
+
+    # ===== 取数去重（通用主资源处理记录，HTTP/RPC 两种模式均生效）=====
+    dedupe: bool = Field(
+        default=False,
+        description=(
+            "是否对返回列表做去重：开启后按 id_field 提取每项主 id，"
+            "剔除当前工作流下已处理成功的资源，仅在工作流执行中可用"
+        ),
+    )
+    resource_type: str | None = Field(
+        default=None,
+        max_length=64,
+        description="去重资源类型命名空间（如 lottery/reserve_lottery，可自定义）；dedupe=true 时必填",
+    )
+    id_field: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "从列表每项中提取主 id 的字段路径，点分隔支持嵌套与数字索引"
+            "（如 lottery_id、data.id、items[0].id）；dedupe=true 时必填"
+        ),
+    )
+    list_path: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "当返回数据的列表不在顶层时，定位列表的字段路径"
+            "（如 data.list、items[0].records）；留空表示返回 data 本身就是列表"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_dedupe_fields(self) -> "FetchExternalDataParams":
+        """dedupe 开启时必须提供 resource_type 与 id_field。"""
+        if self.dedupe:
+            missing = [
+                name
+                for name, val in (
+                    ("resource_type", self.resource_type),
+                    ("id_field", self.id_field),
+                )
+                if not val or not str(val).strip()
+            ]
+            if missing:
+                raise ValueError(
+                    "开启 dedupe 时必须提供: " + ", ".join(missing)
+                )
+        return self
+
+    @field_validator("id_field", "list_path", "resource_type")
+    @classmethod
+    def validate_dotted_path(cls, v: str | None) -> str | None:
+        """安全校验：仅允许点分隔标识符和数字索引方括号，禁止函数调用。"""
+        import re
+
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return v
+        if not re.fullmatch(r"[a-zA-Z_$][\w$]*((\.[a-zA-Z_$][\w$]*)|(\[\d+\]))*", v):
+            raise ValueError(
+                f"字段路径格式不合法: '{v}'。仅支持点分隔属性路径和数字索引，"
+                "如 'data.list'、'items[0].id'，不允许函数调用或变量索引"
+            )
+        return v
 
     @model_validator(mode="after")
     def check_mode_exclusive(self) -> "FetchExternalDataParams":
@@ -494,16 +668,79 @@ class FetchExternalDataParams(BaseActionParams):
         """
         is_rpc = self.method_name is not None and self.method_name != RpcMethodName.NONE
         if not is_rpc and not self.url:
-            raise ValueError("必须提供 method_name（RPC 模式）或 url（HTTP 模式）中的一个")
+            raise ValueError(
+                "必须提供 method_name（RPC 模式）或 url（HTTP 模式）中的一个"
+            )
         if is_rpc and self.url:
             raise ValueError("method_name 和 url 互斥，不可同时提供")
         return self
 
 
+class MarkResourceResultParams(BaseActionParams):
+    """记录资源处理结果参数 - 配合「获取外部数据 + 去重」做幂等回写
+
+    在工作流循环里处理完单个资源后调用：
+        - success=true：记为成功，后续取数去重将默认跳过该资源；
+        - success=false：记为失败，下次仍会被取数捞起重试（断点续跑）。
+    作用域为 当前用户 + 当前工作流 + resource_type + resource_id（按工作流隔离）。
+    """
+
+    resource_type: str = Field(
+        max_length=64,
+        description="资源类型命名空间（需与取数去重的 resource_type 保持一致）",
+    )
+    resource_id: str = Field(
+        max_length=128,
+        description="资源业务主ID（支持 {{var}} 变量替换，如循环项的 {{loop_item.lottery_id}}）",
+    )
+    success: bool = Field(
+        default=True, description="本次处理是否成功（true=成功去重，false=失败可重试）"
+    )
+    fail_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="失败原因（success=false 时记录，成功时忽略）",
+    )
+    extra: Dict[str, Any] | None = Field(
+        default=None, description="附加快照信息（可选，存入记录的 extra 字段）"
+    )
+
+
+class RandomPickParams(BaseActionParams):
+    """随机取值操作参数 - 从列表中等概率随机选取一个元素
+
+    通用工具动作，封装 random.choice 的能力（不访问页面/数据库）。
+    列表来源二选一：
+        - items_var：指向变量池中某个列表的点路径（如 "comment_pool"、
+          "last_output.data.list"），运行时从变量取值；
+        - items：直接给常量列表（元素支持 {{var}} 模板替换）。
+    优先使用 items_var；两者都为空时动作失败。
+    """
+
+    items_var: str = Field(
+        default="",
+        max_length=200,
+        description="列表变量的点路径（如 comment_pool / last_output.data.list）",
+    )
+    items: list[str] = Field(
+        default_factory=list,
+        max_length=1000,
+        description="常量列表（元素支持 {{var}} 模板）；items_var 为空时使用",
+    )
+    seed: int | None = Field(
+        default=None,
+        description="可选随机种子，传入则结果可复现（一般留空）",
+    )
+
+
 class PrintParams(BaseActionParams):
     """打印参数操作参数 - 调试用，打印变量替换后的内容，不执行任何实际操作"""
-    message: str = Field(default="", max_length=10000,
-                         description="要打印的内容（支持 {{var}} 变量替换），执行时仅打印不执行其他操作")
+
+    message: str = Field(
+        default="",
+        max_length=10000,
+        description="要打印的内容（支持 {{var}} 变量替换），执行时仅打印不执行其他操作",
+    )
 
 
 class LoopParams(BaseActionParams):
@@ -523,18 +760,26 @@ class LoopParams(BaseActionParams):
         映射源路径支持点分隔嵌套访问，如 "loop_item.user.profile.id"。
         也支持引用循环索引 "loop_index"。
     """
+
     # ── 循环来源配置 ──
     loop_source: Literal["fixed_count", "variable", "expression", "json_list"] = Field(
         default="fixed_count",
         description="循环来源: fixed_count=固定次数, variable=从变量获取items, expression=表达式, json_list=直接传入JSON列表",
     )
-    count: int = Field(default=1, ge=1, le=10000, description="固定循环次数（loop_source=fixed_count 时使用）")
+    count: int = Field(
+        default=1,
+        ge=1,
+        le=10000,
+        description="固定循环次数（loop_source=fixed_count 时使用）",
+    )
     loop_items_var: str | None = Field(
-        default=None, max_length=200,
+        default=None,
+        max_length=200,
         description="循环项变量引用（loop_source=variable 时使用），如 'previous_output.items'",
     )
     loop_items_expr: str | None = Field(
-        default=None, max_length=500,
+        default=None,
+        max_length=500,
         description="循环项表达式（loop_source=expression 时使用）",
     )
     loop_items_json: list[Any] | None = Field(
@@ -544,11 +789,13 @@ class LoopParams(BaseActionParams):
 
     # ── 循环变量命名 ──
     loop_item_var: str = Field(
-        default="loop_item", max_length=50,
+        default="loop_item",
+        max_length=50,
         description="当前循环项在作用域中的变量名",
     )
     loop_index_var: str = Field(
-        default="loop_index", max_length=50,
+        default="loop_index",
+        max_length=50,
         description="当前循环索引在作用域中的变量名",
     )
 
@@ -559,40 +806,75 @@ class LoopParams(BaseActionParams):
     )
 
     # ── 循环体 ──
-    loopBranch: list['WorkflowStep'] | None = Field(
-        default=None, description="循环分支步骤")
+    loopBranch: list["WorkflowStep"] | None = Field(
+        default=None, description="循环分支步骤"
+    )
 
     # ── 控制条件 ──
     break_condition: ConditionRule | None = Field(
         default=None,
-        description="break 条件规则（结构化条件），每次迭代开始前评估，为真时跳出整个循环")
+        description="break 条件规则（结构化条件），每次迭代开始前评估，为真时跳出整个循环",
+    )
     continue_condition: ConditionRule | None = Field(
         default=None,
-        description="continue 条件规则（结构化条件），每次迭代开始前评估，为真时跳过当前迭代")
+        description="continue 条件规则（结构化条件），每次迭代开始前评估，为真时跳过当前迭代",
+    )
 
     # 向后兼容旧字段
-    loop_count: int | None = Field(default=None, exclude=True, description="[已废弃] 使用 count + loop_source")
-    loop_while: str | None = Field(default=None, exclude=True, description="[已废弃] 使用 break_condition")
-    items: list[Any] | None = Field(default=None, exclude=True, description="[已废弃] 使用 loop_items_var")
-    loop_var: str | None = Field(default=None, exclude=True, description="[已废弃] 使用 loop_item_var")
+    loop_count: int | None = Field(
+        default=None, exclude=True, description="[已废弃] 使用 count + loop_source"
+    )
+    loop_while: str | None = Field(
+        default=None, exclude=True, description="[已废弃] 使用 break_condition"
+    )
+    items: list[Any] | None = Field(
+        default=None, exclude=True, description="[已废弃] 使用 loop_items_var"
+    )
+    loop_var: str | None = Field(
+        default=None, exclude=True, description="[已废弃] 使用 loop_item_var"
+    )
 
 
 class IfElseParams(BaseActionParams):
     """条件分支控制流操作参数"""
+
     condition: ConditionRule = Field(description="条件规则（结构化条件，不使用 eval）")
-    TrueBranch: list['WorkflowStep'] | None = Field(
-        default=None, description="真分支步骤")
-    FalseBranch: list['WorkflowStep'] | None = Field(
-        default=None, description="假分支步骤")
+    TrueBranch: list["WorkflowStep"] | None = Field(
+        default=None, description="真分支步骤"
+    )
+    FalseBranch: list["WorkflowStep"] | None = Field(
+        default=None, description="假分支步骤"
+    )
 
 
 class CompositeParams(BaseActionParams):
     """复合操作参数"""
-    steps: list['WorkflowStep'] = Field(
-        default_factory=list, description="复合操作步骤")
+
+    steps: list["WorkflowStep"] = Field(
+        default_factory=list, description="复合操作步骤"
+    )
 
 
-AllActionParams = ClickParams | InputParams | NavigateParams | NewPageParams | ScrollParams | WaitParams | HoverParams | GetTextParams | GetWindowParams | ScreenshotParams | LLMParams | FetchExternalDataParams | PrintParams | LoopParams | IfElseParams | CompositeParams
+AllActionParams = (
+    ClickParams
+    | InputParams
+    | NavigateParams
+    | NewPageParams
+    | ScrollParams
+    | WaitParams
+    | HoverParams
+    | GetTextParams
+    | GetWindowParams
+    | ScreenshotParams
+    | LLMParams
+    | FetchExternalDataParams
+    | MarkResourceResultParams
+    | RandomPickParams
+    | PrintParams
+    | LoopParams
+    | IfElseParams
+    | CompositeParams
+)
 
 # endregion
 
@@ -601,48 +883,58 @@ AllActionParams = ClickParams | InputParams | NavigateParams | NewPageParams | S
 
 class ClickResult(SQLModel):
     """点击操作结果"""
+
     clicked: bool = Field(default=True, description="是否点击成功")
 
 
 class InputResult(SQLModel):
     """输入操作结果"""
+
     value_length: int = Field(default=0, description="输入文本长度")
 
 
 class ScrollResult(SQLModel):
     """滚动操作结果"""
+
     scrolled: bool = Field(default=True, description="是否滚动成功")
 
 
 class WaitResult(SQLModel):
     """等待操作结果"""
+
     element_found: bool = Field(default=True, description="是否等待到了目标元素")
 
 
 class HoverResult(SQLModel):
     """悬停操作结果"""
+
     hovered: bool = Field(default=True, description="是否悬停成功")
 
 
 class GetTextResult(SQLModel):
     """获取元素文本结果"""
+
     text: str = Field(default="", description="元素的文本内容")
 
 
 class GetWindowResult(SQLModel):
     """获取 window 属性结果"""
-    value: str = Field(default="", description="属性的字符串值（property_path 模式）")
-    values: dict[str, str] = Field(default_factory=dict, description="对象所有字段的非空值（object_name 模式）")
 
+    value: str = Field(default="", description="属性的字符串值（property_path 模式）")
+    values: dict[str, str] = Field(
+        default_factory=dict, description="对象所有字段的非空值（object_name 模式）"
+    )
 
 
 class NavigateResult(SQLModel):
     """导航操作结果"""
+
     status: int | None = Field(default=None, description="HTTP 状态码")
 
 
 class NewPageResult(SQLModel):
     """新建页面操作结果"""
+
     page_created: bool = Field(default=False, description="页面是否创建成功")
     page_count: int = Field(default=0, description="当前页面数")
     status: int | None = Field(default=None, description="HTTP 状态码")
@@ -650,6 +942,7 @@ class NewPageResult(SQLModel):
 
 class ScreenshotResult(SQLModel):
     """截图操作结果"""
+
     format: str = Field(default="png", description="截图格式")
     size: int = Field(default=0, description="图片大小(字节)")
     base64: str = Field(default="", description="Base64 编码的图片数据")
@@ -657,33 +950,58 @@ class ScreenshotResult(SQLModel):
 
 class LLMResult(SQLModel):
     """LLM 操作结果"""
+
     content: str = Field(default="", description="回复文本内容")
     role: str = Field(default="assistant", description="角色")
     model: str = Field(default="", description="实际使用的模型名称")
     usage: Dict = Field(default_factory=dict, description="token 使用量")
     # 结构化输出
-    is_structured: bool = Field(
-        default=False, description="是否为结构化输出模式")
+    is_structured: bool = Field(default=False, description="是否为结构化输出模式")
     structured_data: dict | None = Field(
-        default=None, description="结构化输出数据（response_schema 提供时有效）")
+        default=None, description="结构化输出数据（response_schema 提供时有效）"
+    )
 
 
 class FetchExternalDataResult(SQLModel):
     """获取外部数据操作结果"""
+
     status_code: int = Field(default=0, description="HTTP 状态码")
     data: Any | None = Field(
-        default=None, description="响应数据（JSON 解析后的字典/列表，无法解析时为 None）")
+        default=None,
+        description="响应数据（JSON 解析后的字典/列表，无法解析时为 None）",
+    )
     text: str = Field(default="", description="响应文本（原始字符串）")
     headers: Dict[str, str] = Field(
-        default_factory=dict, description="响应头（键值对）")
+        default_factory=dict, description="响应头（键值对）"
+    )
     url: str = Field(default="", description="最终请求 URL（可能经过重定向）")
     elapsed: float = Field(default=0.0, description="请求耗时（秒）")
-    is_json: bool = Field(
-        default=False, description="响应体是否为 JSON 格式")
+    is_json: bool = Field(default=False, description="响应体是否为 JSON 格式")
+
+
+class MarkResourceResultResult(SQLModel):
+    """记录资源处理结果操作结果"""
+
+    recorded: bool = Field(default=True, description="是否已写入记录")
+    resource_type: str = Field(default="", description="资源类型")
+    resource_id: str = Field(default="", description="资源主ID")
+    success: bool = Field(default=True, description="记录的处理结果")
+    process_count: int = Field(
+        default=0, description="写入后该资源的累计处理次数"
+    )
+
+
+class RandomPickResult(SQLModel):
+    """随机取值操作结果"""
+
+    value: str = Field(default="", description="随机选中的元素（统一转字符串）")
+    index: int = Field(default=-1, description="选中元素在列表中的下标")
+    total: int = Field(default=0, description="列表长度")
 
 
 class PrintResult(SQLModel):
     """打印操作结果"""
+
     message: str = Field(default="", description="打印的内容")
 
 
@@ -695,13 +1013,16 @@ class LoopResult(SQLModel):
     results: list[Dict] = Field(default_factory=list, description="结果列表")
     message: str | None = Field(default=None, description="提示消息")
     was_broken: bool = Field(
-        default=False, description="是否由 break_condition 触发中断")
+        default=False, description="是否由 break_condition 触发中断"
+    )
     was_continued: bool = Field(
-        default=False, description="是否由 continue_condition 触发跳过")
+        default=False, description="是否由 continue_condition 触发跳过"
+    )
 
 
 class IfElseResult(SQLModel):
     """条件分支操作结果"""
+
     branch_taken: str = Field(default="", description="执行的分支")
     results: list[Dict] = Field(default_factory=list, description="分支结果")
     branch: str = Field(default="", description="分支名称")
@@ -711,12 +1032,32 @@ class IfElseResult(SQLModel):
 
 class CompositeResult(SQLModel):
     """复合操作结果"""
+
     total_steps: int = Field(default=0, description="总步骤数")
     success_count: int = Field(default=0, description="成功步骤数")
     results: list[Dict] = Field(default_factory=list, description="各步骤结果")
 
 
-AllActionResult = ClickResult | InputResult | ScrollResult | WaitResult | HoverResult | GetTextResult | GetWindowResult | NavigateResult | NewPageResult | ScreenshotResult | LLMResult | FetchExternalDataResult | PrintResult | LoopResult | IfElseResult | CompositeResult
+AllActionResult = (
+    ClickResult
+    | InputResult
+    | ScrollResult
+    | WaitResult
+    | HoverResult
+    | GetTextResult
+    | GetWindowResult
+    | NavigateResult
+    | NewPageResult
+    | ScreenshotResult
+    | LLMResult
+    | FetchExternalDataResult
+    | MarkResourceResultResult
+    | RandomPickResult
+    | PrintResult
+    | LoopResult
+    | IfElseResult
+    | CompositeResult
+)
 
 BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
     BuiltinActionType.CLICK: ClickResult,
@@ -731,6 +1072,8 @@ BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
     BuiltinActionType.SCREENSHOT: ScreenshotResult,
     BuiltinActionType.LLM: LLMResult,
     BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataResult,
+    BuiltinActionType.MARK_RESOURCE_RESULT: MarkResourceResultResult,
+    BuiltinActionType.RANDOM_PICK: RandomPickResult,
     BuiltinActionType.PRINT: PrintResult,
     BuiltinActionType.LOOP: LoopResult,
     BuiltinActionType.IF_ELSE: IfElseResult,
@@ -742,11 +1085,12 @@ BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
 
 class PluginConfig(SQLModel):
     """工作流插件配置 - 单个插件的运行时配置"""
+
     plugin_id: str = Field(description="插件ID")
-    config_params: Dict = Field(
-        default_factory=dict, description="插件配置参数")
+    config_params: Dict = Field(default_factory=dict, description="插件配置参数")
     hook_type: str = Field(
-        description="钩子类型: before_action/after_action/on_success/on_error/on_timeout")
+        description="钩子类型: before_action/after_action/on_success/on_error/on_timeout"
+    )
     priority: int = Field(default=100, description="优先级")
 
 
@@ -763,6 +1107,8 @@ BUILTIN_ACTION_PARAMS_MAP: Dict[str, Type[AllActionParams]] = {
     BuiltinActionType.SCREENSHOT: ScreenshotParams,
     BuiltinActionType.LLM: LLMParams,
     BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataParams,
+    BuiltinActionType.MARK_RESOURCE_RESULT: MarkResourceResultParams,
+    BuiltinActionType.RANDOM_PICK: RandomPickParams,
     BuiltinActionType.PRINT: PrintParams,
     BuiltinActionType.LOOP: LoopParams,
     BuiltinActionType.IF_ELSE: IfElseParams,
@@ -770,25 +1116,25 @@ BUILTIN_ACTION_PARAMS_MAP: Dict[str, Type[AllActionParams]] = {
 }
 
 
-P = TypeVar('P')
+P = TypeVar("P")
 
 
 def _fill_action_type_impl(data: Any) -> Any:
     """递归处理 children 中的 action_type 填充。"""
     if isinstance(data, dict):
-        if not data.get('action_type') and data.get('action_id'):
-            data['action_type'] = data['action_id']
-        if 'children' in data and data['children']:
-            data['children'] = [
-                _fill_action_type_impl(item) if isinstance(
-                    item, dict) else item
-                for item in data['children']
+        if not data.get("action_type") and data.get("action_id"):
+            data["action_type"] = data["action_id"]
+        if "children" in data and data["children"]:
+            data["children"] = [
+                _fill_action_type_impl(item) if isinstance(item, dict) else item
+                for item in data["children"]
             ]
     return data
 
 
 class BaseWorkflowStep(SQLModel, Generic[P]):
     """工作流步骤基类 - 共享字段 + execution_engine 运行时字段"""
+
     action_id: str
     params: P | None = None
     retry: int = 0
@@ -805,7 +1151,7 @@ class BaseWorkflowStep(SQLModel, Generic[P]):
     loop_until: str | None = None
     output_var: str | None = None
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def _fill_action_type(cls, data: Any) -> Any:
         """若 action_type 缺失，从 action_id 自动填充，确保 discriminated union 能匹配。"""
@@ -814,118 +1160,154 @@ class BaseWorkflowStep(SQLModel, Generic[P]):
 
 class ClickWorkflowStep(BaseWorkflowStep[ClickParams]):
     """点击步骤"""
+
     action_type: Literal[BuiltinActionType.CLICK] = BuiltinActionType.CLICK  # type: ignore[assignment]
 
 
 class InputWorkflowStep(BaseWorkflowStep[InputParams]):
     """输入步骤"""
+
     action_type: Literal[BuiltinActionType.INPUT] = BuiltinActionType.INPUT  # type: ignore[assignment]
 
 
 class NavigateWorkflowStep(BaseWorkflowStep[NavigateParams]):
     """导航步骤"""
+
     action_type: Literal[BuiltinActionType.NAVIGATE] = BuiltinActionType.NAVIGATE  # type: ignore[assignment]
 
 
 class NewPageWorkflowStep(BaseWorkflowStep[NewPageParams]):
     """新页面步骤"""
+
     action_type: Literal[BuiltinActionType.NEW_PAGE] = BuiltinActionType.NEW_PAGE  # type: ignore[assignment]
 
 
 class ScrollWorkflowStep(BaseWorkflowStep[ScrollParams]):
     """滚动步骤"""
+
     action_type: Literal[BuiltinActionType.SCROLL] = BuiltinActionType.SCROLL  # type: ignore[assignment]
 
 
 class WaitWorkflowStep(BaseWorkflowStep[WaitParams]):
     """等待步骤"""
+
     action_type: Literal[BuiltinActionType.WAIT] = BuiltinActionType.WAIT  # type: ignore[assignment]
 
 
 class HoverWorkflowStep(BaseWorkflowStep[HoverParams]):
     """悬停步骤"""
+
     action_type: Literal[BuiltinActionType.HOVER] = BuiltinActionType.HOVER  # type: ignore[assignment]
 
 
 class GetTextWorkflowStep(BaseWorkflowStep[GetTextParams]):
     """获取文本步骤"""
+
     action_type: Literal[BuiltinActionType.GET_TEXT] = BuiltinActionType.GET_TEXT  # type: ignore[assignment]
 
 
 class GetWindowWorkflowStep(BaseWorkflowStep[GetWindowParams]):
     """获取窗口属性步骤"""
+
     action_type: Literal[BuiltinActionType.GET_WINDOW] = BuiltinActionType.GET_WINDOW  # type: ignore[assignment]
 
 
 class ScreenshotWorkflowStep(BaseWorkflowStep[ScreenshotParams]):
     """截图步骤"""
+
     action_type: Literal[BuiltinActionType.SCREENSHOT] = BuiltinActionType.SCREENSHOT  # type: ignore[assignment]
 
 
 class LLMWorkflowStep(BaseWorkflowStep[LLMParams]):
     """LLM 步骤"""
+
     action_type: Literal[BuiltinActionType.LLM] = BuiltinActionType.LLM  # type: ignore[assignment]
 
 
 class FetchExternalDataWorkflowStep(BaseWorkflowStep[FetchExternalDataParams]):
     """获取外部数据步骤"""
-    action_type: Literal[BuiltinActionType.FETCH_EXTERNAL_DATA] = BuiltinActionType.FETCH_EXTERNAL_DATA  # type: ignore[assignment]
+
+    action_type: Literal[BuiltinActionType.FETCH_EXTERNAL_DATA] = (
+        BuiltinActionType.FETCH_EXTERNAL_DATA
+    )  # type: ignore[assignment]
+
+
+class MarkResourceResultWorkflowStep(BaseWorkflowStep[MarkResourceResultParams]):
+    """记录资源处理结果步骤"""
+
+    action_type: Literal[BuiltinActionType.MARK_RESOURCE_RESULT] = (
+        BuiltinActionType.MARK_RESOURCE_RESULT
+    )  # type: ignore[assignment]
 
 
 class PrintWorkflowStep(BaseWorkflowStep[PrintParams]):
     """打印参数步骤"""
+
     action_type: Literal[BuiltinActionType.PRINT] = BuiltinActionType.PRINT  # type: ignore[assignment]
+
+
+class RandomPickWorkflowStep(BaseWorkflowStep[RandomPickParams]):
+    """随机取值步骤"""
+
+    action_type: Literal[BuiltinActionType.RANDOM_PICK] = BuiltinActionType.RANDOM_PICK  # type: ignore[assignment]
 
 
 class LoopWorkflowStep(BaseWorkflowStep[LoopParams]):
     """循环步骤"""
+
     action_type: Literal[BuiltinActionType.LOOP] = BuiltinActionType.LOOP  # type: ignore[assignment]
 
 
 class IfElseWorkflowStep(BaseWorkflowStep[IfElseParams]):
     """条件分支步骤"""
+
     action_type: Literal[BuiltinActionType.IF_ELSE] = BuiltinActionType.IF_ELSE  # type: ignore[assignment]
 
 
 class CompositeWorkflowStep(BaseWorkflowStep[CompositeParams]):
     """复合操作步骤"""
+
     action_type: Literal[BuiltinActionType.COMPOSITE] = BuiltinActionType.COMPOSITE  # type: ignore[assignment]
 
 
 def _ensure_action_type(v: Any) -> Any:
     """若 dict 缺少 action_type，从 action_id 自动填充，递归处理 children。"""
     if isinstance(v, dict):
-        if 'action_type' not in v and 'action_id' in v:
+        if "action_type" not in v and "action_id" in v:
             # 自定义操作（以 ca_ 开头）的 action_type 为 "composite"
-            if v['action_id'].startswith('ca_'):
-                v['action_type'] = 'composite'
+            if v["action_id"].startswith("ca_"):
+                v["action_type"] = "composite"
             else:
-                v['action_type'] = v['action_id']
-        if 'children' in v and v['children']:
-            v['children'] = [
+                v["action_type"] = v["action_id"]
+        if "children" in v and v["children"]:
+            v["children"] = [
                 _ensure_action_type(c) if isinstance(c, dict) else c
-                for c in v['children']
+                for c in v["children"]
             ]
     return v
 
 
 # discriminated union: 根据 action_type 字段自动匹配子类
-WorkflowStep = ClickWorkflowStep\
-    | InputWorkflowStep\
-    | NavigateWorkflowStep\
-    | NewPageWorkflowStep\
-    | ScrollWorkflowStep\
-    | WaitWorkflowStep\
-    | HoverWorkflowStep\
-    | GetTextWorkflowStep\
-    | GetWindowWorkflowStep\
-    | ScreenshotWorkflowStep\
-    | LLMWorkflowStep\
-    | FetchExternalDataWorkflowStep\
-    | PrintWorkflowStep\
-    | LoopWorkflowStep\
-    | IfElseWorkflowStep\
+WorkflowStep = (
+    ClickWorkflowStep
+    | InputWorkflowStep
+    | NavigateWorkflowStep
+    | NewPageWorkflowStep
+    | ScrollWorkflowStep
+    | WaitWorkflowStep
+    | HoverWorkflowStep
+    | GetTextWorkflowStep
+    | GetWindowWorkflowStep
+    | ScreenshotWorkflowStep
+    | LLMWorkflowStep
+    | FetchExternalDataWorkflowStep
+    | MarkResourceResultWorkflowStep
+    | RandomPickWorkflowStep
+    | PrintWorkflowStep
+    | LoopWorkflowStep
+    | IfElseWorkflowStep
     | CompositeWorkflowStep
+)
 
 # TypeAdapter 用于从 dict 反序列化
 workflow_step_adapter: TypeAdapter[WorkflowStep] = TypeAdapter(WorkflowStep)
@@ -944,6 +1326,8 @@ _WORKFLOW_STEP_CLASS_MAP: dict[BuiltinActionType, type[BaseWorkflowStep[Any]]] =
     BuiltinActionType.SCREENSHOT: ScreenshotWorkflowStep,
     BuiltinActionType.LLM: LLMWorkflowStep,
     BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataWorkflowStep,
+    BuiltinActionType.MARK_RESOURCE_RESULT: MarkResourceResultWorkflowStep,
+    BuiltinActionType.RANDOM_PICK: RandomPickWorkflowStep,
     BuiltinActionType.PRINT: PrintWorkflowStep,
     BuiltinActionType.LOOP: LoopWorkflowStep,
     BuiltinActionType.IF_ELSE: IfElseWorkflowStep,
@@ -961,29 +1345,30 @@ def create_workflow_step(
     若 action_id 对应已知内置类型，则 params dict 会被校验并转换为对应的 Params 模型；
     若为未知类型（自定义 action），则返回 BaseWorkflowStep 实例，params 保持 dict。
     """
-    action_type = kwargs.pop('action_type', None) or action_id
-    kwargs['action_id'] = action_id
-    kwargs['action_type'] = action_type
+    action_type = kwargs.pop("action_type", None) or action_id
+    kwargs["action_id"] = action_id
+    kwargs["action_type"] = action_type
 
     try:
         at = BuiltinActionType(action_type)
     except ValueError:
-        kwargs['params'] = params
+        kwargs["params"] = params
         return BaseWorkflowStep[Dict](**kwargs)
 
     step_class = _WORKFLOW_STEP_CLASS_MAP[at]
     if params_model_class := BUILTIN_ACTION_PARAMS_MAP.get(at):
         try:
-            kwargs['params'] = params_model_class.model_validate(
-                params) if params else None
+            kwargs["params"] = (
+                params_model_class.model_validate(params) if params else None
+            )
         except ValidationError:
             # 参数校验失败时保留原始 dict，让执行阶段处理错误
-            kwargs['params'] = params
+            kwargs["params"] = params
     else:
-        kwargs['params'] = params
+        kwargs["params"] = params
     try:
         return step_class(**kwargs)
     except ValidationError:
         # 子类构造失败（如 params 类型不匹配），降级为 BaseWorkflowStep
-        kwargs['params'] = params
+        kwargs["params"] = params
         return BaseWorkflowStep[Dict](**kwargs)

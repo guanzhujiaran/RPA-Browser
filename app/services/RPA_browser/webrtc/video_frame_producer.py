@@ -594,7 +594,9 @@ class VideoFrameProducer:
                         self._last_frame or self._green_frame(*self._frame_size)
                     )
                 else:
-                    logger.warning(f"JPEG 解码失败，跳过该帧（连续 {self._decode_failures} 次）")
+                    logger.warning(
+                        f"JPEG 解码失败，跳过该帧（连续 {self._decode_failures} 次）"
+                    )
 
         except asyncio.CancelledError:
             logger.debug("帧广播任务被取消")

@@ -1,4 +1,6 @@
-from app.models.common.exceptions.base_exception import BaseException as CustomBaseException
+from app.models.common.exceptions.base_exception import (
+    BaseException as CustomBaseException,
+)
 from fastapi import FastAPI
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
@@ -35,8 +37,7 @@ def setup_routes(app: FastAPI):
 
     # 注册异常处理器
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-    app.add_exception_handler(RequestValidationError,
-                              validation_exception_handler)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(CustomBaseException, custom_exception_handler)
     app.add_exception_handler(OperationalError, database_connection_handler)
     app.add_exception_handler(DisconnectionError, database_connection_handler)

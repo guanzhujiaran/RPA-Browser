@@ -12,6 +12,7 @@ from app.models.router.all_routes import (
 )
 from app.utils.controller.router_path import gen_api_router
 
+
 def new_action_router(dependencies=None) -> APIRouter:
     """自定义操作管理路由"""
     return gen_api_router(browser_control_action_router, dependencies)

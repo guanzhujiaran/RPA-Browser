@@ -12,6 +12,7 @@
 设计原则：
     采集失败绝不影响业务执行 —— save_action_log 内部吞掉所有异常，仅打印告警日志。
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -76,7 +77,9 @@ async def _resolve_db_log_option(action_id: str) -> Optional[ActionLogOption]:
                 retention_days=model.log_retention_days,
             )
     except Exception:
-        logger.warning(f"[ActionLog] 读取采集配置失败，按默认处理: {traceback.format_exc()}")
+        logger.warning(
+            f"[ActionLog] 读取采集配置失败，按默认处理: {traceback.format_exc()}"
+        )
 
     _DB_CACHE[action_id] = (time.monotonic() + _DB_CACHE_TTL, option)
     return option
@@ -158,7 +161,9 @@ async def save_action_log(
         try:
             await _save_fallback(ctx, str(traceback.format_exc()))
         except Exception:
-            logger.warning(f"[ActionLog] 写入操作日志失败({ctx.action_id}): {traceback.format_exc()}")
+            logger.warning(
+                f"[ActionLog] 写入操作日志失败({ctx.action_id}): {traceback.format_exc()}"
+            )
 
 
 async def _do_save(
@@ -168,7 +173,9 @@ async def _do_save(
     status: ActionLogStatusEnum | None = None,
 ) -> None:
     success = bool(getattr(result, "success", False))
-    option = await resolve_log_option(ctx.mid, ctx.action_id, ctx.params, ctx.log_config)
+    option = await resolve_log_option(
+        ctx.mid, ctx.action_id, ctx.params, ctx.log_config
+    )
     if option is None or not option.enabled:
         return
     if option.only_on_error and success:
@@ -196,10 +203,12 @@ async def _do_save(
         success=success,
         params=_safe_jsonify(ctx.params) if option.record_params else None,
         result_data=(
-            _safe_jsonify({
-                "success": success,
-                "data": getattr(result, "data", None),
-            })
+            _safe_jsonify(
+                {
+                    "success": success,
+                    "data": getattr(result, "data", None),
+                }
+            )
             if option.record_result
             else None
         ),

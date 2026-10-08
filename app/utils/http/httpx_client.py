@@ -3,6 +3,7 @@ HTTPX asynchronous client wrapper module
 Provides encapsulated asynchronous HTTP request functionality
 if headers is None, provide default headers with random fingerprint
 """
+
 import httpx
 import asyncio
 from collections.abc import Callable
@@ -18,14 +19,16 @@ class AsyncHttpClient:
     Provides commonly used HTTP methods with built-in error handling and logging
     """
 
-    def __init__(self, 
-                 timeout: float = 30.0,
-                 headers: Dict[str, str] | None = None,
-                 base_url: str | None = None,
-                 **kwargs):
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        headers: Dict[str, str] | None = None,
+        base_url: str | None = None,
+        **kwargs,
+    ):
         """
         Initialize the HTTP client
-        
+
         Args:
             timeout: Request timeout in seconds
             headers: Default headers to send with each request
@@ -54,7 +57,7 @@ class AsyncHttpClient:
                 timeout=self.timeout,
                 headers=self.headers,
                 base_url=self.base_url or "",
-                **self.kwargs
+                **self.kwargs,
             )
             logger.debug("HTTP client initialized")
 
@@ -65,19 +68,21 @@ class AsyncHttpClient:
             self.client = None
             logger.debug("HTTP client closed")
 
-    async def request(self, 
-                      method: str,
-                      url: str,
-                      *,
-                      content: str | bytes | None = None,
-                      data: Dict | None = None,
-                      json: Any | None = None,
-                      params: Dict | None = None,
-                      headers: Dict[str, str] | None = None,
-                      **kwargs) -> httpx.Response:
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        content: str | bytes | None = None,
+        data: Dict | None = None,
+        json: Any | None = None,
+        params: Dict | None = None,
+        headers: Dict[str, str] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
         """
         Make an HTTP request
-        
+
         Args:
             method: HTTP method (GET, POST, PUT, DELETE, etc.)
             url: Request URL
@@ -87,10 +92,10 @@ class AsyncHttpClient:
             params: Query parameters
             headers: Request headers
             **kwargs: Additional arguments passed to httpx.request
-            
+
         Returns:
             httpx.Response object
-            
+
         Raises:
             httpx.HTTPError: For HTTP errors
             httpx.RequestError: For request errors
@@ -107,12 +112,12 @@ class AsyncHttpClient:
                 json=json,
                 params=params,
                 headers=headers,
-                **kwargs
+                **kwargs,
             )
-            
+
             logger.debug(f"{method.upper()} {url} - Status: {response.status_code}")
             return response
-            
+
         except httpx.RequestError as e:
             logger.error(f"Request error for {method.upper()} {url}: {str(e)}")
             raise
@@ -120,72 +125,42 @@ class AsyncHttpClient:
             logger.error(f"HTTP error for {method.upper()} {url}: {str(e)}")
             raise
 
-    async def get(self, 
-                  url: str,
-                  *,
-                  params: Dict | None = None,
-                  headers: Dict[str, str] | None = None,
-                  **kwargs) -> httpx.Response:
+    async def get(
+        self,
+        url: str,
+        *,
+        params: Dict | None = None,
+        headers: Dict[str, str] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
         """
         Make a GET request
-        
+
         Args:
             url: Request URL
             params: Query parameters
             headers: Request headers
             **kwargs: Additional arguments passed to httpx.request
-            
+
         Returns:
             httpx.Response object
         """
         return await self.request("GET", url, params=params, headers=headers, **kwargs)
 
-    async def post(self,
-                   url: str,
-                   *,
-                   content: str | bytes | None = None,
-                   data: Dict | None = None,
-                   json: Any | None = None,
-                   params: Dict | None = None,
-                   headers: Dict[str, str] | None = None,
-                   **kwargs) -> httpx.Response:
+    async def post(
+        self,
+        url: str,
+        *,
+        content: str | bytes | None = None,
+        data: Dict | None = None,
+        json: Any | None = None,
+        params: Dict | None = None,
+        headers: Dict[str, str] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
         """
         Make a POST request
-        
-        Args:
-            url: Request URL
-            content: Raw content to send
-            data: Form data to send
-            json: JSON data to send
-            params: Query parameters
-            headers: Request headers
-            **kwargs: Additional arguments passed to httpx.request
-            
-        Returns:
-            httpx.Response object
-        """
-        return await self.request(
-            "POST", url, 
-            content=content, 
-            data=data, 
-            json=json, 
-            params=params, 
-            headers=headers, 
-            **kwargs
-        )
 
-    async def put(self,
-                  url: str,
-                  *,
-                  content: str | bytes | None = None,
-                  data: Dict | None = None,
-                  json: Any | None = None,
-                  params: Dict | None = None,
-                  headers: Dict[str, str] | None = None,
-                  **kwargs) -> httpx.Response:
-        """
-        Make a PUT request
-        
         Args:
             url: Request URL
             content: Raw content to send
@@ -194,39 +169,81 @@ class AsyncHttpClient:
             params: Query parameters
             headers: Request headers
             **kwargs: Additional arguments passed to httpx.request
-            
+
         Returns:
             httpx.Response object
         """
         return await self.request(
-            "PUT", url,
+            "POST",
+            url,
             content=content,
             data=data,
             json=json,
             params=params,
             headers=headers,
-            **kwargs
+            **kwargs,
         )
 
-    async def delete(self,
-                     url: str,
-                     *,
-                     params: Dict | None = None,
-                     headers: Dict[str, str] | None = None,
-                     **kwargs) -> httpx.Response:
+    async def put(
+        self,
+        url: str,
+        *,
+        content: str | bytes | None = None,
+        data: Dict | None = None,
+        json: Any | None = None,
+        params: Dict | None = None,
+        headers: Dict[str, str] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
+        """
+        Make a PUT request
+
+        Args:
+            url: Request URL
+            content: Raw content to send
+            data: Form data to send
+            json: JSON data to send
+            params: Query parameters
+            headers: Request headers
+            **kwargs: Additional arguments passed to httpx.request
+
+        Returns:
+            httpx.Response object
+        """
+        return await self.request(
+            "PUT",
+            url,
+            content=content,
+            data=data,
+            json=json,
+            params=params,
+            headers=headers,
+            **kwargs,
+        )
+
+    async def delete(
+        self,
+        url: str,
+        *,
+        params: Dict | None = None,
+        headers: Dict[str, str] | None = None,
+        **kwargs,
+    ) -> httpx.Response:
         """
         Make a DELETE request
-        
+
         Args:
             url: Request URL
             params: Query parameters
             headers: Request headers
             **kwargs: Additional arguments passed to httpx.request
-            
+
         Returns:
             httpx.Response object
         """
-        return await self.request("DELETE", url, params=params, headers=headers, **kwargs)
+        return await self.request(
+            "DELETE", url, params=params, headers=headers, **kwargs
+        )
 
 
 # Global client instance for simple use cases
@@ -236,7 +253,7 @@ _default_http_client: AsyncHttpClient | None = None
 def get_global_http_client() -> AsyncHttpClient:
     """
     Get a global HTTP client instance
-    
+
     Returns:
         AsyncHttpClient instance
     """
@@ -246,19 +263,21 @@ def get_global_http_client() -> AsyncHttpClient:
     return _default_http_client
 
 
-async def request(method: str,
-                  url: str,
-                  *,
-                  content: str | bytes | None = None,
-                  data: Dict | None = None,
-                  json: Any | None = None,
-                  params: Dict | None = None,
-                  headers: Dict[str, str] | None = None,
-                  timeout: float | None = None,
-                  **kwargs) -> httpx.Response:
+async def request(
+    method: str,
+    url: str,
+    *,
+    content: str | bytes | None = None,
+    data: Dict | None = None,
+    json: Any | None = None,
+    params: Dict | None = None,
+    headers: Dict[str, str] | None = None,
+    timeout: float | None = None,
+    **kwargs,
+) -> httpx.Response:
     """
     Make an HTTP request using the global client
-    
+
     Args:
         method: HTTP method (GET, POST, PUT, DELETE, etc.)
         url: Request URL
@@ -269,7 +288,7 @@ async def request(method: str,
         headers: Request headers
         timeout: Request timeout in seconds
         **kwargs: Additional arguments passed to httpx.request
-        
+
     Returns:
         httpx.Response object
     """
@@ -283,62 +302,70 @@ async def request(method: str,
         try:
             await temp_client.start()
             return await temp_client.request(
-                method, url,
+                method,
+                url,
                 content=content,
                 data=data,
                 json=json,
                 params=params,
                 headers=headers,
-                **kwargs
+                **kwargs,
             )
         finally:
             await temp_client.close()
     else:
         return await client.request(
-            method, url,
+            method,
+            url,
             content=content,
             data=data,
             json=json,
             params=params,
             headers=headers,
-            **kwargs
+            **kwargs,
         )
 
 
-async def get(url: str,
-              *,
-              params: Dict | None = None,
-              headers: Dict[str, str] | None = None,
-              timeout: float | None = None,
-              **kwargs) -> httpx.Response:
+async def get(
+    url: str,
+    *,
+    params: Dict | None = None,
+    headers: Dict[str, str] | None = None,
+    timeout: float | None = None,
+    **kwargs,
+) -> httpx.Response:
     """
     Make a GET request using the global client
-    
+
     Args:
         url: Request URL
         params: Query parameters
         headers: Request headers
         timeout: Request timeout in seconds
         **kwargs: Additional arguments passed to httpx.request
-        
+
     Returns:
         httpx.Response object
     """
-    return await request("GET", url, params=params, headers=headers, timeout=timeout, **kwargs)
+    return await request(
+        "GET", url, params=params, headers=headers, timeout=timeout, **kwargs
+    )
 
 
-async def post(url: str,
-               *,
-               content: str | bytes | None = None,
-               data: Dict | None = None,
-               json: Any | None = None,
-               params: Dict | None = None,
-               headers: Dict[str, str] | None = None,
-               timeout: float | None = None,
-               **kwargs) -> httpx.Response:
+async def post(
+    url: str,
+    *,
+    content: str | bytes | None = None,
+    data: Dict | None = None,
+    json: Any | None = None,
+    params: Dict | None = None,
+    headers: Dict[str, str] | None = None,
+    timeout: float | None = None,
+    **kwargs,
+) -> httpx.Response:
     """
     Make a POST request using the global client
-    
+
     Args:
         url: Request URL
         content: Raw content to send
@@ -348,34 +375,37 @@ async def post(url: str,
         headers: Request headers
         timeout: Request timeout in seconds
         **kwargs: Additional arguments passed to httpx.request
-        
+
     Returns:
         httpx.Response object
     """
     return await request(
-        "POST", url,
+        "POST",
+        url,
         content=content,
         data=data,
         json=json,
         params=params,
         headers=headers,
         timeout=timeout,
-        **kwargs
+        **kwargs,
     )
 
 
-async def put(url: str,
-              *,
-              content: str | bytes | None = None,
-              data: Dict | None = None,
-              json: Any | None = None,
-              params: Dict | None = None,
-              headers: Dict[str, str] | None = None,
-              timeout: float | None = None,
-              **kwargs) -> httpx.Response:
+async def put(
+    url: str,
+    *,
+    content: str | bytes | None = None,
+    data: Dict | None = None,
+    json: Any | None = None,
+    params: Dict | None = None,
+    headers: Dict[str, str] | None = None,
+    timeout: float | None = None,
+    **kwargs,
+) -> httpx.Response:
     """
     Make a PUT request using the global client
-    
+
     Args:
         url: Request URL
         content: Raw content to send
@@ -385,42 +415,47 @@ async def put(url: str,
         headers: Request headers
         timeout: Request timeout in seconds
         **kwargs: Additional arguments passed to httpx.request
-        
+
     Returns:
         httpx.Response object
     """
     return await request(
-        "PUT", url,
+        "PUT",
+        url,
         content=content,
         data=data,
         json=json,
         params=params,
         headers=headers,
         timeout=timeout,
-        **kwargs
+        **kwargs,
     )
 
 
-async def delete(url: str,
-                 *,
-                 params: Dict | None = None,
-                 headers: Dict[str, str] | None = None,
-                 timeout: float | None = None,
-                 **kwargs) -> httpx.Response:
+async def delete(
+    url: str,
+    *,
+    params: Dict | None = None,
+    headers: Dict[str, str] | None = None,
+    timeout: float | None = None,
+    **kwargs,
+) -> httpx.Response:
     """
     Make a DELETE request using the global client
-    
+
     Args:
         url: Request URL
         params: Query parameters
         headers: Request headers
         timeout: Request timeout in seconds
         **kwargs: Additional arguments passed to httpx.request
-        
+
     Returns:
         httpx.Response object
     """
-    return await request("DELETE", url, params=params, headers=headers, timeout=timeout, **kwargs)
+    return await request(
+        "DELETE", url, params=params, headers=headers, timeout=timeout, **kwargs
+    )
 
 
 __all__ = [
@@ -430,5 +465,5 @@ __all__ = [
     "get",
     "post",
     "put",
-    "delete"
+    "delete",
 ]

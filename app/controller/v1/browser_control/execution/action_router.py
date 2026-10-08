@@ -3,9 +3,14 @@ Action 管理路由
 
 提供系统预注册 Action 和用户复合 Action（Composite Action）的 API
 """
+
 from typing import Dict, List
 import uuid
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
@@ -37,19 +42,24 @@ router = new_action_router()
 
 def _convert_steps(steps: list) -> list[Dict]:
     """将 WorkflowStep 列表转换为 dict 列表"""
-    return [step.model_dump() if hasattr(step, "model_dump") else step for step in steps]
+    return [
+        step.model_dump() if hasattr(step, "model_dump") else step for step in steps
+    ]
 
 
 # ============ 系统预注册操作（只读，全 POST） ============
 
 
-@router.post(BrowserControlRouterPath.actions_registered, summary="获取系统预注册操作列表")
+@router.post(
+    BrowserControlRouterPath.actions_registered, summary="获取系统预注册操作列表"
+)
 async def list_registered_actions() -> StandardResponse[List[ActionMetadataResponse]]:
     """获取系统预注册操作列表（公开，只读）
 
     返回精简版 Action 元数据，仅包含 action_id 和 json_schema
     """
     from app.models.execution.action_params import BuiltinActionType
+
     response_actions = []
     for action_type in BuiltinActionType:
         meta = action_type.metadata
@@ -225,10 +235,7 @@ async def list_custom_actions(
 
     # 构建分页响应
     pagination = BasePaginationResp[CompositeActionListItemResponse](
-        page=request.page,
-        per_page=request.per_page,
-        total=total,
-        items=items
+        page=request.page, per_page=request.per_page, total=total, items=items
     )
 
     return success_response(pagination)
@@ -262,10 +269,16 @@ async def get_custom_action(
     try:
         ca_ids = ActionCrudService._collect_ca_action_ids(steps_data)
         if ca_ids:
-            detail_map = await action_crud_svr.get_validated_action_details(ca_ids, auth.mid)
-            ActionCrudService._annotate_steps_with_action_details(steps_data, detail_map)
+            detail_map = await action_crud_svr.get_validated_action_details(
+                ca_ids, auth.mid
+            )
+            ActionCrudService._annotate_steps_with_action_details(
+                steps_data, detail_map
+            )
     except Exception as e:
-        return error_response(getattr(e, "code", 403), str(e.msg) if hasattr(e, "msg") else str(e))
+        return error_response(
+            getattr(e, "code", 403), str(e.msg) if hasattr(e, "msg") else str(e)
+        )
 
     # 从多对多关联表加载标签
     tags = await action_crud_svr.get_tags_for_action(model.id)
@@ -428,7 +441,9 @@ async def delete_custom_action(
         return error_response(500, "删除失败")
 
 
-@router.post(BrowserControlRouterPath.custom_actions_tags, summary="获取用户所有去重标签")
+@router.post(
+    BrowserControlRouterPath.custom_actions_tags, summary="获取用户所有去重标签"
+)
 async def list_custom_action_tags(
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[List[str]]:
@@ -449,7 +464,10 @@ async def search_custom_action_tags(
     return success_response([TagWithCount(**t) for t in tags])
 
 
-@router.post(BrowserControlRouterPath.custom_actions_names_search, summary="搜索操作名称（输入联想）")
+@router.post(
+    BrowserControlRouterPath.custom_actions_names_search,
+    summary="搜索操作名称（输入联想）",
+)
 async def search_custom_action_names(
     request: NameSearchRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -461,7 +479,11 @@ async def search_custom_action_names(
     return success_response(names)
 
 
-@router.post("/custom_actions/fork", summary="Fork 自定义操作（类似 GitHub）", response_model=StandardResponse[ActionForkResponse])
+@router.post(
+    "/custom_actions/fork",
+    summary="Fork 自定义操作（类似 GitHub）",
+    response_model=StandardResponse[ActionForkResponse],
+)
 async def fork_custom_action(
     request: ActionForkRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -485,9 +507,7 @@ async def fork_custom_action(
     try:
         # 执行 Fork
         model = await action_crud_svr.fork(
-            id=original.id,
-            target_mid=auth.mid,
-            new_name=request.new_name
+            id=original.id, target_mid=auth.mid, new_name=request.new_name
         )
 
         if not model:
@@ -499,7 +519,7 @@ async def fork_custom_action(
                 name=model.name,
                 forked_from=original.name,
             ),
-            msg="Fork 成功"
+            msg="Fork 成功",
         )
     except ValueError as e:
         return error_response(400, str(e))
@@ -542,10 +562,7 @@ async def get_action_forks(
     ]
 
     pagination = BasePaginationResp[CompositeActionListItemResponse](
-        page=1,
-        per_page=limit,
-        total=len(items),
-        items=items
+        page=1, per_page=limit, total=len(items), items=items
     )
 
     return success_response(pagination)

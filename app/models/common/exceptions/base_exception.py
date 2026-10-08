@@ -116,7 +116,8 @@ class BrowserPageIndexError(BaseException):
 
     def __init__(self, page_index: int):
         self.msg = ResponseMsg.exception_browser_page_index_error.format(
-            page_index=page_index)
+            page_index=page_index
+        )
 
 
 class GetBrowserInfoFailedException(BaseException):
@@ -144,6 +145,7 @@ class NameAlreadyExistsException(BaseException):
     故使用业务码 NAME_ALREADY_EXISTS（HTTP 200 承载）—— 若沿用 400，
     非 2xx 会使前端 SDK 丢弃响应体，用户只会看到兜底的「操作失败」。
     """
+
     code = ResponseCode.NAME_ALREADY_EXISTS
     msg = "您已存在名为 '{name}' 的{name_type}，请使用其他名称"
 
@@ -153,6 +155,7 @@ class NameAlreadyExistsException(BaseException):
 
 class ActionNotAccessibleException(BaseException):
     """无权访问自定义操作异常"""
+
     code = ResponseCode.FORBIDDEN
     msg = "无权访问操作: {action_id}"
 
@@ -167,6 +170,7 @@ class BrowserWorkflowRunningException(BaseException):
     ``execute_steps``（工作流）都会 pin，无法据此区分「工作流在执行」与「用户自己在调试」，
     因此依赖 ``BrowserSessionEntry.workflow_run_id``。
     """
+
     code = ResponseCode.BROWSER_WORKFLOW_RUNNING
     msg = ResponseMsg.exception_browser_workflow_running
 
@@ -177,8 +181,176 @@ class ActionNotFoundException(BaseException):
     业务缺失（非 HTTP 404 语义）：走业务码 ACTION_NOT_FOUND（HTTP 200 承载），
     便于前端提示「引用的操作已被删除」。
     """
+
     code = ResponseCode.ACTION_NOT_FOUND
     msg = "引用的操作不存在: {action_id}"
 
     def __init__(self, action_id: str):
         self.msg = self.msg.format(action_id=action_id)
+
+
+# ============ 时长 / 会员权益（见计划书 docs/浏览器使用时长与会员权益计划书.md） ============
+
+
+class DurationInsufficientException(BaseException):
+    """时长余额不足，定时工作流拒绝启动"""
+
+    code = ResponseCode.DURATION_INSUFFICIENT
+    msg = ResponseMsg.exception_duration_insufficient
+
+
+class RedeemCodeInvalidException(BaseException):
+    """兑换码无效 / 已停用 / 已过期"""
+
+    code = ResponseCode.REDEEM_CODE_INVALID
+    msg = ResponseMsg.exception_redeem_code_invalid
+
+
+class RedeemCodeExhaustedException(BaseException):
+    """兑换码可用次数已用尽"""
+
+    code = ResponseCode.REDEEM_CODE_EXHAUSTED
+    msg = ResponseMsg.exception_redeem_code_exhausted
+
+
+class RedeemCodeAlreadyUsedException(BaseException):
+    """该用户已兑换过此码"""
+
+    code = ResponseCode.REDEEM_CODE_ALREADY_USED
+    msg = ResponseMsg.exception_redeem_code_already_used
+
+
+class SignInAlreadyTodayException(BaseException):
+    """今日已签到"""
+
+    code = ResponseCode.SIGN_IN_ALREADY_TODAY
+    msg = ResponseMsg.exception_sign_in_already_today
+
+
+class PaymentVerifyFailedException(BaseException):
+    """支付状态核验失败（Casdoor 查询失败/未配置）"""
+
+    code = ResponseCode.PAYMENT_VERIFY_FAILED
+    msg = ResponseMsg.exception_payment_verify_failed
+
+
+class InvalidLedgerChangeTypeException(BaseException):
+    """时长流水过滤参数非法（change_types 含未定义的变动类型）"""
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "非法的时长变动类型: {change_type}"
+
+    def __init__(self, change_type: str):
+        self.msg = self.msg.format(change_type=change_type)
+
+
+class InvalidSignInMonthException(BaseException):
+    """签到日历查询月份非法（需 YYYY-MM）"""
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "非法的查询月份: {month}（需 YYYY-MM）"
+
+    def __init__(self, month: str | None):
+        self.msg = self.msg.format(month=month)
+
+
+class SignMakeupNotAllowedException(BaseException):
+    """补签目标日期非法：仅支持补签本月已漏签的过去日期"""
+
+    code = ResponseCode.SIGN_MAKEUP_NOT_ALLOWED
+    msg = ResponseMsg.exception_sign_makeup_not_allowed
+
+
+class SignMakeupAlreadySignedException(BaseException):
+    """补签目标日期已签到"""
+
+    code = ResponseCode.SIGN_MAKEUP_ALREADY_SIGNED
+    msg = ResponseMsg.exception_sign_makeup_already_signed
+
+
+class SignMakeupCardNotEnoughException(BaseException):
+    """补登卡不足"""
+
+    code = ResponseCode.SIGN_MAKEUP_CARD_NOT_ENOUGH
+    msg = ResponseMsg.exception_sign_makeup_card_not_enough
+
+
+class SignRewardTierLockedException(BaseException):
+    """奖励档位未解锁（累计签到天数不足）"""
+
+    code = ResponseCode.SIGN_REWARD_TIER_LOCKED
+    msg = ResponseMsg.exception_sign_reward_tier_locked
+
+    def __init__(self, required_days: int):
+        self.msg = self.msg.format(days=required_days)
+
+
+class SignRewardTierExchangedException(BaseException):
+    """该奖励档位已兑换过"""
+
+    code = ResponseCode.SIGN_REWARD_TIER_EXCHANGED
+    msg = ResponseMsg.exception_sign_reward_tier_exchanged
+
+
+class SignRewardTierNotFoundException(BaseException):
+    """奖励档位不存在（枚举与配置不匹配，属服务端错误）"""
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "奖励档位未配置: {tier}"
+
+    def __init__(self, tier: str):
+        self.msg = self.msg.format(tier=tier)
+
+
+class InvalidSignInDateException(BaseException):
+    """补签日期格式非法（需 YYYY-MM-DD）"""
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "非法的补签日期: {date}（需 YYYY-MM-DD）"
+
+    def __init__(self, date: str | None):
+        self.msg = self.msg.format(date=date)
+
+
+class InvalidSignRewardTierException(BaseException):
+    """奖励档位标识非法（需 7d / 14d / 28d）"""
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "非法的奖励档位: {tier}（需 7d / 14d / 28d）"
+
+    def __init__(self, tier: str | None):
+        self.msg = self.msg.format(tier=tier)
+
+
+class InvalidSignRewardConfigException(BaseException):
+    """签到奖励配置非法（数值非数字 / 档位为空或未按天数升序等）"""
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "非法的签到奖励配置: {detail}"
+
+    def __init__(self, detail: str):
+        self.msg = self.msg.format(detail=detail)
+
+
+class InvalidMembershipParamException(BaseException):
+    """会员权益模块通用参数非法（兑换码生成参数、日期区间、分页参数等）
+
+    统一复用 ``ResponseCode.INVALID_PARAM``，业务码集中在
+    ``bili_common.models.response_code`` 管理。
+    """
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "{detail}"
+
+    def __init__(self, detail: str):
+        self.msg = self.msg.format(detail=detail)
+
+
+class DateRangeTooLargeException(BaseException):
+    """使用统计查询区间过大（保护 DB，限制最大跨度）"""
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "查询区间过大：最多 {max_days} 天（当前 {days} 天）"
+
+    def __init__(self, days: int, max_days: int):
+        self.msg = self.msg.format(days=days, max_days=max_days)

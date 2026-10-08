@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 
-from app.models.router.all_routes import browser_fingerprint_router, browser_notification_router
+from app.models.router.all_routes import (
+    browser_fingerprint_router,
+    browser_notification_router,
+)
 from app.utils.controller.router_path import gen_api_router
 
 

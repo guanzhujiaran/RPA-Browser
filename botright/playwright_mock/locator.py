@@ -44,15 +44,28 @@ class Locator(PlaywrightLocator):
         has: Optional[PlaywrightLocator] = None,
         has_not: Optional[PlaywrightLocator] = None,
     ) -> Locator:
-        _locator = self.origin_locator(selector_or_locator, has=has, has_not=has_not, has_text=has_text, has_not_text=has_not_text)
+        _locator = self.origin_locator(
+            selector_or_locator,
+            has=has,
+            has_not=has_not,
+            has_text=has_text,
+            has_not_text=has_not_text,
+        )
         locator = Locator(_locator, self._page)
         return locator
 
     # JsHandle
-    async def evaluate_handle(self, expression: str, arg: Optional[Any] = None, timeout: Optional[float] = None) -> Union[JSHandle, ElementHandle]:
+    async def evaluate_handle(
+        self,
+        expression: str,
+        arg: Optional[Any] = None,
+        timeout: Optional[float] = None,
+    ) -> Union[JSHandle, ElementHandle]:
         from . import ElementHandle, JSHandle
 
-        _js_handle = await self.origin_evaluate_handle(expression=expression, arg=arg, timeout=timeout)
+        _js_handle = await self.origin_evaluate_handle(
+            expression=expression, arg=arg, timeout=timeout
+        )
         if isinstance(_js_handle, PlaywrightElementHandle):
             element_handle = ElementHandle(_js_handle, self._page)
             return element_handle
@@ -117,7 +130,9 @@ class Locator(PlaywrightLocator):
         click_count: Optional[int] = 1,
         delay: Optional[float] = 20.0,
         force: Optional[bool] = False,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         no_wait_after: Optional[bool] = False,
         position: Optional[Position] = None,
         timeout: Optional[float] = None,
@@ -140,7 +155,12 @@ class Locator(PlaywrightLocator):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -149,14 +169,18 @@ class Locator(PlaywrightLocator):
             for modifier in modifiers:
                 await self._page.keyboard.down(modifier)
 
-            await self._page.mouse.click(x=int(x), y=y, button=button, click_count=click_count, delay=delay)
+            await self._page.mouse.click(
+                x=int(x), y=y, button=button, click_count=click_count, delay=delay
+            )
 
             for modifier in modifiers:
                 await self._page.keyboard.up(modifier)
 
     async def dblclick(
         self,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         position: Optional[Position] = None,
         delay: Optional[float] = 20.0,
         button: Optional[Literal["left", "middle", "right"]] = None,
@@ -182,7 +206,12 @@ class Locator(PlaywrightLocator):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -197,7 +226,12 @@ class Locator(PlaywrightLocator):
                 await self._page.keyboard.up(modifier)
 
     async def check(
-        self, position: Optional[Position] = None, timeout: Optional[float] = None, force: Optional[bool] = None, no_wait_after: Optional[bool] = None, trial: Optional[bool] = None
+        self,
+        position: Optional[Position] = None,
+        timeout: Optional[float] = None,
+        force: Optional[bool] = None,
+        no_wait_after: Optional[bool] = None,
+        trial: Optional[bool] = None,
     ) -> None:
         position = position or Position(x=0, y=0)
 
@@ -218,7 +252,12 @@ class Locator(PlaywrightLocator):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -229,7 +268,12 @@ class Locator(PlaywrightLocator):
             assert await self.is_checked()
 
     async def uncheck(
-        self, force: Optional[bool] = False, no_wait_after: Optional[bool] = False, position: Optional[Position] = None, timeout: Optional[float] = None, trial: Optional[bool] = False
+        self,
+        force: Optional[bool] = False,
+        no_wait_after: Optional[bool] = False,
+        position: Optional[Position] = None,
+        timeout: Optional[float] = None,
+        trial: Optional[bool] = False,
     ) -> None:
         position = position or Position(x=0, y=0)
 
@@ -250,7 +294,12 @@ class Locator(PlaywrightLocator):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -261,7 +310,13 @@ class Locator(PlaywrightLocator):
             assert not await self.is_checked()
 
     async def set_checked(
-        self, checked: bool, force: Optional[bool] = False, no_wait_after: Optional[bool] = False, position: Optional[Position] = None, timeout: Optional[float] = None, trial: Optional[bool] = False
+        self,
+        checked: bool,
+        force: Optional[bool] = False,
+        no_wait_after: Optional[bool] = False,
+        position: Optional[Position] = None,
+        timeout: Optional[float] = None,
+        trial: Optional[bool] = False,
     ) -> None:
         position = position or Position(x=0, y=0)
 
@@ -282,7 +337,12 @@ class Locator(PlaywrightLocator):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -295,7 +355,9 @@ class Locator(PlaywrightLocator):
     async def hover(
         self,
         force: Optional[bool] = False,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         position: Optional[Position] = None,
         timeout: Optional[float] = None,
         trial: Optional[bool] = False,
@@ -318,7 +380,12 @@ class Locator(PlaywrightLocator):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -332,7 +399,13 @@ class Locator(PlaywrightLocator):
             for modifier in modifiers:
                 await self._page.keyboard.up(modifier)
 
-    async def type(self, text: str, delay: Optional[float] = 200.0, no_wait_after: Optional[bool] = False, timeout: Optional[float] = None) -> None:
+    async def type(
+        self,
+        text: str,
+        delay: Optional[float] = 200.0,
+        no_wait_after: Optional[bool] = False,
+        timeout: Optional[float] = None,
+    ) -> None:
         await self.wait_for(state="attached", timeout=timeout)
 
         bounding_box = await self.bounding_box()
@@ -342,7 +415,12 @@ class Locator(PlaywrightLocator):
         if self._page.scroll_into_view:
             await self.scroll_into_view_if_needed(timeout=timeout)
 
-        x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+        x, y, width, height = (
+            bounding_box["x"],
+            bounding_box["y"],
+            bounding_box["width"],
+            bounding_box["height"],
+        )
 
         x, y = x + width // 2, y + height // 2
 

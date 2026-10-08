@@ -5,6 +5,7 @@
 步骤级明细仍在 ActionLogRecord（source=workflow + workflow_id），
 通过 execution_id 关联下钻。
 """
+
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List
@@ -101,7 +102,9 @@ class WorkflowRunCrudService:
             return True
 
     @staticmethod
-    async def get_by_run_id(run_id: str, mid: int | str | None = None) -> WorkflowRunRecord | None:
+    async def get_by_run_id(
+        run_id: str, mid: int | str | None = None
+    ) -> WorkflowRunRecord | None:
         """按运行ID查询（可选校验归属）"""
         async with DatabaseSessionManager.async_session() as session:
             query = select(WorkflowRunRecord).where(WorkflowRunRecord.run_id == run_id)

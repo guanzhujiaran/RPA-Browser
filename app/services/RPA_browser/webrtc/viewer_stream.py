@@ -245,9 +245,7 @@ class ViewerStream:
         self.pc.on("iceconnectionstatechange")(self._on_ice_state_change)
         self.pc.on("connectionstatechange")(self._on_connection_state_change)
 
-        logger.debug(
-            f"ViewerStream 已创建: {stream_key} (page_index={page_index})"
-        )
+        logger.debug(f"ViewerStream 已创建: {stream_key} (page_index={page_index})")
 
     # ── 状态 ──
 

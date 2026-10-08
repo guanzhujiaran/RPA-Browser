@@ -10,7 +10,11 @@
 from fastapi import Depends
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.models.database.browser.info import (
     UserBrowserDefaultSettingRequest,
@@ -21,7 +25,9 @@ from bili_common.models.depends import (
     VerifyBrowserDependsReq,
     BrowserReqAuthInfo,
 )
-from app.services.RPA_browser.fingerprint.browser_fingerprint_service import BrowserFingerprintService
+from app.services.RPA_browser.fingerprint.browser_fingerprint_service import (
+    BrowserFingerprintService,
+)
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.depends.security_depends import verify_browser_ownership
@@ -53,7 +59,9 @@ async def get_user_default_settings(
 
     如果用户没有设置过默认设置，返回 null
     """
-    settings = await BrowserFingerprintService.get_user_default_settings(auth.mid, session)
+    settings = await BrowserFingerprintService.get_user_default_settings(
+        auth.mid, session
+    )
 
     if not settings:
         return success_response(None)
@@ -99,7 +107,9 @@ async def delete_user_default_settings(
 
     成功删除返回 true，如果设置不存在返回 false
     """
-    result = await BrowserFingerprintService.delete_user_default_settings(auth.mid, session)
+    result = await BrowserFingerprintService.delete_user_default_settings(
+        auth.mid, session
+    )
     return success_response(result)
 
 
@@ -141,9 +151,9 @@ class GetServerDefaultsRequest(SQLModel):
 
 
 @router.post(UserBrowserDefaultSettingRouterPath.get_server_user_setting_defaults)
-async def get_server_default_settings() -> (
-    StandardResponse[UserBrowserDefaultSettingResponse]
-):
+async def get_server_default_settings() -> StandardResponse[
+    UserBrowserDefaultSettingResponse
+]:
     """
     获取服务端预定义的默认设置
 

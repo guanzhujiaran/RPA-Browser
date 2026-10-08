@@ -11,6 +11,7 @@ RPA 不再持有独立的 RpaAdmin 表，旧 `role/grant`、`role/revoke`、`rol
 - get_admin_status:      任意登录用户查询自身角色状态（转发 be-message /me 结果，用于前端显隐）
 - assert_approved:       审批单校验（保持原逻辑，未改动）
 """
+
 import time
 from typing import Awaitable, Callable
 
@@ -28,7 +29,9 @@ from bili_common.models.response_code import ResponseCode
 from loguru import logger
 
 from app.config import settings
-from app.models.common.exceptions.base_exception import BaseException as CustomBaseException
+from app.models.common.exceptions.base_exception import (
+    BaseException as CustomBaseException,
+)
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.http import httpx_client
 
@@ -93,7 +96,9 @@ async def _get_admin_status(mid: int) -> AdminStatusResponse:
     return await _fetch_admin_status(mid)
 
 
-async def require_admin(auth: AuthInfo = Depends(get_auth_info_from_header)) -> AuthInfo:
+async def require_admin(
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> AuthInfo:
     """root 或 be-message 判定为管理员的用户可通过，否则抛 403（防止越权）"""
     if auth.role == UserRole.ROOT.value:
         return auth

@@ -15,7 +15,7 @@ from browserforge.fingerprints import (
 )
 from dacite import from_dict
 from playwright.async_api import ViewportSize
-from pydantic import model_validator,computed_field, field_validator
+from pydantic import model_validator, computed_field, field_validator
 import sys
 
 Int32 = Annotated[int, Field(ge=-2147483648, le=2147483647)]
@@ -47,12 +47,14 @@ class LogPluginLogLevelEnum(StrEnumAutoDoc):
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
 
+
 class BaseBrowserId(SQLModel):
     """
     浏览器指纹基础参数模型
     """
+
     browser_id: int | str
-    
+
     @field_validator("browser_id", mode="before")
     @classmethod
     def validate_id(cls, v):
@@ -62,13 +64,15 @@ class BaseBrowserId(SQLModel):
     @property
     def browser_id_str(self) -> str:
         return str(self.browser_id)
-    
+
 
 class BaseBrowserIdOptional(SQLModel):
     """
     浏览器指纹基础参数模型
     """
+
     browser_id: int | str | None = None
+
     @field_validator("browser_id", mode="before")
     @classmethod
     def validate_id(cls, v):
@@ -77,22 +81,26 @@ class BaseBrowserIdOptional(SQLModel):
     @computed_field
     @property
     def browser_id_str(self) -> str:
-        return str(self.browser_id or '')
+        return str(self.browser_id or "")
+
 
 class BaseUserMid(SQLModel):
     """
     用户ID基础参数模型
     """
+
     mid: int | str
+
     @field_validator("mid", mode="before")
     @classmethod
     def validate_id(cls, v):
         return int(v) if v is not None and isinstance(v, str) else v
-    
+
     @computed_field
     @property
     def mid_str(self) -> str:
         return str(self.mid)
+
 
 class BaseFeedbackInfo(SQLModel):
     is_success: bool = True
@@ -269,5 +277,5 @@ __all__ = [
     "BaseBrowserIdOptional",
     "BaseBrowserId",
     "BaseUserMid",
-    "BaseFeedbackInfo"
+    "BaseFeedbackInfo",
 ]

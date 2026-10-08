@@ -138,7 +138,9 @@ async def download_file(
     raise RuntimeError(f"所有镜像下载失败(含直连): {mirror_urls or '直连'}")
 
 
-async def install_one_executable(exec_info, progress_position: int | None = None) -> None:
+async def install_one_executable(
+    exec_info, progress_position: int | None = None
+) -> None:
     """校验并安装单个浏览器镜像（并发单元）
 
     镜像列表内部仍串行：只有当前代理失败时才换下一个代理，不会对同一个文件并发抢多个代理。
@@ -160,7 +162,9 @@ async def install_one_executable(exec_info, progress_position: int | None = None
             f"{exec_info.exec_path}"
         )
         safe_remove(exec_info.exec_path)
-    logger.info(f"检测到 Chromium 浏览器未安装，开始下载: {os.path.basename(exec_info.exec_path)}")
+    logger.info(
+        f"检测到 Chromium 浏览器未安装，开始下载: {os.path.basename(exec_info.exec_path)}"
+    )
     await download_file(
         exec_info.download_url,
         exec_info.exec_path,

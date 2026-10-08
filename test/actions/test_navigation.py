@@ -1,6 +1,7 @@
 """
 测试导航操作
 """
+
 import pytest
 from playwright.async_api import Page
 
@@ -55,7 +56,9 @@ class TestNavigateAction:
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=NavigateParams(url="about:blank", wait_until=WaitUntilEnum.DOMCONTENTLOADED),
+            params=NavigateParams(
+                url="about:blank", wait_until=WaitUntilEnum.DOMCONTENTLOADED
+            ),
         )
 
         result = await action.execute()
@@ -87,7 +90,9 @@ class TestNavigateAction:
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=NavigateParams(url="about:blank", wait_until=WaitUntilEnum.NETWORKIDLE),
+            params=NavigateParams(
+                url="about:blank", wait_until=WaitUntilEnum.NETWORKIDLE
+            ),
         )
 
         result = await action.execute()

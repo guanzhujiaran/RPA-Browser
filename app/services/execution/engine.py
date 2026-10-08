@@ -42,7 +42,11 @@ from app.services.execution.action_logger import (
     save_action_log,
 )
 from app.models.database.workflow.models import WorkflowStep
-from app.services.execution.crud_service import action_crud_svr, plugin_crud_svr, workflow_crud_svr
+from app.services.execution.crud_service import (
+    action_crud_svr,
+    plugin_crud_svr,
+    workflow_crud_svr,
+)
 from app.models.execution.action_params import (
     ActionMetadata,
     PluginConfig,
@@ -51,7 +55,9 @@ from app.models.execution.action_params import (
     ActionLogOption,
 )
 from app.models.execution.condition_models import ConditionRule
-from app.services.execution.actions.control_flow import CompositeAction as CompositeActionClass
+from app.services.execution.actions.control_flow import (
+    CompositeAction as CompositeActionClass,
+)
 from app.services.execution.action_registry import action_registry
 from app.services.RPA_browser.session.live_service import live_service
 from app.models.execution.request_params import (
@@ -94,7 +100,7 @@ class ExecutionEngine:
         try:
             # 构建 Scope（兼容旧 req.variables dict）
             scope = Scope(req.variables)
-            output_vars = getattr(req, 'output_vars', None) or []
+            output_vars = getattr(req, "output_vars", None) or []
 
             return await self._run_action(
                 action_id=req.action_id,
@@ -106,8 +112,10 @@ class ExecutionEngine:
                 page=page,
                 plugins=plugins or [],
                 mid=req.mid,
-                auth_headers=getattr(req, 'auth_headers', {}) or {},
-                execution_id=execution_id or getattr(req, 'execution_id', '') or new_execution_id(),
+                auth_headers=getattr(req, "auth_headers", {}) or {},
+                execution_id=execution_id
+                or getattr(req, "execution_id", "")
+                or new_execution_id(),
                 parent_execution_id=parent_execution_id,
                 log_source=log_source,
             )
@@ -142,9 +150,9 @@ class ExecutionEngine:
         try:
             scope = Scope(req.variables)
             scope.set("execute_steps_func", self.execute_steps)
-            req_auth_headers = getattr(req, 'auth_headers', {}) or {}
-            exec_id = getattr(req, 'execution_id', '') or new_execution_id()
-            workflow_id = getattr(req, 'workflow_id', None)
+            req_auth_headers = getattr(req, "auth_headers", {}) or {}
+            exec_id = getattr(req, "execution_id", "") or new_execution_id()
+            workflow_id = getattr(req, "workflow_id", None)
 
             pipeline = PipelineBuilder.build(steps)
 
@@ -285,7 +293,12 @@ class ExecutionEngine:
 
         action_class = await action_registry.get_action_class_for_user(action_id)
         if not action_class:
-            return self._fail(f"未找到操作: {action_id}", action_id, start, replaced_params=dict(params))
+            return self._fail(
+                f"未找到操作: {action_id}",
+                action_id,
+                start,
+                replaced_params=dict(params),
+            )
 
         # InputAction 的变量缺失或为 None 时替换为空字符串
         resolve_default = "" if action_id == BuiltinActionType.INPUT else None
@@ -294,7 +307,12 @@ class ExecutionEngine:
             # 校验用户是否有权执行此复合操作（自身或公开）
             ca_model = await action_crud_svr.get_by_action_id(action_id)
             if ca_model and ca_model.mid != str(mid) and not ca_model.is_public:
-                return self._fail(f"无权访问操作: {action_id}", action_id, start, replaced_params=merged)
+                return self._fail(
+                    f"无权访问操作: {action_id}",
+                    action_id,
+                    start,
+                    replaced_params=merged,
+                )
 
             db_steps = await action_registry.get_custom_action_steps(action_id)
             if db_steps and not merged.get("steps"):
@@ -302,18 +320,22 @@ class ExecutionEngine:
             # 校验 steps 中引用的所有 ca_ 操作是否可访问，防止越权执行
             steps_to_validate = merged.get("steps", [])
             if steps_to_validate:
-                await action_crud_svr.validate_steps_referenced_actions(steps_to_validate, mid)
+                await action_crud_svr.validate_steps_referenced_actions(
+                    steps_to_validate, mid
+                )
 
         action: BaseAction = action_class.new_action(
             mid=mid,
             page=page,
-            variables=scope.current,      # ← 同一引用，不拷贝
+            variables=scope.current,  # ← 同一引用，不拷贝
             params=merged,
             output_vars=output_vars,
         )
         # 解析本操作的日志采集配置，供内部子步骤继承（自定义操作按其基础配置，
         # 内置操作按服务端兜底；也可由执行参数中的 log 选项显式覆盖）
-        log_cfg: ActionLogOption | None = await resolve_log_option(mid, action_id, merged)
+        log_cfg: ActionLogOption | None = await resolve_log_option(
+            mid, action_id, merged
+        )
         if log_ctx is not None:
             log_ctx.log_config = log_cfg
         # 透传本系统认证请求头，供 HTTP 请求类操作按需附带
@@ -330,14 +352,35 @@ class ExecutionEngine:
 
         ok, err = action.validate_params(merged)
         if not ok:
-            return self._fail(err or "参数验证失败", action_id, start, action.action_name, replaced_params=merged)
+            return self._fail(
+                err or "参数验证失败",
+                action_id,
+                start,
+                action.action_name,
+                replaced_params=merged,
+            )
 
         plugins = plugins or []
 
         try:
             # ── before_action 插件（失败中断） ──
-            if fail := await self._run_hooks("before_action", plugins, session_id, browser_id, page, scope, mid, execution_id):
-                return self._fail(f"前置插件失败: {fail}", action_id, start, action.action_name, replaced_params=merged)
+            if fail := await self._run_hooks(
+                "before_action",
+                plugins,
+                session_id,
+                browser_id,
+                page,
+                scope,
+                mid,
+                execution_id,
+            ):
+                return self._fail(
+                    f"前置插件失败: {fail}",
+                    action_id,
+                    start,
+                    action.action_name,
+                    replaced_params=merged,
+                )
 
             logger.info(f"▶ 执行: {action.action_name} ({action_id})")
             result = await action.execute()
@@ -345,9 +388,14 @@ class ExecutionEngine:
             # ── after_action 插件（失败仅警告） ──
             if plugins:
                 after_results = await self._execute_plugins(
-                    plugins=plugins, hook_type="after_action",
-                    session_id=session_id, browser_id=browser_id, page=page,
-                    variables=scope.current, mid=mid, action_result=result,
+                    plugins=plugins,
+                    hook_type="after_action",
+                    session_id=session_id,
+                    browser_id=browser_id,
+                    page=page,
+                    variables=scope.current,
+                    mid=mid,
+                    action_result=result,
                 )
                 for r in after_results:
                     if not r.success:
@@ -360,19 +408,47 @@ class ExecutionEngine:
 
             await self._run_hooks(
                 "on_success" if result.success else "on_error",
-                plugins, session_id, browser_id, page, scope, mid, execution_id,
+                plugins,
+                session_id,
+                browser_id,
+                page,
+                scope,
+                mid,
+                execution_id,
             )
 
             return result
 
         except asyncio.TimeoutError:
-            await self._run_hooks("on_timeout", plugins, session_id, browser_id, page, scope, mid, execution_id)
-            return self._fail("操作超时", action_id, start, action.action_name, replaced_params=merged)
+            await self._run_hooks(
+                "on_timeout",
+                plugins,
+                session_id,
+                browser_id,
+                page,
+                scope,
+                mid,
+                execution_id,
+            )
+            return self._fail(
+                "操作超时", action_id, start, action.action_name, replaced_params=merged
+            )
 
         except Exception as e:
             logger.error(f"操作失败: {action_id} - {e}")
-            await self._run_hooks("on_error", plugins, session_id, browser_id, page, scope, mid, execution_id)
-            return self._fail(str(e), action_id, start, action.action_name, replaced_params=merged)
+            await self._run_hooks(
+                "on_error",
+                plugins,
+                session_id,
+                browser_id,
+                page,
+                scope,
+                mid,
+                execution_id,
+            )
+            return self._fail(
+                str(e), action_id, start, action.action_name, replaced_params=merged
+            )
 
     # ═══════════════ 插件系统 ─────────────────────────────────
 
@@ -422,7 +498,10 @@ class ExecutionEngine:
                     variables=p_vars,
                 )
                 pr = await self.execute_action(
-                    p_req, session_id=session_id, browser_id=browser_id, page=page,
+                    p_req,
+                    session_id=session_id,
+                    browser_id=browser_id,
+                    page=page,
                     parent_execution_id=execution_id,
                     log_source=ActionLogSourceEnum.PLUGIN,
                 )
@@ -430,12 +509,15 @@ class ExecutionEngine:
                 plugin_results.append(pr)
             except Exception as e:
                 logger.error(f"[Plugin] 失败: {e}")
-                plugin_results.append(ActionResult(
-                    success=False, error=str(e),
-                    execution_time=0,
-                    action_id=pc.plugin_id,
-                    action_name=f"Plugin: {pc.plugin_id}",
-                ))
+                plugin_results.append(
+                    ActionResult(
+                        success=False,
+                        error=str(e),
+                        execution_time=0,
+                        action_id=pc.plugin_id,
+                        action_name=f"Plugin: {pc.plugin_id}",
+                    )
+                )
         return plugin_results
 
     async def _run_hooks(
@@ -453,9 +535,14 @@ class ExecutionEngine:
         if not plugins:
             return None
         results = await self._execute_plugins(
-            plugins=plugins, hook_type=hook_type,
-            session_id=session_id, browser_id=browser_id, page=page,
-            variables=scope.current, mid=mid, execution_id=execution_id,
+            plugins=plugins,
+            hook_type=hook_type,
+            session_id=session_id,
+            browser_id=browser_id,
+            page=page,
+            variables=scope.current,
+            mid=mid,
+            execution_id=execution_id,
         )
         first = next((r for r in results if not r.success), None)
         return (first.error or f"{hook_type} 插件失败") if first else None
@@ -463,11 +550,19 @@ class ExecutionEngine:
     # ═══════════════ 工具方法 ─────────────────────────────────
 
     @staticmethod
-    def _fail(error: str, action_id: str, start: float, action_name: str = "", replaced_params: dict | None = None) -> ActionResult:
+    def _fail(
+        error: str,
+        action_id: str,
+        start: float,
+        action_name: str = "",
+        replaced_params: dict | None = None,
+    ) -> ActionResult:
         return ActionResult(
-            success=False, error=error,
+            success=False,
+            error=error,
             execution_time=time.time() - start,
-            action_id=action_id, action_name=action_name,
+            action_id=action_id,
+            action_name=action_name,
             replaced_params=replaced_params or {},
         )
 
@@ -482,12 +577,19 @@ class ExecutionEngine:
         return action_registry.get_all_action_metadatas()
 
     @staticmethod
-    async def preview_action(mid: int, action_id: str, params: dict | None = None, input_vars: dict | None = None) -> Dict[str, Any]:
+    async def preview_action(
+        mid: int,
+        action_id: str,
+        params: dict | None = None,
+        input_vars: dict | None = None,
+    ) -> Dict[str, Any]:
         from app.models.execution.action_params import BuiltinActionType
         from app.services.execution.actions.all_actions import get_action_class
 
         action_class = await action_registry.get_action_class_for_user(action_id)
-        is_composite = action_class is not None and issubclass(action_class, CompositeActionClass)
+        is_composite = action_class is not None and issubclass(
+            action_class, CompositeActionClass
+        )
         try:
             at = BuiltinActionType(action_id)
         except ValueError:
@@ -503,30 +605,52 @@ class ExecutionEngine:
         if is_composite:
             child_steps = await action_registry.get_custom_action_steps(action_id)
             if child_steps:
-                steps_preview = await ExecutionEngine._preview_steps_recursive(child_steps, mid, accumulated)
+                steps_preview = await ExecutionEngine._preview_steps_recursive(
+                    child_steps, mid, accumulated
+                )
             else:
                 steps_preview = []
             return {
-                "action_id": action_id, "action_name": metadata.name,
-                "is_composite": True, "steps_preview": steps_preview,
-                "replaced_params": params, "found_params": [],
-                "preview_result": {"total_steps": len(child_steps) if child_steps else 0},
+                "action_id": action_id,
+                "action_name": metadata.name,
+                "is_composite": True,
+                "steps_preview": steps_preview,
+                "replaced_params": params,
+                "found_params": [],
+                "preview_result": {
+                    "total_steps": len(child_steps) if child_steps else 0
+                },
                 "preview_variables": dict(accumulated),
             }
         else:
             result = await ExecutionEngine._preview_action_recursive(
-                action_id=action_id, params=params, mid=mid, variables=dict(accumulated), step_index=0,
+                action_id=action_id,
+                params=params,
+                mid=mid,
+                variables=dict(accumulated),
+                step_index=0,
             )
             return {
-                "action_id": action_id, "action_name": metadata.name,
-                "is_composite": False, "steps_preview": [result],
-                "replaced_params": params, "found_params": [],
+                "action_id": action_id,
+                "action_name": metadata.name,
+                "is_composite": False,
+                "steps_preview": [result],
+                "replaced_params": params,
+                "found_params": [],
                 "preview_result": {"single_action": True},
                 "preview_variables": result.get("preview_variables", {}),
             }
 
     @staticmethod
-    async def _preview_action_recursive(action_id, params, mid, variables, step_index=0, input_vars=None, output_vars=None):
+    async def _preview_action_recursive(
+        action_id,
+        params,
+        mid,
+        variables,
+        step_index=0,
+        input_vars=None,
+        output_vars=None,
+    ):
         """
         预览辅助 — 保留以维持现有 preview 功能。
         TODO: 可后续用 Scope + Pipeline.preview() 替代。
@@ -534,9 +658,12 @@ class ExecutionEngine:
         from app.services.execution.actions.all_actions import get_action_class
 
         base = {
-            "step_index": step_index, "action_id": action_id,
-            "original_params": dict(params), "replaced_params": dict(params),
-            "input_vars": dict(input_vars or {}), "output_vars": list(output_vars or []),
+            "step_index": step_index,
+            "action_id": action_id,
+            "original_params": dict(params),
+            "replaced_params": dict(params),
+            "input_vars": dict(input_vars or {}),
+            "output_vars": list(output_vars or []),
             "preview_variables": {},
         }
 
@@ -545,18 +672,35 @@ class ExecutionEngine:
             child_steps = await action_registry.get_custom_action_steps(action_id)
             if not child_steps:
                 return base
-            children = await ExecutionEngine._preview_steps_recursive(child_steps, mid, dict(variables))
+            children = await ExecutionEngine._preview_steps_recursive(
+                child_steps, mid, dict(variables)
+            )
             child_vars = ExecutionEngine._collect_preview_vars(children)
             base["preview_variables"] = dict(child_vars)
             variables.update(child_vars)
             base["children"] = children
             return base
 
-        if params.get("TrueBranch") is not None or params.get("FalseBranch") is not None:
+        if (
+            params.get("TrueBranch") is not None
+            or params.get("FalseBranch") is not None
+        ):
             true_branch = params.get("TrueBranch", []) or []
             false_branch = params.get("FalseBranch", []) or []
-            tc = await ExecutionEngine._preview_steps_recursive(true_branch, mid, dict(variables)) if true_branch else []
-            fc = await ExecutionEngine._preview_steps_recursive(false_branch, mid, dict(variables)) if false_branch else []
+            tc = (
+                await ExecutionEngine._preview_steps_recursive(
+                    true_branch, mid, dict(variables)
+                )
+                if true_branch
+                else []
+            )
+            fc = (
+                await ExecutionEngine._preview_steps_recursive(
+                    false_branch, mid, dict(variables)
+                )
+                if false_branch
+                else []
+            )
             branch_vars: dict = {}
             for children in (fc, tc):
                 for c in children:
@@ -573,7 +717,9 @@ class ExecutionEngine:
             loop_vars = dict(variables)
             loop_vars[params.get("loop_var", "item")] = None
             loop_vars["loop_index"] = 0
-            lc = await ExecutionEngine._preview_steps_recursive(loop_body, mid, loop_vars)
+            lc = await ExecutionEngine._preview_steps_recursive(
+                loop_body, mid, loop_vars
+            )
             child_vars = ExecutionEngine._collect_preview_vars(lc)
             base["preview_variables"] = dict(child_vars)
             variables.update(child_vars)
@@ -585,8 +731,11 @@ class ExecutionEngine:
             try:
                 safe_params = action_cls._convert_params(params)
                 action = action_cls.new_action(
-                    mid=mid, page=None, variables=dict(variables),
-                    params=safe_params, output_vars=list(output_vars or []),
+                    mid=mid,
+                    page=None,
+                    variables=dict(variables),
+                    params=safe_params,
+                    output_vars=list(output_vars or []),
                 )
                 step_vars = action.preview().get("variables", {})
                 base["preview_variables"] = dict(step_vars)
@@ -599,13 +748,34 @@ class ExecutionEngine:
     async def _preview_steps_recursive(steps, mid, variables):
         results = []
         for idx, step in enumerate(steps):
-            aid = step.get("action_id", "") if isinstance(step, dict) else getattr(step, "action_id", "")
-            sp = step.get("params", {}) if isinstance(step, dict) else getattr(step, "params", {})
-            siv = step.get("input_vars", {}) if isinstance(step, dict) else getattr(step, "input_vars", {})
-            sov = step.get("output_vars", []) if isinstance(step, dict) else getattr(step, "output_vars", [])
+            aid = (
+                step.get("action_id", "")
+                if isinstance(step, dict)
+                else getattr(step, "action_id", "")
+            )
+            sp = (
+                step.get("params", {})
+                if isinstance(step, dict)
+                else getattr(step, "params", {})
+            )
+            siv = (
+                step.get("input_vars", {})
+                if isinstance(step, dict)
+                else getattr(step, "input_vars", {})
+            )
+            sov = (
+                step.get("output_vars", [])
+                if isinstance(step, dict)
+                else getattr(step, "output_vars", [])
+            )
             r = await ExecutionEngine._preview_action_recursive(
-                action_id=aid, params=sp, mid=mid, variables=dict(variables),
-                step_index=idx, input_vars=siv or {}, output_vars=sov or [],
+                action_id=aid,
+                params=sp,
+                mid=mid,
+                variables=dict(variables),
+                step_index=idx,
+                input_vars=siv or {},
+                output_vars=sov or [],
             )
             results.append(r)
             variables.update(r.get("preview_variables", {}))
@@ -619,7 +789,9 @@ class ExecutionEngine:
         return all_vars
 
     @staticmethod
-    async def validate_action(mid: int, action_id: str, params: dict | None = None) -> Dict[str, Any]:
+    async def validate_action(
+        mid: int, action_id: str, params: dict | None = None
+    ) -> Dict[str, Any]:
         from app.models.execution.action_params import BuiltinActionType
         from app.services.execution.actions.all_actions import get_action_metadata
 

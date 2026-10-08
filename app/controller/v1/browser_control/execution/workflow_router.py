@@ -3,10 +3,15 @@ Workflow 管理路由
 
 提供工作流（Workflow）的 CRUD 和执行 API
 """
+
 from app.services.execution.engine import ExecutionEngine
 from loguru import logger
 import uuid
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
@@ -66,7 +71,9 @@ def _build_auth_headers(auth_info) -> dict[str, str]:
     }
 
 
-def _validate_trigger(trigger_type: str, trigger_config: dict | None, browser_id: int | None) -> str | None:
+def _validate_trigger(
+    trigger_type: str, trigger_config: dict | None, browser_id: int | None
+) -> str | None:
     """校验触发配置合法性；返回错误信息（None 表示通过）
 
     工作流是调度外壳：定时（cron）触发必须有可解析的 cron 表达式与稳定的执行目标浏览器。
@@ -99,10 +106,11 @@ async def _resolve_page(mid: int, browser_id: int, page_index: int | None = None
         if not all_pages:
             raise ValueError(f"浏览器 {browser_id} 没有打开任何页面")
         if not (0 <= page_index < len(all_pages)):
-            raise ValueError(f"页面索引 {page_index} 超出范围 (0-{len(all_pages)-1})")
+            raise ValueError(f"页面索引 {page_index} 超出范围 (0-{len(all_pages) - 1})")
         return all_pages[page_index]
     else:
         return await entry.browser_session.get_current_page()
+
 
 router = new_workflow_router()
 
@@ -132,7 +140,8 @@ async def create_workflow(
         action_model = await action_crud_svr.get_by_action_id(request.custom_action_id)
         if not action_model:
             return error_response(
-                ResponseCode.BUSINESS_ERROR, f"引用的动作不存在: {request.custom_action_id}"
+                ResponseCode.BUSINESS_ERROR,
+                f"引用的动作不存在: {request.custom_action_id}",
             )
 
     # 生成唯一的 workflow_id
@@ -181,8 +190,7 @@ async def list_workflows(
 
     # 获取总数
     total = await workflow_crud_svr.count_by_user(
-        mid=auth.mid,
-        filter_type=request.filter_type
+        mid=auth.mid, filter_type=request.filter_type
     )
 
     # 获取列表数据
@@ -218,10 +226,7 @@ async def list_workflows(
 
     # 构建分页响应
     pagination = BasePaginationResp[WorkflowListItemResponse](
-        page=request.page,
-        per_page=request.per_page,
-        total=total,
-        items=items
+        page=request.page, per_page=request.per_page, total=total, items=items
     )
 
     return success_response(pagination)
@@ -290,10 +295,22 @@ async def update_workflow(
         await assert_approved("workflow", existing.workflow_id, "publish")
 
     # 触发配置校验：按「合并后」的最终值校验（未传的字段沿用原值）
-    final_trigger_type = request.trigger_type if request.trigger_type is not None else existing.trigger_type
-    final_trigger_config = request.trigger_config if request.trigger_config is not None else (existing.trigger_config or {})
-    final_browser_id = request.browser_id if request.browser_id is not None else existing.browser_id
-    trigger_error = _validate_trigger(final_trigger_type, final_trigger_config, final_browser_id)
+    final_trigger_type = (
+        request.trigger_type
+        if request.trigger_type is not None
+        else existing.trigger_type
+    )
+    final_trigger_config = (
+        request.trigger_config
+        if request.trigger_config is not None
+        else (existing.trigger_config or {})
+    )
+    final_browser_id = (
+        request.browser_id if request.browser_id is not None else existing.browser_id
+    )
+    trigger_error = _validate_trigger(
+        final_trigger_type, final_trigger_config, final_browser_id
+    )
     if trigger_error:
         return error_response(ResponseCode.INVALID_PARAM, trigger_error)
 
@@ -302,7 +319,8 @@ async def update_workflow(
         action_model = await action_crud_svr.get_by_action_id(request.custom_action_id)
         if not action_model:
             return error_response(
-                ResponseCode.BUSINESS_ERROR, f"引用的动作不存在: {request.custom_action_id}"
+                ResponseCode.BUSINESS_ERROR,
+                f"引用的动作不存在: {request.custom_action_id}",
             )
 
     model = await workflow_crud_svr.update(
@@ -438,7 +456,11 @@ async def duplicate_workflow(
     )
 
 
-@router.post("/workflows/fork", summary="Fork 工作流（类似 GitHub）", response_model=StandardResponse[WorkflowForkResponse])
+@router.post(
+    "/workflows/fork",
+    summary="Fork 工作流（类似 GitHub）",
+    response_model=StandardResponse[WorkflowForkResponse],
+)
 async def fork_workflow(
     request: WorkflowForkRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -463,9 +485,7 @@ async def fork_workflow(
     try:
         # 执行 Fork
         model = await workflow_crud_svr.fork(
-            id=request.id,
-            target_mid=auth.mid,
-            new_name=request.new_name
+            id=request.id, target_mid=auth.mid, new_name=request.new_name
         )
 
         if not model:
@@ -478,7 +498,7 @@ async def fork_workflow(
                 name=model.name,
                 forked_from=original.name,
             ),
-            msg="Fork 成功"
+            msg="Fork 成功",
         )
     except ValueError as e:
         return error_response(400, str(e))
@@ -518,10 +538,7 @@ async def get_workflow_forks(
     ]
 
     pagination = BasePaginationResp[WorkflowListItemResponse](
-        page=1,
-        per_page=limit,
-        total=len(items),
-        items=items
+        page=1, per_page=limit, total=len(items), items=items
     )
 
     return success_response(pagination)
@@ -540,12 +557,13 @@ async def execute_workflow_step(
         if request.step_index < 0 or request.step_index >= len(request.steps):
             return error_response(
                 code=400,
-                msg=f"步骤索引 {request.step_index} 超出范围（总共 {len(request.steps)} 步）"
+                msg=f"步骤索引 {request.step_index} 超出范围（总共 {len(request.steps)} 步）",
             )
 
         step = request.steps[request.step_index]
         logger.info(
-            f"[Workflow Step Execute] 执行步骤 {request.step_index + 1}/{len(request.steps)}: {step.action_id}")
+            f"[Workflow Step Execute] 执行步骤 {request.step_index + 1}/{len(request.steps)}: {step.action_id}"
+        )
 
         mid = auth.mid
         bid = int(request.browser_id) if request.browser_id.isdigit() else 0
@@ -566,8 +584,7 @@ async def execute_workflow_step(
             page=page,
         )
 
-        logger.info(
-            f"[Workflow Step Execute] 步骤执行完成: success={result.success}")
+        logger.info(f"[Workflow Step Execute] 步骤执行完成: success={result.success}")
 
         return success_response(
             WorkflowStepExecuteResponse(
@@ -655,7 +672,9 @@ async def list_workflow_runs(
     )
 
 
-@router.post(BrowserControlRouterPath.workflows_runs_get, summary="获取工作流运行记录详情")
+@router.post(
+    BrowserControlRouterPath.workflows_runs_get, summary="获取工作流运行记录详情"
+)
 async def get_workflow_run(
     request: dict,
     auth: AuthInfo = Depends(get_auth_info_from_header),

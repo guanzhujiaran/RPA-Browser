@@ -3,11 +3,18 @@
 from app.controller.v1.admin.admin_router import router as admin_sub_router
 from app.controller.v1.admin.approval_router import router as approval_sub_router
 from app.controller.v1.admin.tag_router import router as tag_sub_router
-from app.controller.v1.admin.certification_router import router as certification_sub_router
+from app.controller.v1.admin.certification_router import (
+    router as certification_sub_router,
+)
 from app.controller.v1.admin.audit_router import router as audit_sub_router
 from app.controller.v1.admin.user_ban_router import router as user_ban_sub_router
-from app.controller.v1.admin.browser_monitor_router import router as browser_monitor_sub_router
+from app.controller.v1.admin.browser_monitor_router import (
+    router as browser_monitor_sub_router,
+)
 from app.controller.v1.admin.permission_router import router as permission_sub_router
+from app.controller.v1.admin.membership_admin_router import (
+    router as membership_admin_sub_router,
+)
 from app.models.router.all_routes import admin_router
 from app.utils.controller.router_path import gen_api_router
 
@@ -20,5 +27,6 @@ router.include_router(audit_sub_router)
 router.include_router(user_ban_sub_router)
 router.include_router(browser_monitor_sub_router)
 router.include_router(permission_sub_router)
+router.include_router(membership_admin_sub_router)
 
 __all__ = ["router"]

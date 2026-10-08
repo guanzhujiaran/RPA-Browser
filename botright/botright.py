@@ -19,19 +19,20 @@ from botright.playwright_mock import browser
 from .modules import Faker, ProxyManager
 from .playwright_mock import BrowserContext
 
+
 class Botright(AsyncObject):
     def __init__(
-            self,
-            headless: Optional[bool] = False,
-            block_images: Optional[bool] = False,
-            cache_responses: Optional[bool] = False,
-            user_action_layer: Optional[bool] = False,
-            scroll_into_view: Optional[bool] = True,
-            spoof_canvas: Optional[bool] = True,
-            mask_fingerprint: Optional[bool] = True,
-            use_undetected_playwright: Optional[bool] = False,
-            fingerprint: Optional[Fingerprint] = None,
-            execute_path: Optional[str] = None
+        self,
+        headless: Optional[bool] = False,
+        block_images: Optional[bool] = False,
+        cache_responses: Optional[bool] = False,
+        user_action_layer: Optional[bool] = False,
+        scroll_into_view: Optional[bool] = True,
+        spoof_canvas: Optional[bool] = True,
+        mask_fingerprint: Optional[bool] = True,
+        use_undetected_playwright: Optional[bool] = False,
+        fingerprint: Optional[Fingerprint] = None,
+        execute_path: Optional[str] = None,
     ) -> None:
         """
         Initialize a Botright instance with specified configurations.
@@ -50,17 +51,17 @@ class Botright(AsyncObject):
         super().__init__()
 
     async def __ainit__(
-            self,
-            headless: Optional[bool] = False,
-            block_images: Optional[bool] = False,
-            cache_responses: Optional[bool] = False,
-            user_action_layer: Optional[bool] = False,
-            scroll_into_view: Optional[bool] = True,
-            spoof_canvas: Optional[bool] = True,
-            mask_fingerprint: Optional[bool] = True,
-            use_undetected_playwright: Optional[bool] = False,
-            fingerprint: Optional[Fingerprint] = None,
-            execute_path: Optional[str] = None
+        self,
+        headless: Optional[bool] = False,
+        block_images: Optional[bool] = False,
+        cache_responses: Optional[bool] = False,
+        user_action_layer: Optional[bool] = False,
+        scroll_into_view: Optional[bool] = True,
+        spoof_canvas: Optional[bool] = True,
+        mask_fingerprint: Optional[bool] = True,
+        use_undetected_playwright: Optional[bool] = False,
+        fingerprint: Optional[Fingerprint] = None,
+        execute_path: Optional[str] = None,
     ) -> None:
         """
         Initialize a Botright instance with specified configurations.
@@ -142,7 +143,9 @@ class Botright(AsyncObject):
         self.fingerprint = fingerprint
         self.fingerprint_generator = desktop_fingerprint_generator
 
-    async def new_browser(self, proxy: Optional[str] = None, **launch_arguments) -> BrowserContext:
+    async def new_browser(
+        self, proxy: Optional[str] = None, **launch_arguments
+    ) -> BrowserContext:
         """
         Create a new Botright browser instance with specified configurations.
 
@@ -160,11 +163,15 @@ class Botright(AsyncObject):
 
         # Launching Main Browser
         if self.mask_fingerprint:
-            flags = self.flags + [f"--user-agent={_faker.fingerprint.navigator.userAgent}"]
+            flags = self.flags + [
+                f"--user-agent={_faker.fingerprint.navigator.userAgent}"
+            ]
         else:
             flags = self.flags
 
-        _browser = await browser.new_browser(self, _proxy, _faker, flags, **launch_arguments)
+        _browser = await browser.new_browser(
+            self, _proxy, _faker, flags, **launch_arguments
+        )
         _browser.proxy = _proxy
         _browser.faker = _faker
         _browser.user_action_layer = self.user_action_layer
@@ -206,16 +213,17 @@ class Botright(AsyncObject):
         """
         if execute_path:
             return browsers.Browser(
-                browser_type='chromium',
+                browser_type="chromium",
                 path=execute_path,
-                display_name='chromium',
-                version='139.0.7258.154'
+                display_name="chromium",
+                version="139.0.7258.154",
             )
         # Ungoogled Chromium preferred (most stealthy)
         if chromium := browsers.get("chromium"):
             return chromium
         print(
-            "\033[1;33;48m[WARNING] Ungoogled Chromium not found. Recommended for Canvas Manipulation. Download at https://ungoogled-software.github.io/ungoogled-chromium-binaries/ \033[0m")
+            "\033[1;33;48m[WARNING] Ungoogled Chromium not found. Recommended for Canvas Manipulation. Download at https://ungoogled-software.github.io/ungoogled-chromium-binaries/ \033[0m"
+        )
 
         # Chrome preferred (much stealthier)
         if chrome := browsers.get("chrome"):
@@ -234,6 +242,8 @@ class Botright(AsyncObject):
 
         for temp_dir in os.listdir(temp_path):
             # Check if the item is a directory and starts with 'botright-'
-            if os.path.isdir(os.path.join(temp_path, temp_dir)) and temp_dir.startswith("botright-"):
+            if os.path.isdir(os.path.join(temp_path, temp_dir)) and temp_dir.startswith(
+                "botright-"
+            ):
                 # If it matches, delete the folder and its contents
                 shutil.rmtree(os.path.join(temp_path, temp_dir))

@@ -4,6 +4,7 @@
 提供所有路由的统一定义、分组导出和唯一性验证。
 遵循路由架构规范：Prefix分层、职责分离、Tag聚合。
 """
+
 from typing import Dict, List
 from sqlmodel import SQLModel
 
@@ -13,13 +14,14 @@ from app.models.router.router_tag import VersionTag, RouterTag
 
 class RouterInfo(SQLModel):
     """路由信息模型
-    
+
     Attributes:
         version_tag: API版本标签
         router_tag: 路由分类标签（用于Swagger文档分组）
         router_prefix: URL路径前缀
         description: 路由功能描述
     """
+
     version_tag: VersionTag
     router_tag: RouterTag
     router_prefix: RouterPrefix
@@ -51,6 +53,13 @@ user_browser_default_settings_router = RouterInfo(
     router_tag=RouterTag.browser_default_settings,
     router_prefix=RouterPrefix.BROWSER,
     description="用户浏览器默认设置管理 - 提供用户级别浏览器默认设置的 CRUD 功能",
+)
+
+duration_membership_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.duration_membership,
+    router_prefix=RouterPrefix.BROWSER_MEMBERSHIP,
+    description="时长与会员权益 - 余额查询、签到、兑换码、流水与使用统计",
 )
 
 
@@ -142,16 +151,17 @@ BROWSER_CONFIG_ROUTERS: List[RouterInfo] = [
     browser_fingerprint_router,
     browser_notification_router,
     user_browser_default_settings_router,
+    duration_membership_router,
 ]
 
 # 浏览器运行时相关路由
 BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
-    browser_session_router,      # /browser/session
+    browser_session_router,  # /browser/session
     # browser_control 子模块
     browser_control_operation_router,
-    browser_control_action_router,      # 自定义操作管理
-    browser_control_workflow_router,    # 工作流管理
-    browser_control_plugin_router,      # 插件挂载管理
+    browser_control_action_router,  # 自定义操作管理
+    browser_control_workflow_router,  # 工作流管理
+    browser_control_plugin_router,  # 插件挂载管理
     browser_control_webrtc_router,  # WebRTC 视频流
     browser_control_session_router,
     browser_control_action_log_router,  # 操作日志管理
@@ -172,16 +182,17 @@ ALL_ROUTERS: List[RouterInfo] = [
 
 # ====== 唯一性验证函数 ======
 
+
 def validate_router_uniqueness() -> None:
     """验证所有路由的 (router_tag, router_prefix) 组合唯一性
-    
+
     在模块加载时自动执行，确保不会出现重复的路由配置。
-    
+
     Raises:
         ValueError: 当发现重复的 (router_tag, router_prefix) 组合时抛出
     """
     seen_keys: Dict[tuple, str] = {}
-    
+
     for router in ALL_ROUTERS:
         key = (router.router_tag, router.router_prefix)
         if key in seen_keys:

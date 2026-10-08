@@ -51,11 +51,15 @@ class ClearLoginStateRequest(SQLModel):
 class ClearLoginStateResponse(SQLModel):
     """清空登录态（换号）响应"""
 
-    cleared_cookies: bool = Field(..., description="是否已清空全部站点的 cookie（含 HttpOnly）")
+    cleared_cookies: bool = Field(
+        ..., description="是否已清空全部站点的 cookie（含 HttpOnly）"
+    )
     # 用「页面数」而不是「是否成功」：多页面时部分失败无法用布尔值表达真实情况
     cleared_pages: int = Field(0, description="已清空 web storage 的页面数")
     reloaded_pages: int = Field(0, description="已刷新的页面数")
-    affected_domains: int = Field(0, description="清理前 cookie 覆盖的站点数（供前端提示影响范围）")
+    affected_domains: int = Field(
+        0, description="清理前 cookie 覆盖的站点数（供前端提示影响范围）"
+    )
     message: str = Field("", description="结果说明")
 
 

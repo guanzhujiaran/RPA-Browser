@@ -14,9 +14,10 @@ from test.controller.conftest import PREFIX
 
 @pytest.mark.anyio
 class TestListPlugins:
-
     async def test_list_plugins_success(self, client, created_plugin):
-        response = await client.post(f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 10})
+        response = await client.post(
+            f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 10}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -28,7 +29,6 @@ class TestListPlugins:
 
 @pytest.mark.anyio
 class TestCreatePlugin:
-
     async def test_create_plugin_success(self, client, created_action):
         _, action_id = created_action
 
@@ -52,7 +52,6 @@ class TestCreatePlugin:
 
 @pytest.mark.anyio
 class TestUpdatePlugin:
-
     async def test_update_plugin_success(self, client, created_plugin):
         db_id, plugin_id = created_plugin
 
@@ -72,16 +71,22 @@ class TestUpdatePlugin:
         assert data["code"] == ResponseCode.SUCCESS
 
     async def test_update_plugin_not_found(self, client):
-        response = await client.post(f"{PREFIX}/plugins/update", json={"id": 999, "name": "不存在的"})
+        response = await client.post(
+            f"{PREFIX}/plugins/update", json={"id": 999, "name": "不存在的"}
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )
 
     async def test_update_plugin_enable(self, client, created_plugin):
         db_id, plugin_id = created_plugin
 
-        response = await client.post(f"{PREFIX}/plugins/update", json={"id": db_id, "is_enabled": True})
+        response = await client.post(
+            f"{PREFIX}/plugins/update", json={"id": db_id, "is_enabled": True}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -90,7 +95,9 @@ class TestUpdatePlugin:
     async def test_update_plugin_disable(self, client, created_plugin):
         db_id, plugin_id = created_plugin
 
-        response = await client.post(f"{PREFIX}/plugins/update", json={"id": db_id, "is_enabled": False})
+        response = await client.post(
+            f"{PREFIX}/plugins/update", json={"id": db_id, "is_enabled": False}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -99,7 +106,6 @@ class TestUpdatePlugin:
 
 @pytest.mark.anyio
 class TestDeletePlugin:
-
     async def test_delete_plugin_success(self, client, created_plugin):
         db_id, plugin_id = created_plugin
 
@@ -114,7 +120,9 @@ class TestDeletePlugin:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )
 
     async def test_delete_plugin_no_permission(self, client):
         """测试删除不存在的插件（权限检查前先返回 NOT_FOUND）"""
@@ -122,19 +130,24 @@ class TestDeletePlugin:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )
 
 
 @pytest.mark.anyio
 class TestForkPlugin:
-
     async def test_fork_plugin_success(self, client, created_plugin):
         db_id, plugin_id = created_plugin
 
         # 先将插件设为公开
-        await client.post(f"{PREFIX}/plugins/update", json={"id": db_id, "is_public": True})
+        await client.post(
+            f"{PREFIX}/plugins/update", json={"id": db_id, "is_public": True}
+        )
 
-        list_resp = await client.post(f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 100})
+        list_resp = await client.post(
+            f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 100}
+        )
         found_id = None
         for item in list_resp.json()["data"]["items"]:
             if item["plugin_id"] == plugin_id:
@@ -143,7 +156,9 @@ class TestForkPlugin:
 
         assert found_id is not None
 
-        response = await client.post(f"{PREFIX}/plugins/fork", json={"id": found_id, "new_name": "我的 Fork"})
+        response = await client.post(
+            f"{PREFIX}/plugins/fork", json={"id": found_id, "new_name": "我的 Fork"}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -155,13 +170,17 @@ class TestForkPlugin:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )
 
     async def test_fork_plugin_not_public(self, client, created_plugin):
         db_id, plugin_id = created_plugin
         # created_plugin 默认 is_public=False
 
-        list_resp = await client.post(f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 100})
+        list_resp = await client.post(
+            f"{PREFIX}/plugins/list", json={"page": 1, "per_page": 100}
+        )
         found_id = None
         for item in list_resp.json()["data"]["items"]:
             if item["plugin_id"] == plugin_id:
@@ -174,12 +193,13 @@ class TestForkPlugin:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.FORBIDDEN, f"Expected FORBIDDEN, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.FORBIDDEN, (
+            f"Expected FORBIDDEN, got {data['code']}: {data.get('message')}"
+        )
 
 
 @pytest.mark.anyio
 class TestGetPluginForks:
-
     async def test_get_plugin_forks_success(self, client, created_plugin):
         db_id, plugin_id = created_plugin
 
@@ -194,4 +214,6 @@ class TestGetPluginForks:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )

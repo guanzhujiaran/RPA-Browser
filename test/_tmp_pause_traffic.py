@@ -3,6 +3,7 @@
 连上流 → 测一次速率 → 调 /webrtc/pause 暂停 → 再测两次速率（含 framesReceived）。
 数据来源与前端网速显示一致（candidate-pair / inbound-rtp 的累计字节）。
 """
+
 import asyncio
 import contextlib
 
@@ -44,7 +45,9 @@ async def rate(pc: RTCPeerConnection, seconds: float) -> tuple[float, float, int
 async def main() -> None:
     async with httpx.AsyncClient(base_url=BASE, headers=HEADERS, timeout=30) as client:
         body = (
-            await client.post("/webrtc/offer", params={"browser_id": BID}, json={"page_index": 0})
+            await client.post(
+                "/webrtc/offer", params={"browser_id": BID}, json={"page_index": 0}
+            )
         ).json()
         if body.get("code") != 0:
             print("OFFER_FAILED:", body.get("code"), body.get("msg"))
@@ -53,7 +56,9 @@ async def main() -> None:
         stream_key = data["stream_key"]
 
         pc = RTCPeerConnection()
-        await pc.setRemoteDescription(RTCSessionDescription(sdp=data["sdp"], type="offer"))
+        await pc.setRemoteDescription(
+            RTCSessionDescription(sdp=data["sdp"], type="offer")
+        )
         await pc.setLocalDescription(await pc.createAnswer())
         for _ in range(50):
             if pc.iceGatheringState == "complete":
@@ -62,7 +67,11 @@ async def main() -> None:
         await client.post(
             "/webrtc/answer",
             params={"browser_id": BID},
-            json={"stream_key": stream_key, "sdp": pc.localDescription.sdp, "type": "answer"},
+            json={
+                "stream_key": stream_key,
+                "sdp": pc.localDescription.sdp,
+                "type": "answer",
+            },
         )
         for line in pc.localDescription.sdp.splitlines():
             if line.startswith("a=candidate"):
@@ -71,7 +80,7 @@ async def main() -> None:
                     params={"browser_id": BID},
                     json={
                         "stream_key": stream_key,
-                        "candidate": "candidate:" + line[len("a=candidate:"):],
+                        "candidate": "candidate:" + line[len("a=candidate:") :],
                         "sdpMid": "0",
                         "sdpMLineIndex": 0,
                     },
@@ -86,26 +95,40 @@ async def main() -> None:
         r0 = await client.post(
             "/webrtc/pause", params={"browser_id": BID}, json={"paused": False}
         )
-        print("resume ->", r0.json().get("code"), (r0.json().get("data") or {}).get("paused"))
+        print(
+            "resume ->",
+            r0.json().get("code"),
+            (r0.json().get("data") or {}).get("paused"),
+        )
 
         pair_bps, rtp_bps, frames = await rate(pc, 5)
-        print(f"[未暂停] 链路 {pair_bps:8.0f} B/s | 视频RTP {rtp_bps:8.0f} B/s | 帧 {frames}")
+        print(
+            f"[未暂停] 链路 {pair_bps:8.0f} B/s | 视频RTP {rtp_bps:8.0f} B/s | 帧 {frames}"
+        )
 
         r = await client.post(
             "/webrtc/pause", params={"browser_id": BID}, json={"paused": True}
         )
-        print("pause ->", r.json().get("code"), (r.json().get("data") or {}).get("paused"))
+        print(
+            "pause ->", r.json().get("code"), (r.json().get("data") or {}).get("paused")
+        )
 
         await asyncio.sleep(2)  # 等切换稳定
         pair_bps, rtp_bps, frames = await rate(pc, 6)
-        print(f"[暂停后] 链路 {pair_bps:8.0f} B/s | 视频RTP {rtp_bps:8.0f} B/s | 帧 {frames}")
+        print(
+            f"[暂停后] 链路 {pair_bps:8.0f} B/s | 视频RTP {rtp_bps:8.0f} B/s | 帧 {frames}"
+        )
 
         pair_bps, rtp_bps, frames = await rate(pc, 6)
-        print(f"[暂停后+6s] 链路 {pair_bps:8.0f} B/s | 视频RTP {rtp_bps:8.0f} B/s | 帧 {frames}")
+        print(
+            f"[暂停后+6s] 链路 {pair_bps:8.0f} B/s | 视频RTP {rtp_bps:8.0f} B/s | 帧 {frames}"
+        )
 
         with contextlib.suppress(Exception):
             await client.post(
-                "/webrtc/close", params={"browser_id": BID}, json={"stream_key": stream_key}
+                "/webrtc/close",
+                params={"browser_id": BID},
+                json={"stream_key": stream_key},
             )
         await pc.close()
         print("已关闭流（前端会自动重连）")

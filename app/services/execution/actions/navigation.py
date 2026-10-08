@@ -1,6 +1,7 @@
 """
 导航类 Action - Navigate, NewPage
 """
+
 from typing import Dict, Any, List
 
 import contextlib
@@ -11,7 +12,12 @@ from urllib.parse import urlparse
 import time
 from loguru import logger
 from app.services.execution.actions.base import BaseAction, ActionResult
-from app.models.execution.action_params import NavigateParams, NewPageParams, NavigateResult, NewPageResult
+from app.models.execution.action_params import (
+    NavigateParams,
+    NewPageParams,
+    NavigateResult,
+    NewPageResult,
+)
 from app.models.core.browser.security import SecurityCheckResult
 from app.config import settings
 from app.models.database.workflow.models import BuiltinActionType
@@ -33,14 +39,18 @@ class URLSecurityChecker:
     def _check_hostname_basic(hostname: str) -> SecurityCheckResult:
         """检查主机名基本规则"""
         localhost_variants = [
-            "localhost", "localhost.localdomain",
-            "ip6-localhost", "ip6-loopback",
+            "localhost",
+            "localhost.localdomain",
+            "ip6-localhost",
+            "ip6-loopback",
         ]
         if hostname in localhost_variants:
             return SecurityCheckResult(allowed=False, reason="禁止访问 localhost")
 
         if hostname in ["127.0.0.1", "::1", "0.0.0.0"]:
-            return SecurityCheckResult(allowed=False, reason=f"禁止访问回环地址: {hostname}")
+            return SecurityCheckResult(
+                allowed=False, reason=f"禁止访问回环地址: {hostname}"
+            )
 
         return SecurityCheckResult(allowed=True)
 
@@ -51,39 +61,57 @@ class URLSecurityChecker:
             ip = ipaddress.ip_address(ip_str)
 
             if ip.version == 4 and ip in ipaddress.ip_network("127.0.0.0/8"):
-                return SecurityCheckResult(allowed=False, reason="禁止访问 127.0.0.0/8 网段")
+                return SecurityCheckResult(
+                    allowed=False, reason="禁止访问 127.0.0.0/8 网段"
+                )
 
             if ip.version == 6 and ip == ipaddress.ip_address("::1"):
-                return SecurityCheckResult(allowed=False, reason="禁止访问 IPv6 回环地址 ::1")
+                return SecurityCheckResult(
+                    allowed=False, reason="禁止访问 IPv6 回环地址 ::1"
+                )
 
             if ip.is_private:
-                return SecurityCheckResult(allowed=False, reason=f"禁止访问私有地址: {hostname}")
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问私有地址: {hostname}"
+                )
 
             if ip.is_loopback:
-                return SecurityCheckResult(allowed=False, reason=f"禁止访问回环地址: {hostname}")
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问回环地址: {hostname}"
+                )
 
             if ip.is_link_local:
-                return SecurityCheckResult(allowed=False, reason=f"禁止访问链路本地地址: {hostname}")
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问链路本地地址: {hostname}"
+                )
 
             if ip.is_multicast:
-                return SecurityCheckResult(allowed=False, reason=f"禁止访问多播地址: {hostname}")
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问多播地址: {hostname}"
+                )
 
             if ip.is_reserved:
-                return SecurityCheckResult(allowed=False, reason=f"禁止访问保留地址: {hostname}")
+                return SecurityCheckResult(
+                    allowed=False, reason=f"禁止访问保留地址: {hostname}"
+                )
 
             return SecurityCheckResult(allowed=True)
 
         return SecurityCheckResult(allowed=True)
 
     @staticmethod
-    async def _check_dns_resolution(hostname: str, max_retries: int = 2) -> SecurityCheckResult:
+    async def _check_dns_resolution(
+        hostname: str, max_retries: int = 2
+    ) -> SecurityCheckResult:
         """DNS 解析并检查地址安全性"""
         for attempt in range(max_retries):
             try:
                 addr_info_v4 = socket.getaddrinfo(
-                    hostname, None, socket.AF_INET, socket.SOCK_STREAM)
+                    hostname, None, socket.AF_INET, socket.SOCK_STREAM
+                )
                 addr_info_v6 = socket.getaddrinfo(
-                    hostname, None, socket.AF_INET6, socket.SOCK_STREAM)
+                    hostname, None, socket.AF_INET6, socket.SOCK_STREAM
+                )
                 all_addr_info = addr_info_v4 + addr_info_v6
 
                 if not all_addr_info:
@@ -97,8 +125,7 @@ class URLSecurityChecker:
 
                 for info in all_addr_info:
                     ip_str = info[4][0]
-                    result = URLSecurityChecker._check_ip_address(
-                        ip_str, hostname)
+                    result = URLSecurityChecker._check_ip_address(ip_str, hostname)
                     if not result.allowed:
                         return result
 
@@ -157,25 +184,39 @@ class URLSecurityChecker:
                 ip = ipaddress.ip_address(check_hostname)
 
                 if ip.version == 4 and ip in ipaddress.ip_network("127.0.0.0/8"):
-                    return SecurityCheckResult(allowed=False, reason="禁止访问 127.0.0.0/8 网段")
+                    return SecurityCheckResult(
+                        allowed=False, reason="禁止访问 127.0.0.0/8 网段"
+                    )
 
                 if ip.version == 6 and ip == ipaddress.ip_address("::1"):
-                    return SecurityCheckResult(allowed=False, reason="禁止访问 IPv6 回环地址 ::1")
+                    return SecurityCheckResult(
+                        allowed=False, reason="禁止访问 IPv6 回环地址 ::1"
+                    )
 
                 if ip.is_private:
-                    return SecurityCheckResult(allowed=False, reason=f"禁止访问私有地址: {hostname}")
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问私有地址: {hostname}"
+                    )
 
                 if ip.is_loopback:
-                    return SecurityCheckResult(allowed=False, reason=f"禁止访问回环地址: {hostname}")
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问回环地址: {hostname}"
+                    )
 
                 if ip.is_link_local:
-                    return SecurityCheckResult(allowed=False, reason=f"禁止访问链路本地地址: {hostname}")
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问链路本地地址: {hostname}"
+                    )
 
                 if ip.is_multicast:
-                    return SecurityCheckResult(allowed=False, reason=f"禁止访问多播地址: {hostname}")
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问多播地址: {hostname}"
+                    )
 
                 if ip.is_reserved:
-                    return SecurityCheckResult(allowed=False, reason=f"禁止访问保留地址: {hostname}")
+                    return SecurityCheckResult(
+                        allowed=False, reason=f"禁止访问保留地址: {hostname}"
+                    )
 
                 return SecurityCheckResult(allowed=True)
 
@@ -183,42 +224,60 @@ class URLSecurityChecker:
             return await cls._check_dns_resolution(hostname)
 
         except Exception as e:
-            return SecurityCheckResult(allowed=False, reason=f"URL 安全检查失败: {str(e)}")
+            return SecurityCheckResult(
+                allowed=False, reason=f"URL 安全检查失败: {str(e)}"
+            )
 
 
 class NavigateAction(BaseAction[NavigateParams]):
     """导航操作"""
+
     action_id: BuiltinActionType = BuiltinActionType.NAVIGATE
     action_type: BuiltinActionType = BuiltinActionType.NAVIGATE
     params: NavigateParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict, params: NavigateParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+    def new_action(
+        cls,
+        *,
+        mid: int,
+        page,
+        variables: Dict,
+        params: NavigateParams | None = None,
+        timeout: int = 30000,
+        input_vars: Dict | None = None,
+        output_vars: List[str] | None = None,
+        action_name: str | None = None,
+    ):
         safe_params = cls._convert_params(params or {})
         kwargs = {
-            'action_id': cls.action_id,
-            'action_type': cls.action_type,
-            'mid': mid,
-            'page': page,
-            'params': safe_params,
-            'timeout': timeout,
-            'input_vars': input_vars or {},
-            'output_vars': output_vars or [],
-            'variables': variables or {},
+            "action_id": cls.action_id,
+            "action_type": cls.action_type,
+            "mid": mid,
+            "page": page,
+            "params": safe_params,
+            "timeout": timeout,
+            "input_vars": input_vars or {},
+            "output_vars": output_vars or [],
+            "variables": variables or {},
         }
         if action_name is not None:
-            kwargs['_action_name'] = action_name
+            kwargs["_action_name"] = action_name
         return cls(**kwargs)
 
     async def _execute(self) -> ActionResult[NavigateResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
-            self.params)
+            self.params
+        )
         if not valid:
             return ActionResult(
-                success=False, error=error_msg, execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                success=False,
+                error=error_msg,
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
         url = validated_params.url
@@ -227,7 +286,11 @@ class NavigateAction(BaseAction[NavigateParams]):
 
         try:
             # 验证 URL 格式
-            if not (url.startswith("http://") or url.startswith("https://") or url.startswith("about:")):
+            if not (
+                url.startswith("http://")
+                or url.startswith("https://")
+                or url.startswith("about:")
+            ):
                 if "." in url and not url.startswith("www."):
                     url = "https://" + url
                 elif url.startswith("www."):
@@ -237,77 +300,100 @@ class NavigateAction(BaseAction[NavigateParams]):
                         success=False,
                         error=f"无效的 URL 格式: {url}。只允许 http:// 和 https:// 协议的网站",
                         execution_time=time.time() - start_time,
-                        action_id=self.metadata.id, action_name=self.metadata.name,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
                     )
 
             # 安全检查
             security_check = await URLSecurityChecker.check_url_security(url)
             if not security_check.allowed:
                 return ActionResult(
-                    success=False, error=security_check.reason,
+                    success=False,
+                    error=security_check.reason,
                     execution_time=time.time() - start_time,
-                    action_id=self.metadata.id, action_name=self.metadata.name,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
                 )
 
             # 执行导航（SQLModel 已验证参数）
-            goto_kwargs = {
-                "wait_until": str(wait_until),
-                "timeout": timeout
-            }
+            goto_kwargs = {"wait_until": str(wait_until), "timeout": timeout}
             response = await self.page.goto(url, **goto_kwargs)
 
             return ActionResult(
                 success=True,
                 data=NavigateResult(status=response.status if response else None),
                 execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
         except Exception as e:
             import traceback
+
             error_traceback = traceback.format_exc()
             logger.error(f"[NavigateAction] 导航操作执行异常: {e}\n{error_traceback}")
             return ActionResult(
-                success=False, error=str(e), execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                success=False,
+                error=str(e),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
                 logs=[
-                    f"NavigateAction failed with exception: {str(e)}", f"Traceback:\n{error_traceback}"]
+                    f"NavigateAction failed with exception: {str(e)}",
+                    f"Traceback:\n{error_traceback}",
+                ],
             )
 
 
 class NewPageAction(BaseAction[NewPageParams]):
     """新建页面操作"""
+
     action_id: BuiltinActionType = BuiltinActionType.NEW_PAGE
     action_type: BuiltinActionType = BuiltinActionType.NEW_PAGE
     params: NewPageParams
 
     @classmethod
-    def new_action(cls, *, mid: int, page, variables: Dict, params: NewPageParams | None = None, timeout: int = 30000, input_vars: Dict | None = None, output_vars: List[str] | None = None, action_name: str | None = None):
+    def new_action(
+        cls,
+        *,
+        mid: int,
+        page,
+        variables: Dict,
+        params: NewPageParams | None = None,
+        timeout: int = 30000,
+        input_vars: Dict | None = None,
+        output_vars: List[str] | None = None,
+        action_name: str | None = None,
+    ):
         safe_params = cls._convert_params(params or {})
         kwargs = {
-            'action_id': cls.action_id,
-            'action_type': cls.action_type,
-            'mid': mid,
-            'page': page,
-            'params': safe_params,
-            'timeout': timeout,
-            'input_vars': input_vars or {},
-            'output_vars': output_vars or [],
-            'variables': variables or {},
+            "action_id": cls.action_id,
+            "action_type": cls.action_type,
+            "mid": mid,
+            "page": page,
+            "params": safe_params,
+            "timeout": timeout,
+            "input_vars": input_vars or {},
+            "output_vars": output_vars or [],
+            "variables": variables or {},
         }
         if action_name is not None:
-            kwargs['_action_name'] = action_name
+            kwargs["_action_name"] = action_name
         return cls(**kwargs)
 
     async def _execute(self) -> ActionResult[NewPageResult]:
         start_time = time.time()
 
         valid, error_msg, validated_params = self.validate_params_with_model(
-            self.params)
+            self.params
+        )
         if not valid:
             return ActionResult(
-                success=False, error=error_msg, execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                success=False,
+                error=error_msg,
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
         url = validated_params.url
@@ -319,24 +405,28 @@ class NewPageAction(BaseAction[NewPageParams]):
             if self.page:
                 browser_context = self.page.context
             elif self.browser:
-                logger.warning("没有可用的 page 对象，使用 browser.new_page() 创建新窗口")
+                logger.warning(
+                    "没有可用的 page 对象，使用 browser.new_page() 创建新窗口"
+                )
                 new_page = await self.browser.new_page()
                 browser_context = new_page.context
             else:
                 return ActionResult(
-                    success=False, error="浏览器对象不可用，无法创建新页面",
+                    success=False,
+                    error="浏览器对象不可用，无法创建新页面",
                     execution_time=time.time() - start_time,
-                    action_id=self.metadata.id, action_name=self.metadata.name,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
                 )
 
             # 检查页面数量限制
-            current_pages = len(
-                [p for p in browser_context.pages if not p.is_closed()])
+            current_pages = len([p for p in browser_context.pages if not p.is_closed()])
             max_pages = settings.browser_max_pages_per_context
 
             if current_pages >= max_pages:
                 logger.warning(
-                    f"⚠️ 页面数量达到限制 ({current_pages}/{max_pages})，将关闭最旧的页面")
+                    f"⚠️ 页面数量达到限制 ({current_pages}/{max_pages})，将关闭最旧的页面"
+                )
                 for page in browser_context.pages:
                     if not page.is_closed():
                         try:
@@ -363,38 +453,58 @@ class NewPageAction(BaseAction[NewPageParams]):
                 if not security_check.allowed:
                     await new_page.close()
                     return ActionResult(
-                        success=False, error=security_check.reason,
+                        success=False,
+                        error=security_check.reason,
                         execution_time=time.time() - start_time,
-                        action_id=self.metadata.id, action_name=self.metadata.name,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
                     )
 
-                response = await new_page.goto(url, wait_until=str(wait_until), timeout=timeout)
+                response = await new_page.goto(
+                    url, wait_until=str(wait_until), timeout=timeout
+                )
                 page_count = len(
-                    [p for p in browser_context.pages if not p.is_closed()])
+                    [p for p in browser_context.pages if not p.is_closed()]
+                )
 
                 return ActionResult(
                     success=True,
-                    data=NewPageResult(page_created=True, status=response.status if response else None, page_count=page_count),
+                    data=NewPageResult(
+                        page_created=True,
+                        status=response.status if response else None,
+                        page_count=page_count,
+                    ),
                     execution_time=time.time() - start_time,
-                    action_id=self.metadata.id, action_name=self.metadata.name,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
                 )
             else:
                 page_count = len(
-                    [p for p in browser_context.pages if not p.is_closed()])
+                    [p for p in browser_context.pages if not p.is_closed()]
+                )
                 return ActionResult(
                     success=True,
                     data=NewPageResult(page_created=True, page_count=page_count),
                     execution_time=time.time() - start_time,
-                    action_id=self.metadata.id, action_name=self.metadata.name,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
                 )
 
         except Exception as e:
             import traceback
+
             error_traceback = traceback.format_exc()
-            logger.error(f"[NewPageAction] 新建页面操作执行异常: {e}\n{error_traceback}")
+            logger.error(
+                f"[NewPageAction] 新建页面操作执行异常: {e}\n{error_traceback}"
+            )
             return ActionResult(
-                success=False, error=str(e), execution_time=time.time() - start_time,
-                action_id=self.metadata.id, action_name=self.metadata.name,
+                success=False,
+                error=str(e),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
                 logs=[
-                    f"NewPageAction failed with exception: {str(e)}", f"Traceback:\n{error_traceback}"]
+                    f"NewPageAction failed with exception: {str(e)}",
+                    f"Traceback:\n{error_traceback}",
+                ],
             )

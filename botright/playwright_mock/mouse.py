@@ -34,27 +34,47 @@ class HumanizeMouseTrajectory:
         down_boundary = min(self.from_point[1], self.to_point[1]) - 80
         up_boundary = max(self.from_point[1], self.to_point[1]) + 80
 
-        internalKnots = self.generate_internal_knots(left_boundary, right_boundary, down_boundary, up_boundary, 2)
+        internalKnots = self.generate_internal_knots(
+            left_boundary, right_boundary, down_boundary, up_boundary, 2
+        )
         points = self.generate_points(internalKnots)
         points = self.distort_points(points, 1, 1, 0.5)
         points = self.tween_points(points, 100)
         return points
 
     def generate_internal_knots(
-        self, l_boundary: Union[int, float], r_boundary: Union[int, float], d_boundary: Union[int, float], u_boundary: Union[int, float], knots_count: int
+        self,
+        l_boundary: Union[int, float],
+        r_boundary: Union[int, float],
+        d_boundary: Union[int, float],
+        u_boundary: Union[int, float],
+        knots_count: int,
     ) -> Union[List[Tuple[int, int]], NoReturn]:
         """Generates the internal knots of the curve randomly"""
-        if not (self.check_if_numeric(l_boundary) and self.check_if_numeric(r_boundary) and self.check_if_numeric(d_boundary) and self.check_if_numeric(u_boundary)):
+        if not (
+            self.check_if_numeric(l_boundary)
+            and self.check_if_numeric(r_boundary)
+            and self.check_if_numeric(d_boundary)
+            and self.check_if_numeric(u_boundary)
+        ):
             raise ValueError("Boundaries must be numeric values")
         if not isinstance(knots_count, int) or knots_count < 0:
             knots_count = 0
         if l_boundary > r_boundary:
-            raise ValueError("left_boundary must be less than or equal to right_boundary")
+            raise ValueError(
+                "left_boundary must be less than or equal to right_boundary"
+            )
         if d_boundary > u_boundary:
-            raise ValueError("down_boundary must be less than or equal to upper_boundary")
+            raise ValueError(
+                "down_boundary must be less than or equal to upper_boundary"
+            )
 
-        knotsX = np.random.choice(range(int(l_boundary), int(r_boundary)), size=knots_count)
-        knotsY = np.random.choice(range(int(d_boundary), int(u_boundary)), size=knots_count)
+        knotsX = np.random.choice(
+            range(int(l_boundary), int(r_boundary)), size=knots_count
+        )
+        knotsY = np.random.choice(
+            range(int(d_boundary), int(u_boundary)), size=knots_count
+        )
 
         knots = list(zip(knotsX, knotsY))
         return knots
@@ -72,9 +92,19 @@ class HumanizeMouseTrajectory:
         knots = [self.from_point] + knots + [self.to_point]
         return BezierCalculator.calculate_points_in_curve(int(midPtsCnt), knots)
 
-    def distort_points(self, points: List[Tuple[int, int]], distortion_mean: int, distortion_st_dev: int, distortion_frequency: float) -> Union[List[Tuple[int, int]], NoReturn]:
+    def distort_points(
+        self,
+        points: List[Tuple[int, int]],
+        distortion_mean: int,
+        distortion_st_dev: int,
+        distortion_frequency: float,
+    ) -> Union[List[Tuple[int, int]], NoReturn]:
         """Distorts points by parameters of mean, standard deviation and frequency"""
-        if not (self.check_if_numeric(distortion_mean) and self.check_if_numeric(distortion_st_dev) and self.check_if_numeric(distortion_frequency)):
+        if not (
+            self.check_if_numeric(distortion_mean)
+            and self.check_if_numeric(distortion_st_dev)
+            and self.check_if_numeric(distortion_frequency)
+        ):
             raise ValueError("Distortions must be numeric")
         if not self.check_if_list_of_points(points):
             raise ValueError("points must be valid list of points")
@@ -84,12 +114,18 @@ class HumanizeMouseTrajectory:
         distorted: List[Tuple[int, int]] = []
         for i in range(1, len(points) - 1):
             x, y = points[i]
-            delta = int(np.random.normal(distortion_mean, distortion_st_dev) if random.random() < distortion_frequency else 0)
+            delta = int(
+                np.random.normal(distortion_mean, distortion_st_dev)
+                if random.random() < distortion_frequency
+                else 0
+            )
             distorted.append((x, y + delta))
         distorted = [points[0]] + distorted + [points[-1]]
         return distorted
 
-    def tween_points(self, points: List[Tuple[int, int]], target_points: int) -> Union[List[Tuple[int, int]], NoReturn]:
+    def tween_points(
+        self, points: List[Tuple[int, int]], target_points: int
+    ) -> Union[List[Tuple[int, int]], NoReturn]:
         """Modifies points by tween"""
         if not self.check_if_list_of_points(points):
             raise ValueError("List of points not valid")
@@ -98,7 +134,9 @@ class HumanizeMouseTrajectory:
 
         res: List[Tuple[int, int]] = []
         for i in range(target_points):
-            index = int(self.easeOutQuad(float(i) / (target_points - 1)) * (len(points) - 1))
+            index = int(
+                self.easeOutQuad(float(i) / (target_points - 1)) * (len(points) - 1)
+            )
             res += (points[index],)
         return res
 
@@ -112,7 +150,11 @@ class HumanizeMouseTrajectory:
         try:
 
             def point(p):
-                return (len(p) == 2) and self.check_if_numeric(p[0]) and self.check_if_numeric(p[1])
+                return (
+                    (len(p) == 2)
+                    and self.check_if_numeric(p[0])
+                    and self.check_if_numeric(p[1])
+                )
 
             return all(map(point, list_of_points))
         except (KeyError, TypeError):
@@ -149,7 +191,9 @@ class BezierCalculator:
         return bernstein
 
     @staticmethod
-    def calculate_points_in_curve(n: int, points: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    def calculate_points_in_curve(
+        n: int, points: List[Tuple[int, int]]
+    ) -> List[Tuple[int, int]]:
         """
         Given list of control points, returns n points in the Bézier curve,
         described by these points
@@ -202,7 +246,12 @@ class Mouse(PlaywrightMouse):
         await self._page.wait_for_timeout(random.randint(4, 8) * 50)
 
     async def dblclick(
-        self, x: Union[int, float], y: Union[int, float], button: Optional[Literal["left", "middle", "right"]] = "left", delay: Optional[float] = 20.0, humanly: Optional[bool] = True
+        self,
+        x: Union[int, float],
+        y: Union[int, float],
+        button: Optional[Literal["left", "middle", "right"]] = "left",
+        delay: Optional[float] = 20.0,
+        humanly: Optional[bool] = True,
     ) -> None:
         delay = delay or 20.0
         # Move mouse humanly to the Coordinates and wait some random time
@@ -222,12 +271,21 @@ class Mouse(PlaywrightMouse):
         # # Waiting as delay
         # await self._page.wait_for_timeout(delay)
         # await self.up(button=button)
-        await self._origin_dblclick(x, y, button=button, delay=random.randint(8, 14) * 10)
+        await self._origin_dblclick(
+            x, y, button=button, delay=random.randint(8, 14) * 10
+        )
 
         # Waiting random time
         await self._page.wait_for_timeout(random.randint(4, 8) * 50)
 
-    async def move(self, x: Union[int, float], y: Union[int, float], steps: Optional[int] = 1, humanly: Optional[bool] = True, sex=False) -> None:
+    async def move(
+        self,
+        x: Union[int, float],
+        y: Union[int, float],
+        steps: Optional[int] = 1,
+        humanly: Optional[bool] = True,
+        sex=False,
+    ) -> None:
         # If you want to move in a straight line
         if not humanly:
             await self._origin_move(x=x, y=y, steps=steps)
@@ -237,7 +295,9 @@ class Mouse(PlaywrightMouse):
             await self._page.wait_for_timeout(random.randint(1, 10))
             return
 
-        humanized_points = HumanizeMouseTrajectory((int(self.last_x), int(self.last_y)), (int(x), int(y)))
+        humanized_points = HumanizeMouseTrajectory(
+            (int(self.last_x), int(self.last_y)), (int(x), int(y))
+        )
 
         # Move Mouse to new random locations
         for x, y in humanized_points.points:

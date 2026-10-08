@@ -87,7 +87,9 @@ async def ban_user(
         return error_response(msg=str(e), code=ResponseCode.BAD_REQUEST)
     except Exception as e:
         logger.error(f"❌ 封禁用户失败: {e}")
-        return error_response(msg=f"封禁失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
+        return error_response(
+            msg=f"封禁失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR
+        )
 
 
 @router.post("/ban/lift", response_model=StandardResponse[UserBanItemResp])
@@ -104,23 +106,25 @@ async def lift_user_ban(
         )
         if ban is None:
             # 前置状态不满足（解封一个未封禁的用户）：非「资源不存在」，用通用业务拒绝码
-            return error_response(msg="该用户当前未被封禁", code=ResponseCode.BUSINESS_ERROR)
+            return error_response(
+                msg="该用户当前未被封禁", code=ResponseCode.BUSINESS_ERROR
+            )
         await log_admin_action(
             auth.mid, "user:unban", "user", request.mid, f"reason={request.reason}"
         )
         return success_response(data=_to_item(ban), msg="解封成功")
     except Exception as e:
         logger.error(f"❌ 解封用户失败: {e}")
-        return error_response(msg=f"解封失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
+        return error_response(
+            msg=f"解封失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR
+        )
 
 
 @router.post("/ban/list", response_model=StandardResponse[BanListResponse])
 async def list_bans(
     request: BanListRequest,
     auth: AuthInfo = Depends(
-        require_permission(
-            InteractionBizTypeEnum.USER, BizPermOp.BAN | BizPermOp.VIEW
-        )
+        require_permission(InteractionBizTypeEnum.USER, BizPermOp.BAN | BizPermOp.VIEW)
     ),
 ):
     """分页查询封禁记录，需 root 或 user 资源域 BAN / VIEW 权限"""
@@ -158,16 +162,16 @@ async def list_bans(
             )
     except Exception as e:
         logger.error(f"❌ 查询封禁记录失败: {e}")
-        return error_response(msg=f"查询失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
+        return error_response(
+            msg=f"查询失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR
+        )
 
 
 @router.post("/ban/status", response_model=StandardResponse[BanStatusResponse])
 async def get_ban_status(
     request: BanStatusRequest,
     auth: AuthInfo = Depends(
-        require_permission(
-            InteractionBizTypeEnum.USER, BizPermOp.BAN | BizPermOp.VIEW
-        )
+        require_permission(InteractionBizTypeEnum.USER, BizPermOp.BAN | BizPermOp.VIEW)
     ),
 ):
     """查询指定用户当前封禁状态（临时封禁到期会自动置为失效）"""
@@ -190,7 +194,9 @@ async def get_ban_status(
         )
     except Exception as e:
         logger.error(f"❌ 查询封禁状态失败: {e}")
-        return error_response(msg=f"查询失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR)
+        return error_response(
+            msg=f"查询失败: {str(e)}", code=ResponseCode.INTERNAL_ERROR
+        )
 
 
 __all__ = ["router"]

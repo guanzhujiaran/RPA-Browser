@@ -58,7 +58,9 @@ def _to_int(value: int | str | None) -> int | None:
         return None
 
 
-async def _load_fingerprint_map(mids: set[int]) -> dict[tuple[int, int], UserBrowserInfo]:
+async def _load_fingerprint_map(
+    mids: set[int],
+) -> dict[tuple[int, int], UserBrowserInfo]:
     """按 mid 批量拉取指纹信息，避免逐条查询（会话数有限，内存映射即可）"""
     if not mids:
         return {}
@@ -76,7 +78,9 @@ async def _build_page_items(entry) -> list[BrowserMonitorPageItem]:
         logger.warning(f"👨‍💼 Admin: 读取标签页失败: {e}")
         return []
     return [
-        BrowserMonitorPageItem(index=info.index, url=info.url or "", title=info.title or "")
+        BrowserMonitorPageItem(
+            index=info.index, url=info.url or "", title=info.title or ""
+        )
         for info in infos
     ]
 
@@ -172,7 +176,9 @@ async def get_browser_monitor_pages(
     mid = _to_int(request.mid)
     browser_id = _to_int(request.browser_id)
     if mid is None or browser_id is None:
-        return error_response(msg="mid / browser_id 不合法", code=ResponseCode.BAD_REQUEST)
+        return error_response(
+            msg="mid / browser_id 不合法", code=ResponseCode.BAD_REQUEST
+        )
 
     session_key = live_service._get_session_key(mid, browser_id)
     entry = live_service._browser_sessions.get(session_key)
@@ -238,7 +244,9 @@ async def stop_browser_session(
     mid = _to_int(request.mid)
     browser_id = _to_int(request.browser_id)
     if mid is None or browser_id is None:
-        return error_response(msg="mid / browser_id 不合法", code=ResponseCode.BAD_REQUEST)
+        return error_response(
+            msg="mid / browser_id 不合法", code=ResponseCode.BAD_REQUEST
+        )
 
     session_key = live_service._get_session_key(mid, browser_id)
     if session_key not in live_service._browser_sessions:

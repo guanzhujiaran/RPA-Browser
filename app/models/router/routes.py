@@ -138,9 +138,9 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_router,  # /browser/control
     # browser_control 子模块
     browser_control_operation_router,
-    browser_control_action_router,      # 自定义操作管理
-    browser_control_workflow_router,    # 工作流管理
-    browser_control_plugin_router,      # 插件挂载管理
+    browser_control_action_router,  # 自定义操作管理
+    browser_control_workflow_router,  # 工作流管理
+    browser_control_plugin_router,  # 插件挂载管理
 ]
 
 # 系统管理相关路由

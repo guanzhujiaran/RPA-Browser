@@ -3,6 +3,7 @@ WebRTC 视频流核心模型
 
 定义 WebRTC 视频流相关的枚举、数据类和配置模型。
 """
+
 from bili_common.models import StrEnumAutoDoc
 from sqlmodel import SQLModel, Field
 
@@ -13,12 +14,14 @@ import time
 
 class ScreencastFrameSize(TypedDict):
     """screencast size 参数（结构等价于 patchright 的 ScreencastSize）"""
+
     width: int
     height: int
 
 
 class ScreencastFrameData(TypedDict):
     """screencast on_frame 回调载荷（结构等价于 patchright 的 ScreencastFrame）"""
+
     data: bytes
     timestamp: float
     viewportWidth: int
@@ -27,6 +30,7 @@ class ScreencastFrameData(TypedDict):
 
 class WebRTCStreamState(StrEnumAutoDoc):
     """WebRTC 视频流状态枚举"""
+
     INITIALIZING = "initializing"  # 初始化中
     ACTIVE = "active"  # 活跃状态
     CLOSED = "closed"  # 已关闭
@@ -36,17 +40,18 @@ class WebRTCStreamState(StrEnumAutoDoc):
 @dataclass
 class WebRTCStreamInfo:
     """WebRTC 视频流信息"""
+
     stream_key: str  # 流的唯一标识符，格式: {mid}:{browser_id}:{page_index}
     page_index: int  # 页面索引
     state: WebRTCStreamState = WebRTCStreamState.INITIALIZING  # 当前状态
     created_at: float = field(default_factory=time.time)  # 创建时间戳
     last_activity: float = field(default_factory=time.time)  # 最后活动时间戳
-    
+
     @property
     def age_seconds(self) -> float:
         """获取流的存活时长（秒）"""
         return time.time() - self.created_at
-    
+
     @property
     def idle_seconds(self) -> float:
         """获取闲置时长（秒）"""
@@ -77,7 +82,9 @@ class ViewerStreamInfo:
     client_device_type: str = ""  # 设备类型稳定码：desktop / mobile / tablet
     client_browser_version: str = ""  # 浏览器大版本，如 126（结构化，供前端单独展示）
     client_ip_region: str = ""  # IP 属地，如「浙江 杭州」（be-message GeoIP RPC 解析）
-    client_ip_isp: str = ""  # IP 运营商（ASN 组织名，英文，如 China Unicom Shanghai network）
+    client_ip_isp: str = (
+        ""  # IP 运营商（ASN 组织名，英文，如 China Unicom Shanghai network）
+    )
     is_admin: bool = False  # 监管管理员观看：对归属者**完全隐藏**，见计划书 §2.7
 
     @property
@@ -158,7 +165,9 @@ class VideoFrameProducerStats(SQLModel):
     )
     drop_rate: float = Field(0.0, description="丢帧率（0-1）")
     queue_size: int = Field(0, description="当前帧队列积压数")
-    degraded: bool = Field(False, description="是否因自动原因（不可见 / 闲置）处于降档态")
+    degraded: bool = Field(
+        False, description="是否因自动原因（不可见 / 闲置）处于降档态"
+    )
     paused: bool = Field(False, description="是否处于用户主动暂停态（暂停时不出帧）")
     level: str = Field(
         "", description="当前生效的清晰度档位（original / ultra / high / medium / low）"
@@ -175,7 +184,9 @@ class StreamQualitySnapshot(SQLModel):
     避免调用方把它当成会话级状态。
     """
 
-    viewer_id: str = Field("", description="该快照归属的观看者 id（空表示未指定观看者）")
+    viewer_id: str = Field(
+        "", description="该快照归属的观看者 id（空表示未指定观看者）"
+    )
     level: StreamQualityLevelEnum = Field(description="用户档位")
     effective_level: StreamQualityLevelEnum = Field(
         description="当前生效档位（被自动降档时低于用户档位）"
@@ -239,7 +250,9 @@ class WebRTCSessionConfig:
                 raise ValueError(
                     f"{level.value} max fps must be positive, got {params.max_fps}"
                 )
-            if params.size and (params.size["width"] <= 0 or params.size["height"] <= 0):
+            if params.size and (
+                params.size["width"] <= 0 or params.size["height"] <= 0
+            ):
                 raise ValueError(
                     f"{level.value} frame size must be positive, got {params.size}"
                 )
@@ -269,9 +282,7 @@ class WebRTCSessionConfig:
                 level=level,
                 quality=self.high_quality,
                 max_fps=self.high_max_fps,
-                size=self._size(
-                    self.high_frame_max_width, self.high_frame_max_height
-                ),
+                size=self._size(self.high_frame_max_width, self.high_frame_max_height),
             )
         if level is StreamQualityLevelEnum.MEDIUM:
             return StreamQualityParams(

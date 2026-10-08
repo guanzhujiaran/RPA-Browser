@@ -13,7 +13,11 @@ from app.models.runtime.control import (
     BrowserSessionStatus,
     BrowserLaunchQueueStatusResponse,
 )
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserSessionRouterPath
 from app.services.RPA_browser.session.launch_queue import get_launch_queue
@@ -83,16 +87,14 @@ async def create_browser_session(
 
     current_time = int(time.time())
     expiration_time = settings.browser_session_expiration_time
-    expires_at = (
-        current_time + expiration_time
-        if expiration_time
-        else None
-    )
+    expires_at = current_time + expiration_time if expiration_time else None
 
     # 创建失败（如排队超时）：返回业务错误码，由前端展示提示
     if not result.success:
         return error_response(
-            code=ResponseCode(result.error_code) if result.error_code else ResponseCode.INTERNAL_ERROR,
+            code=ResponseCode(result.error_code)
+            if result.error_code
+            else ResponseCode.INTERNAL_ERROR,
             msg=result.error or "创建浏览器会话失败",
             data=CreateSessionResponse(
                 success=False,
@@ -140,8 +142,7 @@ async def browser_session_status(
         BrowserSessionStatus: 会话状态信息
     """
     status_data: BrowserSessionStatusData = live_service.get_browser_session_status(
-        auth_info.mid,
-        int(browser_info.browser_id)
+        auth_info.mid, int(browser_info.browser_id)
     )
 
     # 会话状态查询是**只读语义**：「会话不存在」「浏览器未运行」都是正常状态，不是错误。

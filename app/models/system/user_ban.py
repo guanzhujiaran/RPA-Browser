@@ -1,6 +1,7 @@
 """
 System 模块 - 用户封禁相关请求/响应模型（非表模型）
 """
+
 from datetime import datetime
 from typing import Optional
 

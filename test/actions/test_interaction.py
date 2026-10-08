@@ -1,12 +1,18 @@
 """
 测试交互操作
 """
+
 import pytest
 from playwright.async_api import Page
 
 from app.models.execution.action_params import (
-    ClickParams, InputParams, ScrollParams, HoverParams,
-    WaitParams, GetTextParams, GetWindowParams,
+    ClickParams,
+    InputParams,
+    ScrollParams,
+    HoverParams,
+    WaitParams,
+    GetTextParams,
+    GetWindowParams,
 )
 from app.models.execution.enums import MouseButtonEnum
 
@@ -23,7 +29,9 @@ class TestClickAction:
         """测试点击元素"""
         from app.services.execution.actions.interaction import ClickAction
 
-        await self.page.set_content("<html><body><button id='btn' onclick=\"window.__clicked=true\">Click</button></body></html>")
+        await self.page.set_content(
+            "<html><body><button id='btn' onclick=\"window.__clicked=true\">Click</button></body></html>"
+        )
 
         action = ClickAction.new_action(
             mid=1,
@@ -40,7 +48,9 @@ class TestClickAction:
         """测试双击"""
         from app.services.execution.actions.interaction import ClickAction
 
-        await self.page.set_content("<html><body><button id='btn' onclick=\"var c=parseInt(this.innerText||'0');this.innerText=(c+1).toString()\">0</button></body></html>")
+        await self.page.set_content(
+            "<html><body><button id='btn' onclick=\"var c=parseInt(this.innerText||'0');this.innerText=(c+1).toString()\">0</button></body></html>"
+        )
 
         action = ClickAction.new_action(
             mid=1,
@@ -60,7 +70,9 @@ class TestClickAction:
         """测试右键点击"""
         from app.services.execution.actions.interaction import ClickAction
 
-        await self.page.set_content("<html><body><button id='btn' oncontextmenu=\"window.__rightClicked=true;return false;\">Right Click</button></body></html>")
+        await self.page.set_content(
+            "<html><body><button id='btn' oncontextmenu=\"window.__rightClicked=true;return false;\">Right Click</button></body></html>"
+        )
 
         action = ClickAction.new_action(
             mid=1,
@@ -85,7 +97,9 @@ class TestInputAction:
         """测试输入文本"""
         from app.services.execution.actions.interaction import InputAction
 
-        await self.page.set_content("<html><body><input id='input' type='text'></body></html>")
+        await self.page.set_content(
+            "<html><body><input id='input' type='text'></body></html>"
+        )
 
         action = InputAction.new_action(
             mid=1,
@@ -98,14 +112,18 @@ class TestInputAction:
         assert result.success
         # 验证输入值已正确填入
         actual_value = await self.page.input_value("#input")
-        assert actual_value == "Hello World", f"Expected 'Hello World', got '{actual_value}'"
+        assert actual_value == "Hello World", (
+            f"Expected 'Hello World', got '{actual_value}'"
+        )
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_input_without_selector(self):
         """测试无 focus 时直接输入到已聚焦元素"""
         from app.services.execution.actions.interaction import InputAction
 
-        await self.page.set_content("<html><body><input id='input' type='text'></body></html>")
+        await self.page.set_content(
+            "<html><body><input id='input' type='text'></body></html>"
+        )
         await self.page.click("#input")  # 先聚焦元素
 
         action = InputAction.new_action(
@@ -126,7 +144,9 @@ class TestInputAction:
         """测试输入（替换已有内容）"""
         from app.services.execution.actions.interaction import InputAction
 
-        await self.page.set_content("<html><body><input id='input' type='text' value='old'></body></html>")
+        await self.page.set_content(
+            "<html><body><input id='input' type='text' value='old'></body></html>"
+        )
 
         action = InputAction.new_action(
             mid=1,
@@ -154,7 +174,9 @@ class TestScrollAction:
         """测试滚动到页面底部"""
         from app.services.execution.actions.interaction import ScrollAction
 
-        await self.page.set_content("<html><body><div style='height: 3000px;'>Long Content</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div style='height: 3000px;'>Long Content</div></body></html>"
+        )
 
         action = ScrollAction.new_action(
             mid=1,
@@ -174,7 +196,9 @@ class TestScrollAction:
         """测试滚动到指定元素"""
         from app.services.execution.actions.interaction import ScrollAction
 
-        await self.page.set_content("<html><body><div id='target' style='margin-top: 2000px;'>Target</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div id='target' style='margin-top: 2000px;'>Target</div></body></html>"
+        )
 
         action = ScrollAction.new_action(
             mid=1,
@@ -208,7 +232,9 @@ class TestHoverAction:
         """测试悬停元素"""
         from app.services.execution.actions.interaction import HoverAction
 
-        await self.page.set_content("<html><body><div id='target' style='width: 50px; height: 50px; background: green;'>Hover</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div id='target' style='width: 50px; height: 50px; background: green;'>Hover</div></body></html>"
+        )
 
         action = HoverAction.new_action(
             mid=1,
@@ -226,7 +252,9 @@ class TestHoverAction:
         from app.services.execution.actions.interaction import HoverAction
         from app.models.execution.action_params import Position
 
-        await self.page.set_content("<html><body><div style='width: 100px; height: 100px; background: blue;'>Area</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div style='width: 100px; height: 100px; background: blue;'>Area</div></body></html>"
+        )
 
         action = HoverAction.new_action(
             mid=1,
@@ -251,7 +279,9 @@ class TestWaitAction:
         """测试等待已存在的元素（立即返回 element_found=True）"""
         from app.services.execution.actions.interaction import WaitAction
 
-        await self.page.set_content("<html><body><div id='target'>Target</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div id='target'>Target</div></body></html>"
+        )
 
         action = WaitAction.new_action(
             mid=1,
@@ -311,7 +341,9 @@ class TestGetTextAction:
         """测试获取单个元素文本"""
         from app.services.execution.actions.interaction import GetTextAction
 
-        await self.page.set_content("<html><body><div id='target'>Hello Text</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div id='target'>Hello Text</div></body></html>"
+        )
 
         action = GetTextAction.new_action(
             mid=1,
@@ -329,7 +361,9 @@ class TestGetTextAction:
         """测试获取多个匹配元素文本（默认换行分隔）"""
         from app.services.execution.actions.interaction import GetTextAction
 
-        await self.page.set_content("<html><body><div class='item'>A</div><div class='item'>B</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div class='item'>A</div><div class='item'>B</div></body></html>"
+        )
 
         action = GetTextAction.new_action(
             mid=1,
@@ -347,7 +381,9 @@ class TestGetTextAction:
         """测试自定义分隔符"""
         from app.services.execution.actions.interaction import GetTextAction
 
-        await self.page.set_content("<html><body><div class='item'>A</div><div class='item'>B</div></body></html>")
+        await self.page.set_content(
+            "<html><body><div class='item'>A</div><div class='item'>B</div></body></html>"
+        )
 
         action = GetTextAction.new_action(
             mid=1,
@@ -389,7 +425,9 @@ class TestGetWindowAction:
         """测试通过 property_path 获取 window 属性"""
         from app.services.execution.actions.interaction import GetWindowAction
 
-        await self.page.set_content("<html><head><title>Test Title</title></head><body></body></html>")
+        await self.page.set_content(
+            "<html><head><title>Test Title</title></head><body></body></html>"
+        )
 
         action = GetWindowAction.new_action(
             mid=1,

@@ -9,4 +9,18 @@ from .routes import Request, Response, Route
 from .page import Page, new_page  # isort:skip
 from .browser import BrowserContext  # isort:skip
 
-__all__ = ["ElementHandle", "JSHandle", "Frame", "FrameLocator", "Route", "Response", "Request", "Locator", "Mouse", "Keyboard", "Page", "new_page", "BrowserContext"]
+__all__ = [
+    "ElementHandle",
+    "JSHandle",
+    "Frame",
+    "FrameLocator",
+    "Route",
+    "Response",
+    "Request",
+    "Locator",
+    "Mouse",
+    "Keyboard",
+    "Page",
+    "new_page",
+    "BrowserContext",
+]

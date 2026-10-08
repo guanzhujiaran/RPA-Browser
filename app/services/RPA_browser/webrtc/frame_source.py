@@ -107,8 +107,7 @@ class PageFrameSource:
         await self.producer.start()
         self._started = True
         logger.debug(
-            f"帧源已启动: page_index={self.page_index} "
-            f"(观看者={len(self._viewer_ids)})"
+            f"帧源已启动: page_index={self.page_index} (观看者={len(self._viewer_ids)})"
         )
 
     async def stop(self) -> None:

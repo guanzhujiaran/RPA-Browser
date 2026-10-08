@@ -1,6 +1,7 @@
 """
 组合测试 - 复合操作全流程测试
 """
+
 import pytest
 from playwright.async_api import Page
 from loguru import logger
@@ -19,15 +20,21 @@ class TestCompositeActionWorkflow:
     async def test_composite_navigate_and_screenshot(self):
         """测试：导航 + 截图 组合执行"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：导航 + 截图 组合执行")
         action = CompositeAction.new_action(
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="navigate", params={"url": "about:blank", "wait_until": "commit"}),
-                create_workflow_step(action_id="screenshot", params={}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="navigate",
+                        params={"url": "about:blank", "wait_until": "commit"},
+                    ),
+                    create_workflow_step(action_id="screenshot", params={}),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -41,16 +48,22 @@ class TestCompositeActionWorkflow:
     async def test_composite_navigate_click_screenshot(self):
         """测试：导航 → 点击 → 截图 完整流程"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：导航 → 点击 → 截图 完整流程")
-        
+
         # 先导航到 about:blank
         action = CompositeAction.new_action(
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="navigate", params={"url": "about:blank", "wait_until": "commit"}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="navigate",
+                        params={"url": "about:blank", "wait_until": "commit"},
+                    ),
+                ]
+            ),
         )
         result = await action.execute()
         logger.info(result)
@@ -69,10 +82,14 @@ class TestCompositeActionWorkflow:
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="click", params={"selector": "#btn"}),
-                create_workflow_step(action_id="screenshot", params={}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#btn"}
+                    ),
+                    create_workflow_step(action_id="screenshot", params={}),
+                ]
+            ),
         )
         result2 = await action2.execute()
         logger.info(result2)
@@ -85,8 +102,9 @@ class TestCompositeActionWorkflow:
     async def test_composite_with_variable_injection(self):
         """测试：变量注入到步骤参数"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：变量注入到步骤参数")
-        
+
         # 设置页面
         await self.page.set_content(
             "<html><body>"
@@ -105,11 +123,21 @@ class TestCompositeActionWorkflow:
                 "email_addr": "test@example.com",
                 "selector_submit": "#submit",
             },
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="input", params={"selector": "#username", "value": "{{user_name}}"}),
-                create_workflow_step(action_id="input", params={"selector": "#email", "value": "{{email_addr}}"}),
-                create_workflow_step(action_id="click", params={"selector": "{{selector_submit}}"}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#username", "value": "{{user_name}}"},
+                    ),
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#email", "value": "{{email_addr}}"},
+                    ),
+                    create_workflow_step(
+                        action_id="click", params={"selector": "{{selector_submit}}"}
+                    ),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -125,8 +153,9 @@ class TestCompositeActionWorkflow:
     async def test_composite_input_and_verify(self):
         """测试：输入 → 验证输入结果"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：输入 → 验证输入结果")
-        
+
         await self.page.set_content(
             "<html><body>"
             "<input id='input_field' type='text'>"
@@ -138,10 +167,15 @@ class TestCompositeActionWorkflow:
             mid=1,
             page=self.page,
             variables={"input_value": "Hello Playwright!"},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="input", params={"selector": "#input_field", "value": "{{input_value}}"}),
-                create_workflow_step(action_id="screenshot", params={}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#input_field", "value": "{{input_value}}"},
+                    ),
+                    create_workflow_step(action_id="screenshot", params={}),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -158,8 +192,9 @@ class TestCompositeActionWorkflow:
     async def test_composite_scroll_and_screenshot(self):
         """测试：滚动 + 截图"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：滚动 + 截图")
-        
+
         await self.page.set_content(
             "<html><body>"
             "<div style='height: 50px;'>Header</div>"
@@ -172,10 +207,12 @@ class TestCompositeActionWorkflow:
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="scroll", params={}),
-                create_workflow_step(action_id="screenshot", params={}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(action_id="scroll", params={}),
+                    create_workflow_step(action_id="screenshot", params={}),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -188,8 +225,9 @@ class TestCompositeActionWorkflow:
     async def test_composite_multiple_inputs(self):
         """测试：多输入框填写"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：多输入框填写")
-        
+
         await self.page.set_content(
             "<html><body>"
             "<form>"
@@ -205,13 +243,26 @@ class TestCompositeActionWorkflow:
             mid=1,
             page=self.page,
             variables={"user_name": "张三", "user_age": "25", "user_city": "北京"},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="input", params={"selector": "#name", "value": "{{user_name}}"}),
-                create_workflow_step(action_id="input", params={"selector": "#age", "value": "{{user_age}}"}),
-                create_workflow_step(action_id="input", params={"selector": "#city", "value": "{{user_city}}"}),
-                create_workflow_step(action_id="click", params={"selector": "#submit_form"}),
-                create_workflow_step(action_id="screenshot", params={}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#name", "value": "{{user_name}}"},
+                    ),
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#age", "value": "{{user_age}}"},
+                    ),
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#city", "value": "{{user_city}}"},
+                    ),
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#submit_form"}
+                    ),
+                    create_workflow_step(action_id="screenshot", params={}),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -229,8 +280,9 @@ class TestCompositeActionWorkflow:
     async def test_composite_hover_and_click(self):
         """测试：悬停 + 点击"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：悬停 + 点击")
-        
+
         await self.page.set_content(
             "<html><body>"
             "<div id='menu' style='width: 100px; height: 50px; background: blue;'>Menu</div>"
@@ -242,10 +294,14 @@ class TestCompositeActionWorkflow:
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="hover", params={"selector": "#menu"}),
-                create_workflow_step(action_id="screenshot", params={}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="hover", params={"selector": "#menu"}
+                    ),
+                    create_workflow_step(action_id="screenshot", params={}),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -258,6 +314,7 @@ class TestCompositeActionWorkflow:
     async def test_composite_failed_step_stops_execution(self):
         """测试：单步失败中断后续操作"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：单步失败中断后续操作")
 
         await self.page.set_content(
@@ -272,11 +329,19 @@ class TestCompositeActionWorkflow:
             mid=1,
             page=self.page,
             variables={"test": True},
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="click", params={"selector": "#btn"}),
-                create_workflow_step(action_id="click", params={"selector": "#nonexistent"}),
-                create_workflow_step(action_id="click", params={"selector": "#result"}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#btn"}
+                    ),
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#nonexistent"}
+                    ),
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#result"}
+                    ),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -290,6 +355,7 @@ class TestCompositeActionWorkflow:
     async def test_composite_full_login_simulation(self):
         """测试：模拟完整登录流程"""
         from app.services.execution.actions.control_flow import CompositeAction
+
         logger.info("开始测试：模拟完整登录流程")
 
         # 步骤 1: 导航到登录页
@@ -312,12 +378,22 @@ class TestCompositeActionWorkflow:
                 "login_user": "admin",
                 "login_pass": "password123",
             },
-            params=CompositeParams(steps=[
-                create_workflow_step(action_id="input", params={"selector": "#username", "value": "{{login_user}}"}),
-                create_workflow_step(action_id="input", params={"selector": "#password", "value": "{{login_pass}}"}),
-                create_workflow_step(action_id="click", params={"selector": "#login_btn"}),
-                create_workflow_step(action_id="screenshot", params={}),
-            ]),
+            params=CompositeParams(
+                steps=[
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#username", "value": "{{login_user}}"},
+                    ),
+                    create_workflow_step(
+                        action_id="input",
+                        params={"selector": "#password", "value": "{{login_pass}}"},
+                    ),
+                    create_workflow_step(
+                        action_id="click", params={"selector": "#login_btn"}
+                    ),
+                    create_workflow_step(action_id="screenshot", params={}),
+                ]
+            ),
         )
 
         result = await action.execute()
@@ -330,4 +406,6 @@ class TestCompositeActionWorkflow:
         username_value = await self.page.input_value("#username")
         assert username_value == "admin", f"Expected 'admin', got '{username_value}'"
         password_value = await self.page.input_value("#password")
-        assert password_value == "password123", f"Expected 'password123', got '{password_value}'"
+        assert password_value == "password123", (
+            f"Expected 'password123', got '{password_value}'"
+        )

@@ -1,13 +1,19 @@
 """
 工作流 CRUD 服务
 """
+
 from typing import Any, Dict, List
 from datetime import datetime
 import uuid
 from sqlmodel import select
 from sqlalchemy import true, false, update
 
-from app.models.database.workflow.models import UserWorkflow, WorkflowPluginRelation, CompositeActionModel, UserPlugin
+from app.models.database.workflow.models import (
+    UserWorkflow,
+    WorkflowPluginRelation,
+    CompositeActionModel,
+    UserPlugin,
+)
 from app.models.execution.action_params import PluginConfig
 from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -57,7 +63,7 @@ class WorkflowCrudService:
                     link = WorkflowPluginRelation(
                         workflow_id=workflow_id,
                         plugin_id=plugin_config.plugin_id,
-                        config_params=plugin_config.config_params
+                        config_params=plugin_config.config_params,
                     )
                     session.add(link)
 
@@ -68,7 +74,9 @@ class WorkflowCrudService:
     @staticmethod
     async def get_by_id(id: int) -> UserWorkflow | None:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
+            result = await session.exec(
+                select(UserWorkflow).where(UserWorkflow.id == id)
+            )
             return result.first()
 
     @staticmethod
@@ -83,10 +91,12 @@ class WorkflowCrudService:
     async def get_enabled_plugins(workflow_id: str) -> List[PluginConfig]:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
-                select(WorkflowPluginRelation).where(WorkflowPluginRelation.workflow_id == workflow_id)
+                select(WorkflowPluginRelation).where(
+                    WorkflowPluginRelation.workflow_id == workflow_id
+                )
             )
             links = result.all()
-            
+
             plugins: list[PluginConfig] = []
             for link in links:
                 plugin_info = await session.exec(
@@ -94,13 +104,15 @@ class WorkflowCrudService:
                 )
                 plugin = plugin_info.first()
                 if plugin:
-                    plugins.append(PluginConfig(
-                        plugin_id=link.plugin_id,
-                        config_params=link.config_params or {},
-                        hook_type=plugin.hook_type,
-                        priority=plugin.priority,
-                    ))
-            
+                    plugins.append(
+                        PluginConfig(
+                            plugin_id=link.plugin_id,
+                            config_params=link.config_params or {},
+                            hook_type=plugin.hook_type,
+                            priority=plugin.priority,
+                        )
+                    )
+
             # 按优先级排序
             plugins.sort(key=lambda x: x.priority)
             return plugins
@@ -112,15 +124,21 @@ class WorkflowCrudService:
         async with DatabaseSessionManager.async_session() as session:
             query = select(func.count(UserWorkflow.id))
             if filter_type == "private":
-                query = query.where((UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false()))
+                query = query.where(
+                    (UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false())
+                )
             elif filter_type == "public":
                 query = query.where(UserWorkflow.is_public == true())
             elif filter_type == "community":
-                query = query.where((UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true()))
+                query = query.where(
+                    (UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true())
+                )
             elif filter_type == "verified":
                 query = query.where(UserWorkflow.is_verified == true())
             else:
-                query = query.where((UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true()))
+                query = query.where(
+                    (UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true())
+                )
 
             result = await session.exec(query)
             return result.one()
@@ -132,22 +150,28 @@ class WorkflowCrudService:
         limit: int = 100,
         filter_type: str = "all",
         sort_by: str = "updated_at",
-        sort_order: str = "desc"
+        sort_order: str = "desc",
     ) -> List[UserWorkflow]:
         from sqlmodel import col
 
         async with DatabaseSessionManager.async_session() as session:
             query = select(UserWorkflow)
             if filter_type == "private":
-                query = query.where((UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false()))
+                query = query.where(
+                    (UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false())
+                )
             elif filter_type == "public":
                 query = query.where(UserWorkflow.is_public == true())
             elif filter_type == "community":
-                query = query.where((UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true()))
+                query = query.where(
+                    (UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true())
+                )
             elif filter_type == "verified":
                 query = query.where(UserWorkflow.is_verified == true())
             else:
-                query = query.where((UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true()))
+                query = query.where(
+                    (UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true())
+                )
 
             sort_field = getattr(UserWorkflow, sort_by, UserWorkflow.updated_at)
             if sort_order == "asc":
@@ -173,7 +197,9 @@ class WorkflowCrudService:
         enabled_plugins: List[PluginConfig] | None = None,
     ) -> UserWorkflow | None:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
+            result = await session.exec(
+                select(UserWorkflow).where(UserWorkflow.id == id)
+            )
             model = result.first()
             if not model:
                 return None
@@ -181,9 +207,9 @@ class WorkflowCrudService:
             if name is not None and name != model.name:
                 existing = await session.exec(
                     select(UserWorkflow).where(
-                        (UserWorkflow.mid == model.mid) &
-                        (UserWorkflow.name == name) &
-                        (UserWorkflow.id != id)
+                        (UserWorkflow.mid == model.mid)
+                        & (UserWorkflow.name == name)
+                        & (UserWorkflow.id != id)
                     )
                 )
                 if existing.first():
@@ -207,7 +233,9 @@ class WorkflowCrudService:
 
             if enabled_plugins is not None:
                 old_links = await session.exec(
-                    select(WorkflowPluginRelation).where(WorkflowPluginRelation.workflow_id == model.workflow_id)
+                    select(WorkflowPluginRelation).where(
+                        WorkflowPluginRelation.workflow_id == model.workflow_id
+                    )
                 )
                 for link in old_links.all():
                     await session.delete(link)
@@ -216,7 +244,7 @@ class WorkflowCrudService:
                     link = WorkflowPluginRelation(
                         workflow_id=model.workflow_id,
                         plugin_id=plugin_config.plugin_id,
-                        config_params=plugin_config.config_params
+                        config_params=plugin_config.config_params,
                     )
                     session.add(link)
 
@@ -228,7 +256,9 @@ class WorkflowCrudService:
     @staticmethod
     async def delete(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
+            result = await session.exec(
+                select(UserWorkflow).where(UserWorkflow.id == id)
+            )
             model = result.first()
             if not model:
                 return False
@@ -241,7 +271,9 @@ class WorkflowCrudService:
                 )
 
             links = await session.exec(
-                select(WorkflowPluginRelation).where(WorkflowPluginRelation.workflow_id == model.workflow_id)
+                select(WorkflowPluginRelation).where(
+                    WorkflowPluginRelation.workflow_id == model.workflow_id
+                )
             )
             for link in links.all():
                 await session.delete(link)
@@ -254,7 +286,9 @@ class WorkflowCrudService:
     async def enable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserWorkflow).where(UserWorkflow.id == id).values(is_enabled=True, updated_at=datetime.now())
+                update(UserWorkflow)
+                .where(UserWorkflow.id == id)
+                .values(is_enabled=True, updated_at=datetime.now())
             )
             await session.commit()
             return True
@@ -263,7 +297,9 @@ class WorkflowCrudService:
     async def disable(id: int) -> bool:
         async with DatabaseSessionManager.async_session() as session:
             await session.exec(
-                update(UserWorkflow).where(UserWorkflow.id == id).values(is_enabled=False, updated_at=datetime.now())
+                update(UserWorkflow)
+                .where(UserWorkflow.id == id)
+                .values(is_enabled=False, updated_at=datetime.now())
             )
             await session.commit()
             return True
@@ -271,7 +307,9 @@ class WorkflowCrudService:
     @staticmethod
     async def duplicate(id: int) -> UserWorkflow | None:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
+            result = await session.exec(
+                select(UserWorkflow).where(UserWorkflow.id == id)
+            )
             original = result.first()
             if not original:
                 return None
@@ -295,9 +333,13 @@ class WorkflowCrudService:
             return new_model
 
     @staticmethod
-    async def fork(id: int, target_mid: int, new_name: str | None = None) -> UserWorkflow | None:
+    async def fork(
+        id: int, target_mid: int, new_name: str | None = None
+    ) -> UserWorkflow | None:
         async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(select(UserWorkflow).where(UserWorkflow.id == id))
+            result = await session.exec(
+                select(UserWorkflow).where(UserWorkflow.id == id)
+            )
             original = result.first()
             if not original:
                 return None
@@ -344,7 +386,9 @@ class WorkflowCrudService:
             return new_model
 
     @staticmethod
-    async def list_forks(workflow_id: int, skip: int = 0, limit: int = 50) -> List[UserWorkflow]:
+    async def list_forks(
+        workflow_id: int, skip: int = 0, limit: int = 50
+    ) -> List[UserWorkflow]:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(UserWorkflow)
@@ -363,9 +407,9 @@ class WorkflowCrudService:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(UserWorkflow).where(
-                    (UserWorkflow.is_enabled == true()) &
-                    (UserWorkflow.trigger_type == "cron") &
-                    (UserWorkflow.browser_id.is_not(None))
+                    (UserWorkflow.is_enabled == true())
+                    & (UserWorkflow.trigger_type == "cron")
+                    & (UserWorkflow.browser_id.is_not(None))
                 )
             )
             return result.all()

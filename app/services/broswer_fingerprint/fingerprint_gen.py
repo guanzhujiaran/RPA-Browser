@@ -17,6 +17,7 @@ from app.utils.http.rand_headers_gen import (
 )
 from browserforge.fingerprints import Fingerprint
 
+
 def _map_platform_from_fingerprint(rand_fingerprint: Fingerprint) -> PlatformEnum:
     """从指纹信息映射平台类型"""
     bf_fingerprint_hashmap = {
@@ -35,11 +36,16 @@ def _map_platform_from_fingerprint(rand_fingerprint: Fingerprint) -> PlatformEnu
     platform = bf_fingerprint_hashmap.get(real_platform, PlatformEnum.linux)
 
     # 如果映射失败，尝试从user agent中推断
-    if platform == PlatformEnum.linux and "Windows" in rand_fingerprint.navigator.userAgent:
+    if (
+        platform == PlatformEnum.linux
+        and "Windows" in rand_fingerprint.navigator.userAgent
+    ):
         platform = PlatformEnum.windows
-    elif platform == PlatformEnum.linux and "Mac" in rand_fingerprint.navigator.userAgent:
+    elif (
+        platform == PlatformEnum.linux and "Mac" in rand_fingerprint.navigator.userAgent
+    ):
         platform = PlatformEnum.macos
-    
+
     return platform
 
 
@@ -65,31 +71,36 @@ def _apply_user_settings(
 ) -> dict:
     """应用用户默认设置，返回配置字典"""
     lang = (
-        user_default_settings and user_default_settings.default_lang
+        user_default_settings
+        and user_default_settings.default_lang
         or default_browser_setting.default_lang
         or rand_fingerprint.navigator.language
     )
     timezone = (
-        user_default_settings and user_default_settings.default_timezone
+        user_default_settings
+        and user_default_settings.default_timezone
         or default_browser_setting.default_timezone
         or "Asia/Shanghai"
     )
     viewport_width = (
-        user_default_settings and user_default_settings.default_viewport_width
+        user_default_settings
+        and user_default_settings.default_viewport_width
         or default_browser_setting.default_viewport_width
         or rand_fingerprint.screen.availWidth
     )
     viewport_height = (
-        user_default_settings and user_default_settings.default_viewport_height
+        user_default_settings
+        and user_default_settings.default_viewport_height
         or default_browser_setting.default_viewport_height
         or rand_fingerprint.screen.availHeight
     )
     proxy_server = (
-        user_default_settings and user_default_settings.default_proxy_server
+        user_default_settings
+        and user_default_settings.default_proxy_server
         or default_browser_setting.default_proxy_server
         or ""
     )
-    
+
     return {
         "lang": lang,
         "timezone": timezone,

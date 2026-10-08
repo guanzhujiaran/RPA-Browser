@@ -4,6 +4,7 @@
 仅包含日志记录的查询/删除/统计。
 （采集「是否启用 / 采集哪些字段」已直接落到 action 的基础配置上，无需单独的配置模型。）
 """
+
 from typing import Any, Dict, List, Optional
 
 from datetime import datetime
@@ -23,14 +24,21 @@ from app.models.base.base_sqlmodel import BasePaginationReq
 
 class ActionLogListRequest(BasePaginationReq):
     """日志查询请求（支持筛选 + 分页）"""
+
     action_id: str | None = Field(default=None, description="按操作ID筛选")
     execution_id: str | None = Field(default=None, description="按执行批次ID筛选")
     workflow_id: str | None = Field(default=None, description="按工作流ID筛选")
     browser_id: str | None = Field(default=None, description="按浏览器ID筛选")
-    source: ActionLogSourceEnum | None = Field(default=None, description="按触发来源筛选")
-    status: ActionLogStatusEnum | None = Field(default=None, description="按执行状态筛选")
+    source: ActionLogSourceEnum | None = Field(
+        default=None, description="按触发来源筛选"
+    )
+    status: ActionLogStatusEnum | None = Field(
+        default=None, description="按执行状态筛选"
+    )
     success: bool | None = Field(default=None, description="按是否成功筛选")
-    keyword: str | None = Field(default=None, description="关键字（匹配操作名/操作ID/错误信息）")
+    keyword: str | None = Field(
+        default=None, description="关键字（匹配操作名/操作ID/错误信息）"
+    )
     started_after: datetime | None = Field(default=None, description="起始时间（含）")
     started_before: datetime | None = Field(default=None, description="结束时间（含）")
     order_desc: bool = Field(default=True, description="是否按时间倒序")
@@ -38,6 +46,7 @@ class ActionLogListRequest(BasePaginationReq):
 
 class ActionLogItemResponse(SQLModel):
     """单条日志记录响应"""
+
     id: int | None = None
     log_id: str
     mid: str
@@ -66,21 +75,27 @@ class ActionLogItemResponse(SQLModel):
 
 class ActionLogDetailResponse(ActionLogItemResponse):
     """日志详情响应（当前与列表项一致，便于后续扩展）"""
+
     pass
 
 
 class ActionLogByExecutionRequest(SQLModel):
     """按执行批次查询完整链路"""
+
     execution_id: str = Field(description="执行批次ID")
 
 
 class ActionLogDeleteRequest(SQLModel):
     """按 log_id 批量删除"""
-    log_ids: List[str] = Field(default_factory=list, description="要删除的日志唯一ID列表")
+
+    log_ids: List[str] = Field(
+        default_factory=list, description="要删除的日志唯一ID列表"
+    )
 
 
 class ActionLogClearRequest(SQLModel):
     """按条件批量清理日志"""
+
     action_id: str | None = None
     execution_id: str | None = None
     workflow_id: str | None = None
@@ -95,6 +110,7 @@ class ActionLogClearRequest(SQLModel):
 
 class ActionLogStatsResponse(SQLModel):
     """日志统计响应"""
+
     days: int
     total: int
     success: int

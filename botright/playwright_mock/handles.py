@@ -96,11 +96,17 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
         return element_handles
 
     async def wait_for_selector(
-        self, selector: str, state: Optional[Literal["attached", "detached", "hidden", "visible"]] = None, timeout: Optional[float] = None, strict: Optional[bool] = False
+        self,
+        selector: str,
+        state: Optional[Literal["attached", "detached", "hidden", "visible"]] = None,
+        timeout: Optional[float] = None,
+        strict: Optional[bool] = False,
     ) -> Optional[ElementHandle]:
         from . import ElementHandle
 
-        _element_handle = await self._origin_wait_for_selector(selector=selector, state=state, strict=strict, timeout=timeout)
+        _element_handle = await self._origin_wait_for_selector(
+            selector=selector, state=state, strict=strict, timeout=timeout
+        )
         if not _element_handle:
             return None
 
@@ -108,7 +114,9 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
         return element_handle
 
     # JsHandle
-    async def evaluate_handle(self, expression: str, arg: Optional[Any] = None) -> Union[JSHandle, ElementHandle]:
+    async def evaluate_handle(
+        self, expression: str, arg: Optional[Any] = None
+    ) -> Union[JSHandle, ElementHandle]:
         _js_handle = await self._origin_evaluate_handle(expression=expression, arg=arg)
 
         if isinstance(_js_handle, PlaywrightElementHandle):
@@ -120,7 +128,9 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
 
     async def click(
         self,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         position: Optional[Position] = None,
         delay: Optional[float] = None,
         button: Optional[Literal["left", "middle", "right"]] = None,
@@ -152,7 +162,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             if not is_visible:
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -161,14 +176,18 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             for modifier in modifiers:
                 await self._page.keyboard.down(modifier)
 
-            await self._page.mouse.click(x, y, button=button, click_count=click_count, delay=delay)
+            await self._page.mouse.click(
+                x, y, button=button, click_count=click_count, delay=delay
+            )
 
             for modifier in modifiers:
                 await self._page.keyboard.up(modifier)
 
     async def dblclick(
         self,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         position: Optional[Position] = None,
         delay: Optional[float] = None,
         button: Optional[Literal["left", "middle", "right"]] = None,
@@ -194,7 +213,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -209,7 +233,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
                 await self._page.keyboard.up(modifier)
 
     async def check(
-        self, position: Optional[Position] = None, timeout: Optional[float] = None, force: Optional[bool] = None, no_wait_after: Optional[bool] = None, trial: Optional[bool] = None
+        self,
+        position: Optional[Position] = None,
+        timeout: Optional[float] = None,
+        force: Optional[bool] = None,
+        no_wait_after: Optional[bool] = None,
+        trial: Optional[bool] = None,
     ) -> None:
         position = position or Position(x=0, y=0)
 
@@ -230,7 +259,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -241,7 +275,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             assert await self.is_checked(), PlaywrightError
 
     async def uncheck(
-        self, position: Optional[Position] = None, timeout: Optional[float] = None, force: Optional[bool] = None, no_wait_after: Optional[bool] = None, trial: Optional[bool] = None
+        self,
+        position: Optional[Position] = None,
+        timeout: Optional[float] = None,
+        force: Optional[bool] = None,
+        no_wait_after: Optional[bool] = None,
+        trial: Optional[bool] = None,
     ) -> None:
         position = position or Position(x=0, y=0)
 
@@ -262,7 +301,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -273,7 +317,13 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             assert not await self.is_checked()
 
     async def set_checked(
-        self, checked: bool, position: Optional[Position] = None, timeout: Optional[float] = None, force: Optional[bool] = None, no_wait_after: Optional[bool] = None, trial: Optional[bool] = None
+        self,
+        checked: bool,
+        position: Optional[Position] = None,
+        timeout: Optional[float] = None,
+        force: Optional[bool] = None,
+        no_wait_after: Optional[bool] = None,
+        trial: Optional[bool] = None,
     ) -> None:
         position = position or Position(x=0, y=0)
 
@@ -294,7 +344,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -306,7 +361,9 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
 
     async def hover(
         self,
-        modifiers: Optional[Sequence[Literal["Alt", "Control", "Meta", "Shift"]]] = None,
+        modifiers: Optional[
+            Sequence[Literal["Alt", "Control", "Meta", "Shift"]]
+        ] = None,
         position: Optional[Position] = None,
         timeout: Optional[float] = None,
         no_wait_after: Optional[bool] = None,
@@ -330,7 +387,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             if not await self.is_visible():
                 raise PlaywrightError("Element is outside of the viewport")
 
-            x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+            x, y, width, height = (
+                bounding_box["x"],
+                bounding_box["y"],
+                bounding_box["width"],
+                bounding_box["height"],
+            )
             if not any(position.values()):
                 x, y = x + width // 2, y + height // 2
             else:
@@ -344,7 +406,13 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
             for modifier in modifiers:
                 await self._page.keyboard.up(modifier)
 
-    async def type(self, text: str, delay: Optional[float] = None, timeout: Optional[float] = None, no_wait_after: Optional[bool] = None) -> None:
+    async def type(
+        self,
+        text: str,
+        delay: Optional[float] = None,
+        timeout: Optional[float] = None,
+        no_wait_after: Optional[bool] = None,
+    ) -> None:
         await self.wait_for_element_state("editable", timeout=timeout)
 
         bounding_box = await self.bounding_box()
@@ -354,7 +422,12 @@ class ElementHandle(JSHandle, PlaywrightElementHandle):
         if self._page.scroll_into_view:
             await self.scroll_into_view_if_needed(timeout=timeout)
 
-        x, y, width, height = bounding_box["x"], bounding_box["y"], bounding_box["width"], bounding_box["height"]
+        x, y, width, height = (
+            bounding_box["x"],
+            bounding_box["y"],
+            bounding_box["width"],
+            bounding_box["height"],
+        )
 
         x, y = x + width // 2, y + height // 2
 

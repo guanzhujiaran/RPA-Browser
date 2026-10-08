@@ -37,7 +37,9 @@ class MemorySnapshot(SQLModel):
 class BrowserMemorySample(SQLModel):
     """单个浏览器会话的内存采样（按会话的 Chromium 用户数据目录聚合进程树）"""
 
-    user_data_dir: str = Field(description="会话的 Chromium 用户数据目录（会话唯一标识）")
+    user_data_dir: str = Field(
+        description="会话的 Chromium 用户数据目录（会话唯一标识）"
+    )
     total_mb: float = Field(
         description="会话进程树内存合计(MB)：匿名页 + 共享匿名页（Pss_Anon+Pss_Shmem），不含可回收的文件映射页"
     )
@@ -56,7 +58,9 @@ class BrowserMemoryEstimatorStatus(SQLModel):
     sample_count: int = Field(default=0, description="当前滑动窗口内的样本数")
     window: int = Field(default=0, description="滑动窗口长度")
     min_samples: int = Field(default=0, description="生效所需的最小样本数")
-    active_instances: int = Field(default=0, description="最近一次扫描到的活跃浏览器实例数")
+    active_instances: int = Field(
+        default=0, description="最近一次扫描到的活跃浏览器实例数"
+    )
     last_sample_mb: float | None = Field(
         default=None, description="最近一次采样的单实例占用(MB)"
     )
@@ -64,7 +68,9 @@ class BrowserMemoryEstimatorStatus(SQLModel):
         default=None, description="窗口内单实例平均占用(MB)"
     )
     peak_mb: float | None = Field(default=None, description="单实例占用历史峰值(MB)")
-    reserved_mb: int = Field(default=0, description="当前准入记账用的单实例预留额度(MB)")
+    reserved_mb: int = Field(
+        default=0, description="当前准入记账用的单实例预留额度(MB)"
+    )
     configured_reserved_mb: int = Field(default=0, description="配置的基准预留额度(MB)")
 
 
@@ -90,9 +96,13 @@ class LaunchQueueStatus(SQLModel):
 class LaunchQueueEntryStatus(SQLModel):
     """单个会话的排队状态"""
 
-    in_queue: bool = Field(default=False, description="是否处于启动队列中（含排队与启动中）")
+    in_queue: bool = Field(
+        default=False, description="是否处于启动队列中（含排队与启动中）"
+    )
     state: LaunchQueueStateEnum | None = Field(default=None, description="排队状态")
-    queue_type: LaunchQueueTypeEnum | None = Field(default=None, description="所在队列类型")
+    queue_type: LaunchQueueTypeEnum | None = Field(
+        default=None, description="所在队列类型"
+    )
     position: int | None = Field(default=None, description="在同队列中的位置（1 起）")
     waiting_seconds: int = Field(default=0, description="已等待时长(秒)")
     estimated_wait_seconds: int | None = Field(

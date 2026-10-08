@@ -5,14 +5,23 @@ Controller 接口测试配置
 参考: https://fastapi.org.cn/advanced/async-tests/
 使用真实数据库（SQLite）和真实 CRUD 操作，不 mock CRUD 服务。
 """
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.controller.v1.browser_control.execution.action_router import router as action_router
-from app.controller.v1.browser_control.execution.workflow_router import router as workflow_router
-from app.controller.v1.browser_control.execution.plugin_router import router as plugin_router
-from app.controller.v1.browser_control.execution.execution_router import router as execution_router
+from app.controller.v1.browser_control.execution.action_router import (
+    router as action_router,
+)
+from app.controller.v1.browser_control.execution.workflow_router import (
+    router as workflow_router,
+)
+from app.controller.v1.browser_control.execution.plugin_router import (
+    router as plugin_router,
+)
+from app.controller.v1.browser_control.execution.execution_router import (
+    router as execution_router,
+)
 from app.utils.depends.mid_depends import get_auth_info_from_header
 from app.utils.depends.session_manager import DatabaseSessionManager
 from bili_common.models.response_code import ResponseCode
@@ -71,16 +80,18 @@ async def _cleanup_db():
     from sqlmodel import delete
     from app.models.database.workflow.models import (
         ResourceLike,
-        UserPlugin, UserWorkflow, CompositeActionModel,
+        UserPlugin,
+        UserWorkflow,
+        CompositeActionModel,
     )
 
     async with DatabaseSessionManager.async_session() as session:
         # 按外键依赖倒序删除：先删子表（引用表），再删父表（被引用表）
         for model in [
-            ResourceLike,            # 引用各资源
-            UserPlugin,              # 引用 CompositeActionModel
-            UserWorkflow,            # 引用 CompositeActionModel
-            CompositeActionModel,    # 主表，被其他表引用
+            ResourceLike,  # 引用各资源
+            UserPlugin,  # 引用 CompositeActionModel
+            UserWorkflow,  # 引用 CompositeActionModel
+            CompositeActionModel,  # 主表，被其他表引用
         ]:
             await session.exec(delete(model))
         await session.commit()
@@ -88,13 +99,17 @@ async def _cleanup_db():
 
 # ═══════════════ 通用 Fixtures：消除各测试文件中的重复代码 ═══════════════
 
+
 @pytest.fixture
 async def created_action(client) -> tuple[int, str]:
     """创建测试用自定义操作，返回 (db_id, action_id)"""
-    resp = await client.post(f"{PREFIX}/custom-actions/create", json={
-        "name": "fixture_action",
-        "steps": [{"action_id": "click", "params": {}}],
-    })
+    resp = await client.post(
+        f"{PREFIX}/custom-actions/create",
+        json={
+            "name": "fixture_action",
+            "steps": [{"action_id": "click", "params": {}}],
+        },
+    )
     data = resp.json()
     assert data["code"] == ResponseCode.SUCCESS
     return data["data"]["id"], data["data"]["action_id"]
@@ -103,11 +118,14 @@ async def created_action(client) -> tuple[int, str]:
 @pytest.fixture
 async def created_public_action(client) -> tuple[int, str]:
     """创建公开的自定义操作，返回 (db_id, action_id)"""
-    resp = await client.post(f"{PREFIX}/custom-actions/create", json={
-        "name": "public_fixture_action",
-        "steps": [{"action_id": "click", "params": {}}],
-        "is_public": True,
-    })
+    resp = await client.post(
+        f"{PREFIX}/custom-actions/create",
+        json={
+            "name": "public_fixture_action",
+            "steps": [{"action_id": "click", "params": {}}],
+            "is_public": True,
+        },
+    )
     data = resp.json()
     assert data["code"] == ResponseCode.SUCCESS
     return data["data"]["id"], data["data"]["action_id"]
@@ -116,9 +134,12 @@ async def created_public_action(client) -> tuple[int, str]:
 @pytest.fixture
 async def created_workflow(client) -> tuple[int, str]:
     """创建测试用工作流，返回 (db_id, workflow_id)"""
-    resp = await client.post(f"{PREFIX}/workflows/create", json={
-        "name": "fixture_workflow",
-    })
+    resp = await client.post(
+        f"{PREFIX}/workflows/create",
+        json={
+            "name": "fixture_workflow",
+        },
+    )
     data = resp.json()
     assert data["code"] == ResponseCode.SUCCESS
     return data["data"]["id"], data["data"]["workflow_id"]
@@ -128,17 +149,23 @@ async def created_workflow(client) -> tuple[int, str]:
 async def created_plugin(client) -> tuple[int, str]:
     """创建测试用插件，返回 (db_id, plugin_id)"""
     # 先创建一个 action 作为插件的关联操作
-    action_resp = await client.post(f"{PREFIX}/custom-actions/create", json={
-        "name": "plugin_fixture_action",
-        "steps": [{"action_id": "click", "params": {}}],
-    })
+    action_resp = await client.post(
+        f"{PREFIX}/custom-actions/create",
+        json={
+            "name": "plugin_fixture_action",
+            "steps": [{"action_id": "click", "params": {}}],
+        },
+    )
     action_id = action_resp.json()["data"]["action_id"]
 
-    resp = await client.post(f"{PREFIX}/plugins/create", json={
-        "name": "fixture_plugin",
-        "hook_type": "before_action",
-        "custom_action_id": action_id,
-    })
+    resp = await client.post(
+        f"{PREFIX}/plugins/create",
+        json={
+            "name": "fixture_plugin",
+            "hook_type": "before_action",
+            "custom_action_id": action_id,
+        },
+    )
     data = resp.json()
     assert data["code"] == ResponseCode.SUCCESS
     return data["data"]["id"], data["data"]["plugin_id"]

@@ -107,6 +107,7 @@ class WebRTCHeartbeatRequest(BaseModel):
 
 # ── 辅助：获取 WebRTC 管理器 ──
 
+
 def _resolve_session(
     browser_req: BrowserReqAuthInfo,
 ) -> tuple[WebRTCStreamManager | None, str, int, bool]:
@@ -196,7 +197,9 @@ async def create_webrtc_offer(
     is_vip = is_vip_user(browser_req.auth_info)
 
     try:
-        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(browser_req)
+        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(
+            browser_req
+        )
 
         if is_admin_view:
             # 监管观看：目标浏览器必须**已在运行**。
@@ -279,9 +282,7 @@ async def create_webrtc_offer(
         return error_response(code=ResponseCode.PAGE_CLOSED, msg=str(e))
     except Exception as e:
         logger.error(f"创建 WebRTC Offer 失败: {e}")
-        return error_response(
-            code=ResponseCode.WEBRTC_OFFER_FAILED, msg=str(e)
-        )
+        return error_response(code=ResponseCode.WEBRTC_OFFER_FAILED, msg=str(e))
 
 
 @router.post(BrowserControlRouterPath.webrtc_answer, summary="处理 WebRTC Answer")
@@ -291,18 +292,16 @@ async def handle_webrtc_answer(
 ):
     """处理客户端返回的 SDP Answer（O(1) 查找 + 归属校验）"""
     try:
-        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(browser_req)
+        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(
+            browser_req
+        )
         if webrtc_mgr is None:
-            return error_response(
-                code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在"
-            )
+            return error_response(code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在")
 
         viewer, err = _resolve_viewer(webrtc_mgr, req.viewer_id, req.stream_key)
         if viewer is None:
             logger.warning(f"拒绝 WebRTC Answer: {err}")
-            return error_response(
-                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err
-            )
+            return error_response(code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err)
 
         logger.info(
             f"处理 WebRTC Answer: stream_key={req.stream_key}, "
@@ -314,15 +313,15 @@ async def handle_webrtc_answer(
 
         await viewer.handle_answer(req.sdp, req.type)
         # 用**归属者** mid 续期：监管观看时管理员的 mid 对应不到任何会话
-        await live_service.touch(owner_mid, browser_req.browser_id, source="webrtc_answer")
+        await live_service.touch(
+            owner_mid, browser_req.browser_id, source="webrtc_answer"
+        )
         logger.debug(f"WebRTC Answer 处理成功: {viewer.stream_key}")
         return success_response(msg="WebRTC Answer 已处理")
 
     except Exception as e:
         logger.error(f"处理 WebRTC Answer 失败: {e}")
-        return error_response(
-            code=ResponseCode.WEBRTC_ANSWER_FAILED, msg=str(e)
-        )
+        return error_response(code=ResponseCode.WEBRTC_ANSWER_FAILED, msg=str(e))
 
 
 @router.post(
@@ -334,20 +333,18 @@ async def add_ice_candidate(
 ):
     """添加 ICE Candidate（O(1) 查找 + 归属校验）"""
     try:
-        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(browser_req)
+        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(
+            browser_req
+        )
         if webrtc_mgr is None:
-            return error_response(
-                code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在"
-            )
+            return error_response(code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在")
 
         viewer, err = _resolve_viewer(webrtc_mgr, req.viewer_id, req.stream_key)
         if viewer is None:
             # 这条分支以前是静默的：前端拿到 code!=0 也不 throw，结果「候选全被丢光」，
             # 表现为 ICE 永远停在 checking、画面全黑，而后端一行日志都没有。必须留痕。
             logger.warning(f"丢弃 ICE Candidate: {err}")
-            return error_response(
-                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err
-            )
+            return error_response(code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err)
 
         added = await viewer.add_ice_candidate(
             req.candidate, req.sdpMid, req.sdpMLineIndex
@@ -364,9 +361,7 @@ async def add_ice_candidate(
 
     except Exception as e:
         logger.error(f"添加 ICE Candidate 失败: {e}")
-        return error_response(
-            code=ResponseCode.WEBRTC_ICE_CANDIDATE_FAILED, msg=str(e)
-        )
+        return error_response(code=ResponseCode.WEBRTC_ICE_CANDIDATE_FAILED, msg=str(e))
 
 
 @router.post(
@@ -390,16 +385,12 @@ async def add_ice_candidates(
     try:
         webrtc_mgr, _, owner_mid, _ = _resolve_session(browser_req)
         if webrtc_mgr is None:
-            return error_response(
-                code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在"
-            )
+            return error_response(code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在")
 
         viewer, err = _resolve_viewer(webrtc_mgr, req.viewer_id, req.stream_key)
         if viewer is None:
             logger.warning(f"丢弃批量 ICE Candidate: {err}")
-            return error_response(
-                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err
-            )
+            return error_response(code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err)
 
         added = 0
         skipped = 0
@@ -424,9 +415,7 @@ async def add_ice_candidates(
 
     except Exception as e:
         logger.error(f"批量添加 ICE Candidate 失败: {e}")
-        return error_response(
-            code=ResponseCode.WEBRTC_ICE_CANDIDATE_FAILED, msg=str(e)
-        )
+        return error_response(code=ResponseCode.WEBRTC_ICE_CANDIDATE_FAILED, msg=str(e))
 
 
 @router.post(BrowserControlRouterPath.webrtc_close, summary="关闭 WebRTC 流")
@@ -436,11 +425,11 @@ async def close_webrtc_stream(
 ):
     """关闭**本观看者**的 WebRTC 视频流（不影响其他观看者）"""
     try:
-        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(browser_req)
+        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(
+            browser_req
+        )
         if webrtc_mgr is None:
-            return error_response(
-                code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在"
-            )
+            return error_response(code=ResponseCode.SESSION_NOT_FOUND, msg="会话不存在")
 
         # 先取客户端摘要：close_viewer 会把观看者从管理器里移除，之后再也查不到
         viewer = webrtc_mgr.get_viewer(req.viewer_id)
@@ -448,9 +437,7 @@ async def close_webrtc_stream(
         # 幂等：观看者已不存在时视为已关闭（例如链路失联被后台回收）
         closed = await webrtc_mgr.close_viewer(req.viewer_id)
         if not closed:
-            logger.info(
-                f"关闭观看者流：观看者已不存在（视为已关闭）: {req.viewer_id}"
-            )
+            logger.info(f"关闭观看者流：观看者已不存在（视为已关闭）: {req.viewer_id}")
         else:
             logger.info(
                 f"WebRTC 观看者断开: {req.viewer_id} | {viewer.client_summary} "
@@ -464,20 +451,18 @@ async def close_webrtc_stream(
 
     except Exception as e:
         logger.error(f"关闭 WebRTC 流失败: {e}")
-        return error_response(
-            code=ResponseCode.WEBRTC_CLOSE_FAILED, msg=str(e)
-        )
+        return error_response(code=ResponseCode.WEBRTC_CLOSE_FAILED, msg=str(e))
 
 
-@router.post(
-    BrowserControlRouterPath.webrtc_status, summary="获取 WebRTC 流状态"
-)
+@router.post(BrowserControlRouterPath.webrtc_status, summary="获取 WebRTC 流状态")
 async def get_webrtc_status(
     browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
 ):
     """获取当前浏览器会话的 WebRTC 流状态信息（只读，**不保活**）"""
     try:
-        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(browser_req)
+        webrtc_mgr, session_key, owner_mid, is_admin_view = _resolve_session(
+            browser_req
+        )
         if webrtc_mgr is None:
             # 只读状态查询：「尚未建立会话 / 流已关闭」是正常状态而非错误，
             # 返回空列表（否则业务码 1006 会被错误状态中间件回写成 HTTP 400）
@@ -524,14 +509,10 @@ async def get_webrtc_status(
 
     except Exception as e:
         logger.error(f"获取 WebRTC 状态失败: {e}")
-        return error_response(
-            code=ResponseCode.WEBRTC_STATUS_FAILED, msg=str(e)
-        )
+        return error_response(code=ResponseCode.WEBRTC_STATUS_FAILED, msg=str(e))
 
 
-@router.post(
-    BrowserControlRouterPath.webrtc_quality, summary="设置 WebRTC 清晰度档位"
-)
+@router.post(BrowserControlRouterPath.webrtc_quality, summary="设置 WebRTC 清晰度档位")
 async def set_webrtc_quality(
     req: WebRTCQualityRequest,
     browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
@@ -554,9 +535,7 @@ async def set_webrtc_quality(
 
         viewer, err = _resolve_viewer(webrtc_mgr, req.viewer_id)
         if viewer is None:
-            return error_response(
-                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err
-            )
+            return error_response(code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err)
 
         snapshot: StreamQualitySnapshot = await webrtc_mgr.set_level(
             req.viewer_id, req.level
@@ -633,9 +612,7 @@ async def set_webrtc_paused(
 
         viewer, err = _resolve_viewer(webrtc_mgr, req.viewer_id)
         if viewer is None:
-            return error_response(
-                code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err
-            )
+            return error_response(code=ResponseCode.WEBRTC_STREAM_NOT_ACTIVE, msg=err)
 
         snapshot: StreamQualitySnapshot = await webrtc_mgr.set_paused(
             req.viewer_id, req.paused
@@ -649,9 +626,7 @@ async def set_webrtc_paused(
         return error_response(code=ResponseCode.WEBRTC_STATUS_FAILED, msg=str(e))
 
 
-@router.post(
-    BrowserControlRouterPath.webrtc_heartbeat, summary="观看者保活心跳"
-)
+@router.post(BrowserControlRouterPath.webrtc_heartbeat, summary="观看者保活心跳")
 async def webrtc_viewer_heartbeat(
     req: WebRTCHeartbeatRequest,
     browser_req: BrowserReqAuthInfo = Depends(verify_browser_ownership_or_admin),
@@ -683,7 +658,9 @@ async def webrtc_viewer_heartbeat(
         # 有活跃观看者 → 会话保持 ACTIVE（闲置三级软着陆因此不会误触发）。
         # 续期目标是**归属者**的会话：监管观看时管理员 mid 对应不到任何会话，
         # 若不修正则「监管看着看着就被闲置挂起」。
-        await live_service.touch(owner_mid, browser_req.browser_id, source="webrtc_viewer")
+        await live_service.touch(
+            owner_mid, browser_req.browser_id, source="webrtc_viewer"
+        )
         return success_response(msg="心跳已刷新")
 
     except Exception as e:

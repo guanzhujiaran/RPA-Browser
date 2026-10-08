@@ -3,8 +3,11 @@ LiveService - 核心业务逻辑服务
 
 此模块包含浏览器会话管理、心跳检测、人工操作干预等核心业务逻辑。
 """
+
 from botright.playwright_mock.page import Page
-from app.services.RPA_browser.browser_session_pool.playwright_pool import PlaywrightSessionPool
+from app.services.RPA_browser.browser_session_pool.playwright_pool import (
+    PlaywrightSessionPool,
+)
 import time
 import asyncio
 import contextlib
@@ -59,6 +62,7 @@ class CleanupDecision:
 
 class LiveService:
     """浏览器控制服务类 - 支持人工干预、心跳检测和自动清理"""
+
     # 维护浏览器会话状态
     # key: f"{mid}_{browser_id}"
     # private属性，不允许直接操作
@@ -98,7 +102,7 @@ class LiveService:
     )
 
     @staticmethod
-    def _get_session_key(mid: int|str, browser_id: int|str) -> str:
+    def _get_session_key(mid: int | str, browser_id: int | str) -> str:
         """获取会话键"""
         return f"{mid}_{browser_id}"
 
@@ -168,7 +172,9 @@ class LiveService:
 
     # ── 活跃刷新 / 自动化占用（见 docs/be-message-统一计划书.md §5.15）──
 
-    async def touch(self, mid: int | str, browser_id: int | str, *, source: str = "unknown") -> bool:
+    async def touch(
+        self, mid: int | str, browser_id: int | str, *, source: str = "unknown"
+    ) -> bool:
         """刷新会话活跃时间戳（真实操作入口调用）。
 
         语义：任何**真实操作**（HTTP 操作接口 / action 执行 / WebRTC 信令）都应调用本方法，
@@ -345,7 +351,11 @@ class LiveService:
                     priority=2,
                     action="suspend",
                 )
-            if current_time >= entry.terminate_scheduled_at + settings.browser_session_terminate_grace:
+            if (
+                current_time
+                >= entry.terminate_scheduled_at
+                + settings.browser_session_terminate_grace
+            ):
                 return CleanupDecision(
                     should_cleanup=True,
                     reason=f"闲置超时 ({idle}s >= {policy.max_idle_time}s)",
@@ -412,14 +422,16 @@ class LiveService:
             logger.info(f"会话闲置降级: mid={entry.mid}, browser_id={entry.browser_id}")
         elif action == "suspend":
             await manager.suspend_streams()
-            logger.info(f"会话闲置挂起（关流保实例）: mid={entry.mid}, browser_id={entry.browser_id}")
+            logger.info(
+                f"会话闲置挂起（关流保实例）: mid={entry.mid}, browser_id={entry.browser_id}"
+            )
         elif action == "restore":
             await manager.set_degraded(False)
 
     def get_browser_session_entry(
         self,
-        mid: int|str,
-        browser_id: int |str,
+        mid: int | str,
+        browser_id: int | str,
     ) -> BrowserSessionEntry:
         session_key = self._get_session_key(mid, browser_id)
         if entry := self._browser_sessions.get(session_key):
@@ -450,7 +462,9 @@ class LiveService:
                 return entry
         return None
 
-    async def get_browser_session_page(self, mid: int, browser_id: int, page_index: int | None = None) -> Page:
+    async def get_browser_session_page(
+        self, mid: int, browser_id: int, page_index: int | None = None
+    ) -> Page:
         entry = self.get_browser_session_entry(mid, browser_id)
         all_pages = entry.browser_session.all_pages
         if page_index is None:
@@ -477,13 +491,19 @@ class LiveService:
         for attempt in range(max_retries + 1):
             try:
                 return await self._do_get_or_create_session_entry(
-                    mid, browser_id, headless, is_create_browser,
-                    current_time, start_time, is_vip,
+                    mid,
+                    browser_id,
+                    headless,
+                    is_create_browser,
+                    current_time,
+                    start_time,
+                    is_vip,
                 )
             except BrowserNotStartedException as e:
                 if attempt < max_retries:
                     logger.warning(
-                        f"浏览器创建失败，第 {attempt + 1} 次重试: {session_key}, error: {e}")
+                        f"浏览器创建失败，第 {attempt + 1} 次重试: {session_key}, error: {e}"
+                    )
                     await asyncio.sleep(0.5)  # 短暂等待后重试
                     continue
                 logger.error(f"浏览器创建失败，已达最大重试次数: {session_key}")
@@ -508,8 +528,13 @@ class LiveService:
         """
         try:
             return await self._reuse_or_create_session_entry(
-                mid, browser_id, headless, is_create_browser,
-                current_time, start_time, is_vip,
+                mid,
+                browser_id,
+                headless,
+                is_create_browser,
+                current_time,
+                start_time,
+                is_vip,
             )
         finally:
             await get_launch_queue().launch_settled(mid, browser_id)
@@ -567,7 +592,8 @@ class LiveService:
                     entry.lifecycle_state = SessionLifecycleState.ACTIVE
                     elapsed = time.time() - start_time
                     logger.debug(
-                        f"并发检查后发现会话已存在: {session_key}, 耗时: {elapsed:.3f}s")
+                        f"并发检查后发现会话已存在: {session_key}, 耗时: {elapsed:.3f}s"
+                    )
                     self._notify_session_status(mid, browser_id)
                     return entry
 
@@ -585,11 +611,14 @@ class LiveService:
                 browser_session = await pool.get_session(session_params)
                 create_elapsed = time.time() - start_time
                 logger.info(
-                    f"浏览器创建完成: {session_key}, 耗时: {create_elapsed:.3f}s")
+                    f"浏览器创建完成: {session_key}, 耗时: {create_elapsed:.3f}s"
+                )
 
                 # 🔑 第五阶段：验证刚创建的浏览器是否仍然有效
                 if browser_session.is_closed:
-                    logger.warning(f"刚创建的浏览器已关闭，清理并重新创建: {session_key}")
+                    logger.warning(
+                        f"刚创建的浏览器已关闭，清理并重新创建: {session_key}"
+                    )
                     raise BrowserNotStartedException("浏览器在创建过程中被关闭，请重试")
 
                 # 🔑 第六阶段：在 LiveService 中注册会话条目
@@ -602,7 +631,9 @@ class LiveService:
 
                 self._browser_sessions[session_key] = entry
                 elapsed = time.time() - start_time
-                logger.info(f"会话创建并注册完成: {session_key}, 总耗时: {elapsed:.3f}s")
+                logger.info(
+                    f"会话创建并注册完成: {session_key}, 总耗时: {elapsed:.3f}s"
+                )
                 # 会话从「不存在」变为「存在」，即时推送给 SSE 订阅者
                 self._notify_session_status(mid, browser_id)
                 return entry
@@ -737,9 +768,7 @@ class LiveService:
             # 从系统配置中读取过期时间
             expiration_time = settings.browser_session_expiration_time
             entry.expires_at = (
-                current_time + expiration_time
-                if expiration_time
-                else None
+                current_time + expiration_time if expiration_time else None
             )
 
             # 从系统配置中读取清理策略
@@ -865,9 +894,7 @@ class LiveService:
         )
 
     def get_browser_session_status(
-        self,
-        mid: int,
-        browser_id: int
+        self, mid: int, browser_id: int
     ) -> BrowserSessionStatusData:
         """
         获取浏览器会话的详细状态
@@ -888,9 +915,7 @@ class LiveService:
                 status="queued" if queue_status.in_queue else "terminated",
                 cleanup_policy=BrowserCleanupPolicy(),
                 message=(
-                    "会话正在启动队列中排队"
-                    if queue_status.in_queue
-                    else "会话不存在"
+                    "会话正在启动队列中排队" if queue_status.in_queue else "会话不存在"
                 ),
                 screen_height=0,
                 screen_width=0,
@@ -904,10 +929,16 @@ class LiveService:
             )
 
         entry = self.get_browser_session_entry(mid, browser_id)
-        screen_height = entry.browser_session.fingerprint_params.patchright_screen_height
+        screen_height = (
+            entry.browser_session.fingerprint_params.patchright_screen_height
+        )
         screen_width = entry.browser_session.fingerprint_params.patchright_screen_width
-        viewport_width = entry.browser_session.fingerprint_params.patchright_viewport_width
-        viewport_height = entry.browser_session.fingerprint_params.patchright_viewport_height
+        viewport_width = (
+            entry.browser_session.fingerprint_params.patchright_viewport_width
+        )
+        viewport_height = (
+            entry.browser_session.fingerprint_params.patchright_viewport_height
+        )
 
         # 确保向后兼容性
         created_at = entry.created_at

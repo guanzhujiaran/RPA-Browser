@@ -6,6 +6,9 @@ class RouterPrefix(StrEnumAutoDoc):
     # === 核心资源层 ===
     BROWSER = "/browser"  # 浏览器指纹/插件/通知配置管理
     BROWSER_SESSION = "/browser/session"  # 浏览器会话管理（动态实例）
+    BROWSER_MEMBERSHIP = (
+        "/browser/membership"  # 时长 / 会员权益（余额、签到、兑换、统计）
+    )
 
     # === 操作控制层 ===
     BROWSER_CONTROL = "/browser/control"  # 浏览器实时控制总入口
@@ -25,6 +28,25 @@ class BrowserFingerprintRouterPath(StrEnumAutoDoc):
     count_fingerprint = "/count_fingerprint"
     list_fingerprint = "/list_fingerprint"
     rename_fingerprint = "/rename_fingerprint"
+
+
+class BrowserMembershipRouterPath(StrEnumAutoDoc):
+    """时长 / 会员权益路由路径 - prefix: /browser/membership"""
+
+    membership_products_upsert = "/membership/products/upsert"
+    membership_products_list = "/membership/products/list"
+    get_account = "/get_account"
+    sign_in = "/sign_in"
+    sign_in_calendar = "/sign_in/calendar"
+    sign_in_overview = "/sign_in/overview"
+    sign_in_makeup = "/sign_in/makeup"
+    sign_in_reward_exchange = "/sign_in/reward_exchange"
+    redeem = "/redeem"
+    ledger_list = "/ledger_list"
+    usage_stats = "/usage_stats"
+    payment_products = "/payment/products"
+    payment_confirm = "/payment/confirm"
+    payment_notify = "/payment/notify"
 
 
 class BrowserSessionRouterPath(StrEnumAutoDoc):
@@ -97,6 +119,7 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     webrtc_pause = "/webrtc/pause"
     webrtc_heartbeat = "/webrtc/heartbeat"  # 观看者保活（多观看者并发直播）
 
+
 class UserBrowserDefaultSettingRouterPath(StrEnumAutoDoc):
     """用户浏览器默认设置路由路径 - prefix: /browser"""
 
@@ -105,6 +128,7 @@ class UserBrowserDefaultSettingRouterPath(StrEnumAutoDoc):
     delete_settings = "/default-settings/delete"
     apply_settings = "/default-settings/apply"
     get_server_user_setting_defaults = "/default-settings/server-defaults/get"
+
 
 class NotifyRouterPath(StrEnumAutoDoc):
     """通知管理路由路径 - prefix: /browser"""

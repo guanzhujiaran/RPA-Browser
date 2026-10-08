@@ -34,7 +34,9 @@ class BrowserMonitorItem(SQLModel):
     mid_str: str = Field(default="", description="所属用户 mid（字符串，避免精度丢失）")
     browser_id: int = Field(description="浏览器实例 ID")
     browser_id_str: str = Field(default="", description="浏览器实例 ID（字符串）")
-    custom_name: str | None = Field(default=None, description="用户自定义名称，未命名时为 None")
+    custom_name: str | None = Field(
+        default=None, description="用户自定义名称，未命名时为 None"
+    )
     platform: str | None = Field(default=None, description="指纹操作系统平台")
     browser: str | None = Field(default=None, description="指纹浏览器类型")
     started_at: int = Field(default=0, description="会话启动时间（秒级时间戳）")
@@ -50,7 +52,9 @@ class BrowserMonitorListRequest(SQLModel):
     """监管列表请求"""
 
     mid: int | str | None = Field(default=None, description="按用户 mid 过滤")
-    browser_id: int | str | None = Field(default=None, description="按浏览器实例 ID 过滤")
+    browser_id: int | str | None = Field(
+        default=None, description="按浏览器实例 ID 过滤"
+    )
     page: int = Field(default=1, ge=1, description="页码")
     per_page: int = Field(default=20, ge=1, le=100, description="每页条数")
 
@@ -61,7 +65,9 @@ class BrowserMonitorListResponse(SQLModel):
     total: int = Field(default=0, description="总条数（过滤后）")
     page: int = Field(default=1, description="当前页码")
     per_page: int = Field(default=20, description="每页条数")
-    items: list[BrowserMonitorItem] = Field(default_factory=list, description="列表数据")
+    items: list[BrowserMonitorItem] = Field(
+        default_factory=list, description="列表数据"
+    )
 
 
 class BrowserMonitorPagesRequest(SQLModel):
@@ -79,7 +85,9 @@ class BrowserMonitorPagesResponse(SQLModel):
     browser_id: int = Field(description="浏览器实例 ID")
     browser_id_str: str = Field(default="", description="浏览器实例 ID（字符串）")
     total: int = Field(default=0, description="标签页数量")
-    pages: list[BrowserMonitorPageItem] = Field(default_factory=list, description="标签页列表")
+    pages: list[BrowserMonitorPageItem] = Field(
+        default_factory=list, description="标签页列表"
+    )
 
 
 class BrowserMonitorStopRequest(SQLModel):
@@ -110,7 +118,8 @@ class BrowserLaunchQueueMonitorResponse(SQLModel):
         description="队列全局状态（含系统内存快照与浏览器单实例内存实测）"
     )
     waiting_sessions: list[BrowserLaunchQueueWaitingItem] = Field(
-        default_factory=list, description="排队 / 启动中的会话明细（VIP 优先、等待久者在前）"
+        default_factory=list,
+        description="排队 / 启动中的会话明细（VIP 优先、等待久者在前）",
     )
 
 

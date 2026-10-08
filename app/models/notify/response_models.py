@@ -12,6 +12,7 @@ from app.models.base.base_sqlmodel import BaseSQLModel
 
 class NotificationConfigUpsertResp(SQLModel):
     """统一的通知配置操作响应模型（创建/更新）"""
+
     mid: str
     is_success: bool = True
     message: str = "通知配置操作成功"
@@ -19,6 +20,7 @@ class NotificationConfigUpsertResp(SQLModel):
 
 class NotificationConfigDeleteResp(SQLModel):
     """通知配置删除响应模型"""
+
     mid: str
     is_success: bool = True
 
@@ -28,6 +30,7 @@ class NotificationConfigEffectiveResp(BaseSQLModel):
     有效通知配置响应模型
     包含了优先级逻辑：如果存在浏览器特定配置，返回浏览器配置；否则返回全局配置
     """
+
     # 关联的browser_id
     browser_id: int | None = None
 
@@ -146,15 +149,15 @@ class NotificationConfigEffectiveResp(BaseSQLModel):
     wxpusher_app_token: str = Field(default="", sa_column=Column(SQLText))
     wxpusher_topic_ids: str = Field(default="", sa_column=Column(SQLText))
     wxpusher_uids: str = Field(default="", sa_column=Column(SQLText))
-    
+
     @property
     def browser_id_str(self) -> str | None:
         """浏览器ID字符串形式，用于前端交互"""
         return str(self.browser_id) if self.browser_id is not None else None
-    
+
     # 实际使用的配置的browser_id，None表示使用全局配置
     effective_browser_id: int | None = None
-    
+
     # 配置来源：'browser' 或 'global'
     config_source: str
 

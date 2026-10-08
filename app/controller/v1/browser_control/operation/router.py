@@ -8,8 +8,13 @@
   `require_active_browser_session` / `ActiveBrowserSession` 依赖承担；
 - 出错一律抛业务异常，由统一异常处理器转成 `{code, msg}`，接口内不再手拼错误响应。
 """
+
 from fastapi import Depends
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.models.runtime.browser_operation import (
@@ -50,11 +55,9 @@ async def open_page(
 
     await page.goto(request.url)
 
-    return success_response({
-        "page_index": page_index,
-        "url": request.url,
-        "message": "页面打开成功"
-    })
+    return success_response(
+        {"page_index": page_index, "url": request.url, "message": "页面打开成功"}
+    )
 
 
 @router.post("/operation/close_page", summary="关闭页面")
@@ -83,10 +86,9 @@ async def switch_page(
     page = session.get_page(request.page_index)
     await page.bring_to_front()
 
-    return success_response({
-        "page_index": request.page_index,
-        "message": "页面切换成功"
-    })
+    return success_response(
+        {"page_index": request.page_index, "message": "页面切换成功"}
+    )
 
 
 @router.post("/operation/get_page_info", summary="获取页面信息")
@@ -100,13 +102,15 @@ async def get_page_info(
     title = await page.title()
     cookies = await page.context.cookies()
 
-    return success_response({
-        "page_index": request.page_index,
-        "url": url,
-        "title": title,
-        "cookies_count": len(cookies),
-        "message": "获取页面信息成功"
-    })
+    return success_response(
+        {
+            "page_index": request.page_index,
+            "url": url,
+            "title": title,
+            "cookies_count": len(cookies),
+            "message": "获取页面信息成功",
+        }
+    )
 
 
 @router.post(
@@ -159,18 +163,18 @@ async def get_browser_info(
     user_agent = fingerprint_params.patchright_browser_ua or ""
 
     # 获取用户数据目录（来自底层 playwright 实例）
-    user_data_dir = getattr(
-        browser_session.playwright_instance, "_user_data_dir", None
-    )
+    user_data_dir = getattr(browser_session.playwright_instance, "_user_data_dir", None)
 
-    return success_response(BrowserInfoResponse(
-        # browser_id 在依赖里被规范化为 int，而响应契约是 str：
-        # pydantic v2 不会把 int 自动转成 str，必须显式转，否则这里直接抛校验错误
-        browser_id=str(session.browser_id),
-        mid=session.mid,
-        user_data_dir=str(user_data_dir) if user_data_dir else None,
-        is_headless=browser_session.headless,
-        browser_type="chromium",
-        version=version,
-        user_agent=user_agent
-    ))
+    return success_response(
+        BrowserInfoResponse(
+            # browser_id 在依赖里被规范化为 int，而响应契约是 str：
+            # pydantic v2 不会把 int 自动转成 str，必须显式转，否则这里直接抛校验错误
+            browser_id=str(session.browser_id),
+            mid=session.mid,
+            user_data_dir=str(user_data_dir) if user_data_dir else None,
+            is_headless=browser_session.headless,
+            browser_type="chromium",
+            version=version,
+            user_agent=user_agent,
+        )
+    )

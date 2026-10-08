@@ -3,6 +3,7 @@
 使用 httpx.AsyncClient 进行异步测试
 参考: https://fastapi.org.cn/advanced/async-tests/
 """
+
 import pytest
 
 from bili_common.models.response_code import ResponseCode
@@ -13,7 +14,6 @@ from test.controller.conftest import PREFIX
 
 @pytest.mark.anyio
 class TestListRegisteredActions:
-
     async def test_list_registered_actions_success(self, client):
         response = await client.post(f"{PREFIX}/actions/registered")
 
@@ -25,7 +25,6 @@ class TestListRegisteredActions:
 
 @pytest.mark.anyio
 class TestCreateCompositeAction:
-
     async def test_create_custom_action_success(self, client):
         request_data = {
             "name": "测试操作",
@@ -40,7 +39,9 @@ class TestCreateCompositeAction:
             "retry_delay": 2.0,
         }
 
-        response = await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        response = await client.post(
+            f"{PREFIX}/custom-actions/create", json=request_data
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -55,7 +56,9 @@ class TestCreateCompositeAction:
     async def test_create_custom_action_minimal(self, client):
         request_data = {"name": "最小化操作"}
 
-        response = await client.post(f"{PREFIX}/custom-actions/create", json=request_data)
+        response = await client.post(
+            f"{PREFIX}/custom-actions/create", json=request_data
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -65,9 +68,10 @@ class TestCreateCompositeAction:
 
 @pytest.mark.anyio
 class TestListCompositeActions:
-
     async def test_list_custom_actions_after_create(self, client, created_action):
-        response = await client.post(f"{PREFIX}/custom-actions/list", json={"page": 1, "per_page": 10})
+        response = await client.post(
+            f"{PREFIX}/custom-actions/list", json={"page": 1, "per_page": 10}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -78,7 +82,6 @@ class TestListCompositeActions:
 
 @pytest.mark.anyio
 class TestGetCompositeAction:
-
     async def test_get_custom_action_after_create(self, client, created_action):
         db_id, action_id = created_action
 
@@ -92,16 +95,19 @@ class TestGetCompositeAction:
         assert data["data"]["output_vars"] == []
 
     async def test_get_custom_action_not_found(self, client):
-        response = await client.post(f"{PREFIX}/custom-actions/get", json={"id": 999999})
+        response = await client.post(
+            f"{PREFIX}/custom-actions/get", json={"id": 999999}
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )
 
 
 @pytest.mark.anyio
 class TestUpdateCompositeAction:
-
     async def test_update_custom_action_success(self, client, created_action):
         db_id, action_id = created_action
 
@@ -119,7 +125,9 @@ class TestUpdateCompositeAction:
             "retry_delay": 2.0,
         }
 
-        response = await client.post(f"{PREFIX}/custom-actions/update", json=request_data)
+        response = await client.post(
+            f"{PREFIX}/custom-actions/update", json=request_data
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -131,40 +139,51 @@ class TestUpdateCompositeAction:
         assert data["data"]["retry_delay"] == 2.0
 
     async def test_update_custom_action_not_found(self, client):
-        response = await client.post(f"{PREFIX}/custom-actions/update", json={"id": 999999, "name": "不存在的操作"})
+        response = await client.post(
+            f"{PREFIX}/custom-actions/update",
+            json={"id": 999999, "name": "不存在的操作"},
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )
 
 
 @pytest.mark.anyio
 class TestDeleteCompositeAction:
-
     async def test_delete_custom_action_success(self, client, created_action):
         db_id, action_id = created_action
 
-        response = await client.post(f"{PREFIX}/custom-actions/delete", json={"id": db_id})
+        response = await client.post(
+            f"{PREFIX}/custom-actions/delete", json={"id": db_id}
+        )
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
 
     async def test_delete_custom_action_not_found(self, client):
-        response = await client.post(f"{PREFIX}/custom-actions/delete", json={"id": 999999})
+        response = await client.post(
+            f"{PREFIX}/custom-actions/delete", json={"id": 999999}
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )
 
 
 @pytest.mark.anyio
 class TestForkCompositeAction:
-
     async def test_fork_custom_action_success(self, client, created_public_action):
         db_id, action_id = created_public_action
 
-        response = await client.post(f"{PREFIX}/custom_actions/fork", json={"id": db_id, "new_name": "我的 Fork"})
+        response = await client.post(
+            f"{PREFIX}/custom_actions/fork", json={"id": db_id, "new_name": "我的 Fork"}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -172,8 +191,12 @@ class TestForkCompositeAction:
         assert "Fork" in data["data"]["name"]
 
     async def test_fork_custom_action_not_found(self, client):
-        response = await client.post(f"{PREFIX}/custom_actions/fork", json={"id": 999999})
+        response = await client.post(
+            f"{PREFIX}/custom_actions/fork", json={"id": 999999}
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.NOT_FOUND, (
+            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        )

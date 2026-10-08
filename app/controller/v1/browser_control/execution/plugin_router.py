@@ -3,12 +3,17 @@
 
 负责管理 UserPlugin，即定义在哪些生命周期钩子处自动执行哪些 CompositeAction。
 """
+
 from fastapi import Depends, APIRouter
 from sqlmodel import select
 from typing import List
 import uuid
 
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.models.workflow.models import (
     PluginCreateRequest,
@@ -22,14 +27,21 @@ from app.models.workflow.models import (
 from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.mid_depends import AuthInfo, get_auth_info_from_header
 from app.utils.depends.admin_depends import assert_approved
-from app.services.execution.crud_service import plugin_crud_svr, action_crud_svr, workflow_crud_svr
+from app.services.execution.crud_service import (
+    plugin_crud_svr,
+    action_crud_svr,
+    workflow_crud_svr,
+)
 from app.models.base.base_sqlmodel import BasePaginationResp
 from ..base import new_plugin_router
 
 router = new_plugin_router()
 
 
-@router.post("/plugins/list", response_model=StandardResponse[BasePaginationResp[PluginListItemResponse]])
+@router.post(
+    "/plugins/list",
+    response_model=StandardResponse[BasePaginationResp[PluginListItemResponse]],
+)
 async def list_plugins(
     request: PluginListRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -37,13 +49,12 @@ async def list_plugins(
     """获取用户的插件挂载配置列表"""
     # 计算 skip
     skip = (request.page - 1) * request.per_page
-    
+
     # 获取总数
     total = await plugin_crud_svr.count_by_user(
-        mid=auth.mid,
-        filter_type=request.filter_type
+        mid=auth.mid, filter_type=request.filter_type
     )
-    
+
     # 获取列表数据
     models = await plugin_crud_svr.list_by_user(
         mid=auth.mid,
@@ -51,9 +62,9 @@ async def list_plugins(
         limit=request.per_page,
         filter_type=request.filter_type,
         sort_by=request.sort_by,
-        sort_order=request.sort_order
+        sort_order=request.sort_order,
     )
-    
+
     items = [
         PluginListItemResponse(
             id=m.id,
@@ -74,15 +85,12 @@ async def list_plugins(
         )
         for m in models
     ]
-    
+
     # 构建分页响应
     pagination = BasePaginationResp[PluginListItemResponse](
-        page=request.page,
-        per_page=request.per_page,
-        total=total,
-        items=items
+        page=request.page, per_page=request.per_page, total=total, items=items
     )
-    
+
     return success_response(pagination)
 
 
@@ -94,7 +102,7 @@ async def create_plugin(
     """创建插件挂载配置"""
     try:
         plugin_id = f"plugin_{uuid.uuid4().hex[:8]}"
-        
+
         model = await plugin_crud_svr.create(
             mid=auth.mid,
             plugin_id=plugin_id,
@@ -105,18 +113,20 @@ async def create_plugin(
             priority=request.priority,
             is_public=request.is_public,
         )
-        
-        return success_response(PluginDetailResponse(
-            id=model.id,
-            plugin_id=model.plugin_id,
-            name=model.name,
-            hook_type=model.hook_type,
-            custom_action_id=model.custom_action_id,
-            description=model.description,
-            is_enabled=model.is_enabled,
-            priority=model.priority,
-            is_public=model.is_public,
-        ))
+
+        return success_response(
+            PluginDetailResponse(
+                id=model.id,
+                plugin_id=model.plugin_id,
+                name=model.name,
+                hook_type=model.hook_type,
+                custom_action_id=model.custom_action_id,
+                description=model.description,
+                is_enabled=model.is_enabled,
+                priority=model.priority,
+                is_public=model.is_public,
+            )
+        )
     except ValueError as e:
         # 捕获验证错误并返回友好的错误信息
         return error_response(400, str(e))
@@ -154,7 +164,7 @@ async def update_plugin(
     except NameAlreadyExistsException as e:
         # 捕获名称重复错误
         return error_response(409, str(e))
-    
+
     if request.is_enabled is not None:
         if request.is_enabled:
             await plugin_crud_svr.enable(request.id)
@@ -178,16 +188,20 @@ async def delete_plugin(
     return success_response("删除成功")
 
 
-@router.post("/plugins/fork", summary="Fork 插件（类似 GitHub）", response_model=StandardResponse[PluginForkResponse])
+@router.post(
+    "/plugins/fork",
+    summary="Fork 插件（类似 GitHub）",
+    response_model=StandardResponse[PluginForkResponse],
+)
 async def fork_plugin(
     request: PluginForkRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[PluginForkResponse]:
     """Fork 插件
-    
+
     - 如果是自己的插件：允许无条件 Fork（类似“创建副本”）
     - 如果是别人的插件：仅允许 Fork 公开的插件（类似 GitHub）
-    
+
     Args:
         request: {"id": <插件ID>, "new_name": <新名称（可选）>}
     """
@@ -195,22 +209,20 @@ async def fork_plugin(
     original = await plugin_crud_svr.get_by_id(request.id)
     if not original:
         return error_response(ResponseCode.PLUGIN_NOT_FOUND, "插件不存在")
-    
+
     # 检查权限：如果是别人的插件，必须是公开的
     if str(original.mid) != str(auth.mid) and not original.is_public:
         return error_response(403, "只能 Fork 公开的插件或自己的插件")
-    
+
     try:
         # 执行 Fork
         model = await plugin_crud_svr.fork(
-            id=request.id,
-            target_mid=auth.mid,
-            new_name=request.new_name
+            id=request.id, target_mid=auth.mid, new_name=request.new_name
         )
-        
+
         if not model:
             return error_response(500, "Fork 失败")
-        
+
         return success_response(
             PluginForkResponse(
                 id=model.id,
@@ -218,7 +230,7 @@ async def fork_plugin(
                 name=model.name,
                 forked_from=original.name,
             ),
-            msg="Fork 成功"
+            msg="Fork 成功",
         )
     except ValueError as e:
         return error_response(400, str(e))
@@ -235,9 +247,9 @@ async def get_plugin_forks(
     original = await plugin_crud_svr.get_by_id(id)
     if not original:
         return error_response(ResponseCode.PLUGIN_NOT_FOUND, "插件不存在")
-    
+
     forks = await plugin_crud_svr.list_forks(id, skip, limit)
-    
+
     items = [
         PluginListItemResponse(
             id=f.id,
@@ -258,12 +270,9 @@ async def get_plugin_forks(
         )
         for f in forks
     ]
-    
+
     pagination = BasePaginationResp[PluginListItemResponse](
-        page=1,
-        per_page=limit,
-        total=len(items),
-        items=items
+        page=1, per_page=limit, total=len(items), items=items
     )
-    
+
     return success_response(pagination)

@@ -3,6 +3,7 @@ Runtime 模块 - 实时控制模型
 
 定义浏览器实时控制相关的枚举、请求和响应模型。
 """
+
 from bili_common.models import StrEnumAutoDoc
 from pydantic import computed_field
 from sqlmodel import SQLModel, Field
@@ -81,9 +82,13 @@ class BrowserCleanupPolicy(SQLModel):
     """浏览器清理策略"""
 
     max_idle_time: int = Field(
-        default_factory=lambda: settings.browser_session_max_idle_time, description="最大闲置时间（秒）")
+        default_factory=lambda: settings.browser_session_max_idle_time,
+        description="最大闲置时间（秒）",
+    )
     cleanup_interval: int = Field(
-        default_factory=lambda: settings.browser_session_cleanup_interval, description="清理检查间隔（秒）")
+        default_factory=lambda: settings.browser_session_cleanup_interval,
+        description="清理检查间隔（秒）",
+    )
 
 
 class SessionLifecycleState(StrEnumAutoDoc):
@@ -112,7 +117,9 @@ class BrowserSessionStatus(SQLModel):
     # 必须落在本「响应模型」上；若只加在内部 BrowserSessionStatusData，
     # FastAPI 按 response_model 序列化时会把这些字段丢弃，前端拿不到。
     idle_seconds: int = Field(default=0, description="闲置时长（秒）")
-    is_pinned: bool = Field(default=False, description="是否被自动化任务占用（pin，占用期间不回收）")
+    is_pinned: bool = Field(
+        default=False, description="是否被自动化任务占用（pin，占用期间不回收）"
+    )
     pending_termination_at: int | None = Field(
         default=None, description="待关闭的宽限截止时间戳（闲置超时进入宽限期后非空）"
     )
@@ -124,7 +131,9 @@ class BrowserSessionStatus(SQLModel):
     queue_type: LaunchQueueTypeEnum | None = Field(
         default=None, description="所在队列：vip / normal"
     )
-    queue_position: int | None = Field(default=None, description="同队列中的排位（1 起）")
+    queue_position: int | None = Field(
+        default=None, description="同队列中的排位（1 起）"
+    )
     queue_waiting_seconds: int = Field(default=0, description="已排队等待时长（秒）")
 
 
@@ -134,7 +143,9 @@ class CreateSessionResponse(SQLModel):
     success: bool
     session_id: str
     browser_started: bool
-    status: str = Field(default="running", description="浏览器会话状态：running / queued")
+    status: str = Field(
+        default="running", description="浏览器会话状态：running / queued"
+    )
     created_at: int
     expires_at: int | None = Field(None, description="会话过期时间")
     message: str | None = Field(None, description="详细信息")
@@ -143,7 +154,9 @@ class CreateSessionResponse(SQLModel):
     queue_type: LaunchQueueTypeEnum | None = Field(
         default=None, description="所在队列：vip / normal"
     )
-    queue_position: int | None = Field(default=None, description="同队列中的排位（1 起）")
+    queue_position: int | None = Field(
+        default=None, description="同队列中的排位（1 起）"
+    )
 
 
 class BrowserLaunchQueueStatusResponse(SQLModel):
@@ -256,8 +269,7 @@ class BrowserClickRequest(SQLModel):
     browser_id: str = Field(description="浏览器实例ID")
     x: float = Field(description="X坐标相对位置 (0.0-1.0)")
     y: float = Field(description="Y坐标相对位置 (0.0-1.0)")
-    button: str = Field(
-        default="left", description="鼠标按钮: left, middle, right")
+    button: str = Field(default="left", description="鼠标按钮: left, middle, right")
     double: bool = Field(default=False, description="是否双击")
     wait_after: int = Field(default=0, description="点击后等待时间(毫秒)")
 
@@ -314,6 +326,7 @@ class BrowserOperationRequest(SQLModel):
 
 
 # ============ 响应模型 ============
+
 
 class ManualOperationResponse(SQLModel):
     """人工操作响应"""
@@ -447,6 +460,7 @@ class BrowserInfoData(SQLModel):
 
 class PageInfo(SQLModel):
     """页面信息模型"""
+
     index: int = Field(description="页面索引（从0开始，可能变化）")
     url: str = Field(description="页面URL")
     title: str = Field(description="页面标题")
@@ -455,6 +469,7 @@ class PageInfo(SQLModel):
 
 class PagesListResponse(SQLModel):
     """页面列表响应模型"""
+
     pages: list[PageInfo] = Field(default_factory=list, description="页面列表")
 
     @computed_field
@@ -522,7 +537,9 @@ class CreateSessionData(SQLModel):
     queue_type: LaunchQueueTypeEnum | None = Field(
         default=None, description="所在队列：vip / normal"
     )
-    queue_position: int | None = Field(default=None, description="同队列中的排位（1 起）")
+    queue_position: int | None = Field(
+        default=None, description="同队列中的排位（1 起）"
+    )
 
 
 class BrowserSessionViewerData(SQLModel):
@@ -544,9 +561,7 @@ class BrowserSessionViewerData(SQLModel):
     level: str = Field("", description="本端用户档位")
     effective_level: str = Field("", description="本端生效档位")
     client_ip: str = Field("", description="客户端 IP（网关解析 nginx 头后注入）")
-    client_device: str = Field(
-        "", description="设备描述，如「Windows · Chrome 126」"
-    )
+    client_device: str = Field("", description="设备描述，如「Windows · Chrome 126」")
     client_device_type: str = Field(
         "",
         description="设备类型稳定码：desktop / mobile / tablet（文案由前端 i18n 出）",
@@ -577,7 +592,8 @@ class BrowserSessionStatusData(SQLModel):
     active_connections: int = Field(description="活跃连接数")
     video_streaming: bool = Field(description="是否视频流中")
     viewer_count: int = Field(
-        0, description="当前观看者连接数（多观看者并发直播，见 docs/rpa-多观看者并发直播计划书.md）"
+        0,
+        description="当前观看者连接数（多观看者并发直播，见 docs/rpa-多观看者并发直播计划书.md）",
     )
     viewers: list["BrowserSessionViewerData"] = Field(
         default_factory=list,
@@ -591,7 +607,8 @@ class BrowserSessionStatusData(SQLModel):
     expires_at: int | None = Field(None, description="过期时间")
     status: str = Field(description="状态")
     cleanup_policy: BrowserCleanupPolicy = Field(
-        default_factory=BrowserCleanupPolicy, description="清理策略")
+        default_factory=BrowserCleanupPolicy, description="清理策略"
+    )
     message: str = Field(description="状态消息")
     screen_width: int = Field(description="屏幕宽度")
     screen_height: int = Field(description="屏幕高度")
@@ -599,7 +616,9 @@ class BrowserSessionStatusData(SQLModel):
     viewport_height: int = Field(description="视口高度")
     # 闲置生命周期（见 §5.15）
     idle_seconds: int = Field(0, description="闲置时长（秒）")
-    is_pinned: bool = Field(False, description="是否被自动化任务占用（pin，占用期间不回收）")
+    is_pinned: bool = Field(
+        False, description="是否被自动化任务占用（pin，占用期间不回收）"
+    )
     pending_termination_at: int | None = Field(
         None, description="待关闭的宽限截止时间戳（闲置超时进入宽限期后非空）"
     )

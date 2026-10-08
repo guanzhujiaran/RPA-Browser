@@ -1,11 +1,13 @@
 from bili_common.models import StrEnumAutoDoc
 import sys
 
+
 class RouterTag(StrEnumAutoDoc):
     # === 浏览器配置管理 ===
     browser_fingerprint = "浏览器指纹管理"  # 指纹的 CRUD
     browser_notification = "通知配置管理"  # 通知渠道配置
     browser_default_settings = "浏览器默认设置管理"  # 用户浏览器默认设置管理
+    duration_membership = "时长与会员权益"  # 时长余额、签到、兑换码、月卡、使用统计
 
     # === 浏览器运行时管理 ===
     browser_control = "浏览器实时控制"  # 运行时操作控制

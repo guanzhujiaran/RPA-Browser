@@ -6,9 +6,14 @@
 
 （采集「是否启用 / 采集哪些字段」已直接落到 action 的基础配置上，无独立配置接口。）
 """
+
 from typing import List
 
-from bili_common.models.response import StandardResponse, success_response, error_response
+from bili_common.models.response import (
+    StandardResponse,
+    success_response,
+    error_response,
+)
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
@@ -100,7 +105,9 @@ async def get_action_log(
     return success_response(_to_detail(model))
 
 
-@router.post(BrowserControlRouterPath.action_logs_by_execution, summary="按执行批次查询完整链路")
+@router.post(
+    BrowserControlRouterPath.action_logs_by_execution, summary="按执行批次查询完整链路"
+)
 async def list_action_logs_by_execution(
     request: ActionLogByExecutionRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),

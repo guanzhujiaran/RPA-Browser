@@ -1,4 +1,17 @@
-from botright.playwright_mock import BrowserContext, ElementHandle, Frame, FrameLocator, JSHandle, Keyboard, Locator, Mouse, Page, Request, Route, new_page
+from botright.playwright_mock import (
+    BrowserContext,
+    ElementHandle,
+    Frame,
+    FrameLocator,
+    JSHandle,
+    Keyboard,
+    Locator,
+    Mouse,
+    Page,
+    Request,
+    Route,
+    new_page,
+)
 
 
 class NotSupportedError(NotImplementedError):
@@ -9,4 +22,18 @@ class NotSupportedError(NotImplementedError):
         )
 
 
-__all__ = ["ElementHandle", "Frame", "FrameLocator", "JSHandle", "Locator", "Mouse", "Keyboard", "Page", "new_page", "BrowserContext", "Route", "Request", "NotSupportedError"]
+__all__ = [
+    "ElementHandle",
+    "Frame",
+    "FrameLocator",
+    "JSHandle",
+    "Locator",
+    "Mouse",
+    "Keyboard",
+    "Page",
+    "new_page",
+    "BrowserContext",
+    "Route",
+    "Request",
+    "NotSupportedError",
+]

@@ -12,6 +12,7 @@ from app.models.database.notify.models import NotificationConfigBase
 
 class NotificationConfigCreate(NotificationConfigBase):
     """通知配置创建模型，用于API请求"""
+
     browser_id: str | None = None
 
     @property
@@ -22,6 +23,7 @@ class NotificationConfigCreate(NotificationConfigBase):
 
 class NotificationConfigUpdate(SQLModel):
     """通知配置更新模型"""
+
     id: int | None = None
     # 所有字段都是可选的更新字段
     browser_id: str | None = None

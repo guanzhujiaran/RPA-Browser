@@ -9,6 +9,7 @@ RPA 服务单进程单 worker 运行（main.py 的 uvicorn.run 未指定 workers
 
 详见 docs/rpa-会话状态SSE推送计划书.md。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,16 +38,22 @@ class SessionStatusBus:
     """进程内会话状态广播。"""
 
     def __init__(self) -> None:
-        self._subscribers: dict[_SessionKey, set[asyncio.Queue[BrowserSessionStatusData]]] = {}
+        self._subscribers: dict[
+            _SessionKey, set[asyncio.Queue[BrowserSessionStatusData]]
+        ] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """绑定事件循环（lifespan 调用），供非循环线程发布时安全投递。"""
         self._loop = loop
 
-    def subscribe(self, mid: int, browser_id: int) -> asyncio.Queue[BrowserSessionStatusData]:
+    def subscribe(
+        self, mid: int, browser_id: int
+    ) -> asyncio.Queue[BrowserSessionStatusData]:
         """注册一个订阅者（一条 SSE 连接对应一个队列）。"""
-        queue: asyncio.Queue[BrowserSessionStatusData] = asyncio.Queue(maxsize=_QUEUE_MAX_SIZE)
+        queue: asyncio.Queue[BrowserSessionStatusData] = asyncio.Queue(
+            maxsize=_QUEUE_MAX_SIZE
+        )
         self._subscribers.setdefault((mid, browser_id), set()).add(queue)
         return queue
 
@@ -65,7 +72,9 @@ class SessionStatusBus:
         if not queues:
             self._subscribers.pop(key, None)
 
-    def publish(self, mid: int, browser_id: int, status: BrowserSessionStatusData) -> None:
+    def publish(
+        self, mid: int, browser_id: int, status: BrowserSessionStatusData
+    ) -> None:
         """发布状态快照。
 
         在事件循环线程内直接投递；若从其他线程调用，交由已绑定的循环投递。

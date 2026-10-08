@@ -12,6 +12,7 @@ from app.models.base.base_sqlmodel import BaseSQLModel
 
 class NotificationConfigBase(BaseSQLModel):
     """通知配置基础模型"""
+
     # 关联的mid
     mid: str = Field(index=True, sa_type=BIGINT)
 
@@ -133,7 +134,7 @@ class NotificationConfigBase(BaseSQLModel):
     wxpusher_app_token: str = Field(default="", sa_column=Column(SQLText))
     wxpusher_topic_ids: str = Field(default="", sa_column=Column(SQLText))
     wxpusher_uids: str = Field(default="", sa_column=Column(SQLText))
-    
+
     @property
     def browser_id_str(self) -> str | None:
         """浏览器ID字符串形式，用于前端交互"""

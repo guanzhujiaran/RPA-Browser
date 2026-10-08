@@ -3,6 +3,7 @@
 RPA-Browser Alembic 异步环境配置
 参照 FastapiApp 的 alembic/env.py 写法
 """
+
 import asyncio
 import sys
 from pathlib import Path
@@ -19,10 +20,12 @@ from sqlmodel import SQLModel
 
 # 导入所有数据库模型，确保它们注册到 SQLModel.metadata
 from app.models.database.workflow.models import *  # noqa: F401, F403
+from app.models.database.workflow.resource_record import *  # noqa: F401, F403
 from app.models.database.browser.info import *  # noqa: F401, F403
 from app.models.database.notify.models import *  # noqa: F401, F403
 from app.models.database.log.models import *  # noqa: F401, F403
 from app.models.database.admin.models import *  # noqa: F401, F403
+from app.models.database.membership.models import *  # noqa: F401, F403
 
 target_metadata = SQLModel.metadata
 

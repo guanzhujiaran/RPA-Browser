@@ -47,7 +47,9 @@ class PlaywrightSessionPool:
         # 创建新的会话
         return await self._create_session(params)
 
-    async def _create_session(self, params: SessionCreateParams) -> WebRTCEnabledSession:
+    async def _create_session(
+        self, params: SessionCreateParams
+    ) -> WebRTCEnabledSession:
         """
         创建新的浏览器会话（带并发保护）
 
@@ -68,17 +70,20 @@ class PlaywrightSessionPool:
         browser_session = await browser_session.create_session(params)
         create_elapsed = time.time() - create_start
         logger.info(
-            f"浏览器创建完成: mid={params.mid}, browser_id={params.browser_id}, 耗时: {create_elapsed:.3f}s")
+            f"浏览器创建完成: mid={params.mid}, browser_id={params.browser_id}, 耗时: {create_elapsed:.3f}s"
+        )
 
         # 🔑 第三阶段：验证刚创建的浏览器是否仍然有效
         if browser_session.is_closed:
             logger.warning(
-                f"刚创建的浏览器已关闭: mid={params.mid}, browser_id={params.browser_id}")
+                f"刚创建的浏览器已关闭: mid={params.mid}, browser_id={params.browser_id}"
+            )
             raise BrowserNotStartedException("浏览器在创建过程中被关闭，请重试")
 
         elapsed = time.time() - start_time
         logger.info(
-            f"会话创建完成: mid={params.mid}, browser_id={params.browser_id}, 总耗时: {elapsed:.3f}s")
+            f"会话创建完成: mid={params.mid}, browser_id={params.browser_id}, 总耗时: {elapsed:.3f}s"
+        )
 
         return browser_session
 

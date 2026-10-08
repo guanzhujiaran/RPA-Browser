@@ -1,4 +1,5 @@
 """管理员 API - 查看所有系统状态"""
+
 from bili_common.models.response import (
     StandardResponse,
     error_response,
@@ -54,7 +55,10 @@ async def get_all_sessions():
         )
 
 
-@router.get("/config/browser-session", response_model=StandardResponse[BrowserSessionConfigResponse])
+@router.get(
+    "/config/browser-session",
+    response_model=StandardResponse[BrowserSessionConfigResponse],
+)
 async def get_browser_session_config():
     """获取浏览器会话配置（管理员）"""
     try:
@@ -76,10 +80,13 @@ async def get_browser_session_config():
         )
 
 
-@router.post("/config/browser-session", response_model=StandardResponse[BrowserSessionConfigResponse])
+@router.post(
+    "/config/browser-session",
+    response_model=StandardResponse[BrowserSessionConfigResponse],
+)
 async def update_browser_session_config(request: UpdateBrowserSessionConfigRequest):
     """更新浏览器会话配置（管理员）
-    
+
     注意：此修改仅在内存中生效，重启服务后会恢复为环境变量中的配置。
     如需永久修改，请更新 .env 文件或环境变量。
     """

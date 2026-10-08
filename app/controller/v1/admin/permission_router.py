@@ -44,9 +44,7 @@ async def read_permission_quotas(
     """查询各等级的最大浏览器指纹数量（仅 root）"""
     config = await PermissionConfigService.get_permissions()
     return success_response(
-        data=PermissionQuotaResp(
-            levels=config.levels, config_file=_config_file_path()
-        )
+        data=PermissionQuotaResp(levels=config.levels, config_file=_config_file_path())
     )
 
 
@@ -65,16 +63,14 @@ async def update_permission_quotas(
         return error_response(code=ResponseCode.INVALID_PARAM, msg=str(e))
     except Exception as e:  # noqa: BLE001
         logger.error(f"❌ 更新等级指纹配额失败: {e}")
-        return error_response(
-            code=ResponseCode.INTERNAL_ERROR, msg=f"更新失败: {e}"
-        )
+        return error_response(code=ResponseCode.INTERNAL_ERROR, msg=f"更新失败: {e}")
 
     detail = ", ".join(f"{q.level_name}={q.max_fingerprints}" for q in request.levels)
-    await log_admin_action(auth.mid, "permission:update", "permission", "levels", detail)
+    await log_admin_action(
+        auth.mid, "permission:update", "permission", "levels", detail
+    )
     return success_response(
-        data=PermissionQuotaResp(
-            levels=config.levels, config_file=_config_file_path()
-        ),
+        data=PermissionQuotaResp(levels=config.levels, config_file=_config_file_path()),
         msg="等级指纹配额已保存，立即生效",
     )
 
@@ -95,10 +91,10 @@ async def reset_permission_quotas(
         logger.error(f"❌ 恢复等级指纹配额失败: {e}")
         return error_response(code=ResponseCode.INTERNAL_ERROR, msg=f"恢复失败: {e}")
 
-    await log_admin_action(auth.mid, "permission:reset", "permission", "levels", "恢复默认配额")
+    await log_admin_action(
+        auth.mid, "permission:reset", "permission", "levels", "恢复默认配额"
+    )
     return success_response(
-        data=PermissionQuotaResp(
-            levels=config.levels, config_file=_config_file_path()
-        ),
+        data=PermissionQuotaResp(levels=config.levels, config_file=_config_file_path()),
         msg="等级指纹配额已恢复默认，立即生效",
     )

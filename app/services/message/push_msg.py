@@ -92,10 +92,12 @@ class PushMessageService:
         }
 
         for pair in filter(
-            lambda pairs: pairs[0].startswith("BARK_")
-            and pairs[0] != "BARK_PUSH"
-            and pairs[1]
-            and bark_params.get(pairs[0]),
+            lambda pairs: (
+                pairs[0].startswith("BARK_")
+                and pairs[0] != "BARK_PUSH"
+                and pairs[1]
+                and bark_params.get(pairs[0])
+            ),
             config_dict.items(),
         ):
             data[bark_params.get(pair[0])] = pair[1]
@@ -219,7 +221,7 @@ class PushMessageService:
         if response_data["ret"] == 0:
             self.logger.info("iGot 推送成功！")
         else:
-            self.logger.error(f'iGot 推送失败！{response_data["errMsg"]}')
+            self.logger.error(f"iGot 推送失败！{response_data['errMsg']}")
 
     async def serverJ(self, title: str, content: str) -> None:
         """
@@ -244,7 +246,7 @@ class PushMessageService:
         if response_data.get("errno") == 0 or response_data.get("code") == 0:
             self.logger.info("serverJ 推送成功！")
         else:
-            self.logger.error(f'serverJ 推送失败！错误码：{response_data["message"]}')
+            self.logger.error(f"serverJ 推送失败！错误码：{response_data['message']}")
 
     async def pushdeer(self, title: str, content: str) -> None:
         """
@@ -377,14 +379,14 @@ class PushMessageService:
         self.logger.info("qmsg 服务启动")
 
         url = f"https://qmsg.zendee.cn/{self.conf.qmsg_type}/{self.conf.qmsg_key}"
-        payload = {"msg": f'{title}\n\n{content.replace("----", "-")}'.encode("utf-8")}
+        payload = {"msg": f"{title}\n\n{content.replace('----', '-')}".encode("utf-8")}
         response = await httpx_client.post(url=url, params=payload)
         response_data = response.json()
 
         if response_data["code"] == 0:
             self.logger.info("qmsg 推送成功！")
         else:
-            self.logger.error(f'qmsg 推送失败！{response_data["reason"]}')
+            self.logger.error(f"qmsg 推送失败！{response_data['reason']}")
 
     async def wecom_app(self, title: str, content: str) -> None:
         """
@@ -519,7 +521,7 @@ class PushMessageService:
         if response_data["code"] == 0:
             self.logger.info("智能微秘书 推送成功！")
         else:
-            self.logger.error(f'智能微秘书 推送失败！{response_data["error"]}')
+            self.logger.error(f"智能微秘书 推送失败！{response_data['error']}")
 
     def smtp(self, title: str, content: str) -> None:
         """

@@ -2,6 +2,7 @@
 测试打印参数操作（调试用）
 PrintAction 不依赖浏览器，仅打印变量替换后的内容，不执行实际操作
 """
+
 import pytest
 
 from app.models.execution.action_params import PrintParams
@@ -98,7 +99,9 @@ class TestPrintAction:
     async def test_print_metadata(self):
         """测试 PrintAction 元数据注册正确"""
         from app.models.execution.action_params import (
-            BuiltinActionType, BUILTIN_ACTION_PARAMS_MAP, BUILTIN_ACTION_RESULT_MAP,
+            BuiltinActionType,
+            BUILTIN_ACTION_PARAMS_MAP,
+            BUILTIN_ACTION_RESULT_MAP,
         )
         from app.services.execution.actions.all_actions import BUILTIN_ACTION_MAP
         from app.services.execution.actions.debug import PrintAction

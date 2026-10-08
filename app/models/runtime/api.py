@@ -8,8 +8,15 @@ from typing import List
 from pydantic import field_validator
 from sqlmodel import SQLModel
 from app.models.base.base_sqlmodel import BasePaginationReq
-from app.models.core.browser.fingerprint import Int32, BaseBrowserId,\
-    BaseBrowserIdOptional, BaseUserMid, BaseFeedbackInfo, PlatformEnum, BrowserEnum
+from app.models.core.browser.fingerprint import (
+    Int32,
+    BaseBrowserId,
+    BaseBrowserIdOptional,
+    BaseUserMid,
+    BaseFeedbackInfo,
+    PlatformEnum,
+    BrowserEnum,
+)
 from app.models.database.browser.info import UserBrowserInfoWithoutPlugin
 from botright.modules.proxy_manager import SplitError
 
@@ -106,7 +113,9 @@ class BrowserFingerprintUpdateParams(BaseBrowserId, BrowserFingerprintEditablePa
     """更新浏览器指纹参数"""
 
 
-class BrowserFingerprintUpsertParams(BaseBrowserIdOptional, BrowserFingerprintEditableParams):
+class BrowserFingerprintUpsertParams(
+    BaseBrowserIdOptional, BrowserFingerprintEditableParams
+):
     """创建或更新浏览器指纹参数 (upsert)"""
 
     @field_validator("proxy_server", mode="before")
@@ -147,6 +156,7 @@ class BrowserFingerprintUpsertParams(BaseBrowserIdOptional, BrowserFingerprintEd
 
 class BrowserFingerprintQueryParams(BaseBrowserId):
     """查询浏览器指纹参数"""
+
     ...
 
 
@@ -164,32 +174,42 @@ class BrowserFingerprintListParams(BasePaginationReq):
 
 class BrowserFingerprintRenameParams(SQLModel):
     """重命名浏览器指纹参数"""
+
     custom_name: str | None = None
+
 
 # ========================
 # 浏览器指纹相关响应
 # ========================
 
 
-class BrowserFingerprintCreateResp(BaseUserMid,BaseBrowserId):
+class BrowserFingerprintCreateResp(BaseUserMid, BaseBrowserId):
     """创建浏览器指纹响应"""
+
     ...
 
 
-class BrowserFingerprintUpdateResp(BaseUserMid,BaseBrowserId,BaseFeedbackInfo):
+class BrowserFingerprintUpdateResp(BaseUserMid, BaseBrowserId, BaseFeedbackInfo):
     """更新浏览器指纹响应"""
+
     ...
 
-class BrowserFingerprintDeleteResp(BaseUserMid,BaseBrowserId,BaseFeedbackInfo):
+
+class BrowserFingerprintDeleteResp(BaseUserMid, BaseBrowserId, BaseFeedbackInfo):
     """删除浏览器指纹响应"""
+
     ...
-class BrowserFingerprintRenameResp(BaseUserMid,BaseBrowserId,BaseFeedbackInfo):
+
+
+class BrowserFingerprintRenameResp(BaseUserMid, BaseBrowserId, BaseFeedbackInfo):
     """重命名浏览器指纹响应"""
+
     custom_name: str | None = None
 
 
 class BrowserFingerprintQueryResp(UserBrowserInfoWithoutPlugin):
     """查询浏览器指纹响应"""
+
     ...
 
 
@@ -200,12 +220,14 @@ class BrowserFingerprintQueryResp(UserBrowserInfoWithoutPlugin):
 
 class BrowserOperationOpenUrlParams(BaseBrowserId):
     """打开浏览器URL参数"""
+
     url: str
     headless: bool = False
 
 
 class BrowserOperationScreenshotParams(BaseBrowserId):
     """浏览器截图参数"""
+
     full_page: bool = True
     headless: bool = False
     image_type: str | None = "png"
@@ -213,7 +235,9 @@ class BrowserOperationScreenshotParams(BaseBrowserId):
 
 class BrowserOperationReleaseParams(BaseBrowserId):
     """释放浏览器参数"""
+
     ...
+
 
 # ========================
 # 浏览器操作相关响应
@@ -233,9 +257,11 @@ class BrowserOperationScreenshotResp(SQLModel):
     image_base64: str
 
 
-class BrowserOperationReleaseResp(BaseUserMid,BaseBrowserId):
+class BrowserOperationReleaseResp(BaseUserMid, BaseBrowserId):
     """释放浏览器响应"""
+
     is_success: bool = True
+
 
 __all__ = [
     # Fingerprint Params

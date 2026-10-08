@@ -19,7 +19,7 @@ def decorator(cls):
         retention="30 days",
         level="ERROR",
         enqueue=True,
-        encoding="utf-8"
+        encoding="utf-8",
     )
     cls.logger = logger
     return cls

@@ -12,6 +12,7 @@ System 模块 - RPA 管理相关数据库模型
 注：RPA 管理员身份（RpaAdmin 表）已迁移至 be-message 的 `msg_admin` 表，
 RPA 侧不再持久化管理员身份。
 """
+
 from bili_common.models import StrEnumAutoDoc
 from datetime import datetime
 from typing import List, Optional
@@ -63,7 +64,9 @@ class ResourceTag(BaseSQLModel, table=True):
     color: str = Field(default="#409EFF", description="标签颜色（十六进制）")
     created_by: int = Field(description="创建者 mid")
     audit_status: str = Field(
-        default="auditing", index=True, description="审核状态：auditing / normal / rejected"
+        default="auditing",
+        index=True,
+        description="审核状态：auditing / normal / rejected",
     )
     pub_time: Optional[datetime] = Field(
         default=None, description="审核通过上架时间（审核通过前为 NULL）"
@@ -96,7 +99,9 @@ class Certification(BaseSQLModel, table=True):
     __tablename__ = "rpa_certification"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    target_type: str = Field(index=True, description="目标资源类型：action / workflow / plugin")
+    target_type: str = Field(
+        index=True, description="目标资源类型：action / workflow / plugin"
+    )
     target_id: str = Field(unique=True, index=True, description="目标资源 ID（唯一）")
     certified_by: int = Field(description="认证者 mid")
     note: str = Field(default="", description="认证备注")
@@ -165,7 +170,9 @@ class UserBan(BaseSQLModel, table=True):
     )
     reason: str = Field(default="", description="封禁理由")
     banned_by: int = Field(index=True, description="执行封禁的管理员 mid")
-    banned_at: datetime = Field(default_factory=datetime.now, description="封禁开始时间")
+    banned_at: datetime = Field(
+        default_factory=datetime.now, description="封禁开始时间"
+    )
     expired_at: Optional[datetime] = Field(
         default=None, index=True, description="封禁到期时间，为空表示永久封禁"
     )

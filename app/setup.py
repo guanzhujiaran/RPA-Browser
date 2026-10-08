@@ -30,6 +30,24 @@ def register_background_tasks():
         misfire_grace_time=None,
     )
 
+    # 工作流计费心跳 - 每 workflow_billing_heartbeat_interval 秒执行一次（默认 300s）
+    # 对运行中的定时任务按差额预扣；余额耗尽熔断；会话丢失兜底结算
+    # 见 docs/浏览器使用时长与会员权益计划书.md §8
+    from app.services.membership.membership_service import MembershipService
+
+    scheduler_manager_ist.add_interval_job(
+        func=MembershipService.run_billing_heartbeat,
+        seconds=settings.workflow_billing_heartbeat_interval,
+        id="workflow_billing_heartbeat",
+        name="工作流计费心跳",
+        misfire_grace_time=None,
+        # 单进程内严格串行，避免上一轮未跑完就叠跑下一轮。
+        # 跨进程（多实例）由 MembershipService 的「差额式幂等预扣」兜底：
+        # 每个 run 只扣到当前墙钟分钟的目标额度，重复执行不会重复扣费。
+        max_instances=1,
+        coalesce=True,
+    )
+
     logger.info("✅ All background tasks registered")
     logger.info("📋 Registered tasks:")
     for job in scheduler_manager_ist.get_jobs():
