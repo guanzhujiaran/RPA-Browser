@@ -37,8 +37,10 @@ class LedgerChangeType(StrEnumAutoDoc):
     SIGN_IN = "sign_in"  # 签到奖励
     ACTIVITY = "activity"  # 活动赠送
     REDEEM = "redeem"  # 兑换码兑换（时长卡）
+    PURCHASE = "purchase"  # 支付购买时长（Casdoor 商品入账）
     CONSUME = "consume"  # 定时工作流消耗
     ADJUST = "adjust"  # 后台人工调整
+    MONTHLY_RESET = "monthly_reset"  # 月初赠送余额清零（剩余时长月底失效）
 
 
 class MonthCardSourceEnum(StrEnumAutoDoc):
@@ -68,13 +70,28 @@ class SignRewardTierEnum(StrEnumAutoDoc):
 
 
 class UserDurationAccount(BaseSQLModel, table=True):
-    """用户时长账户（一人一行，余额行锁扣减）"""
+    """用户时长账户（一人一行，余额行锁扣减）
+
+    余额双桶口径（不变式：balance_seconds = granted_balance_seconds +
+    paid_balance_seconds，由 service 统一入口维护，禁止外部直改）：
+    - granted_balance_seconds：赠送时长（签到 / 活动），每月初清零；
+    - paid_balance_seconds：付费时长（时长卡兑换 / 支付购买 / 人工调整），永久保留；
+    - 扣减时优先消耗赠送桶（见 MembershipService._charge_run_delta）。
+    """
 
     __table_args__ = (UniqueConstraint("mid", name="uq_duration_account_mid"),)
 
     id: int | None = Field(default=None, primary_key=True)
     mid: int = Field(sa_type=BIGINT, index=True, description="用户ID")
-    balance_seconds: int = Field(default=0, description="当前剩余时长（秒）")
+    balance_seconds: int = Field(
+        default=0, description="当前剩余时长（秒）= 赠送桶 + 付费桶"
+    )
+    granted_balance_seconds: int = Field(
+        default=0, description="赠送时长余额（秒，签到/活动，每月初清零）"
+    )
+    paid_balance_seconds: int = Field(
+        default=0, description="付费时长余额（秒，时长卡/购买/人工调整，永久保留）"
+    )
     total_granted_seconds: int = Field(default=0, description="累计获得时长（秒）")
     total_consumed_seconds: int = Field(default=0, description="累计消耗时长（秒）")
 
@@ -94,8 +111,8 @@ class DurationLedger(BaseSQLModel, table=True):
     ref_id: str = Field(
         default="", max_length=100, description="关联业务ID（兑换码/订单等）"
     )
-    workflow_id: str | None = Field(
-        default=None, max_length=100, index=True, description="关联工作流ID"
+    workflow_id: int | None = Field(
+        default=None, sa_type=BIGINT, index=True, description="关联工作流ID（雪花 int）"
     )
     run_id: str | None = Field(
         default=None, max_length=64, description="关联工作流运行ID"
@@ -238,6 +255,24 @@ class BrowserUsageDailyStat(BaseSQLModel, table=True):
     workflow_run_count: int = Field(default=0, description="工作流运行次数")
 
 
+class DurationMonthlyReset(BaseSQLModel, table=True):
+    """时长余额月度清零批次（每个自然月最多一条，幂等防重复执行）
+
+    - period：被清零的月份（YYYY-MM，即该月最后一刻的余额在次月月初清零）；
+    - reset_at：实际执行时间（次月月初 cron 触发时刻）；
+    - affected_users / cleared_seconds：本次清零的账户数与清零总秒数（统计快照）。
+    """
+
+    __table_args__ = (UniqueConstraint("period", name="uq_duration_reset_period"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    period: str = Field(max_length=7, index=True, description="清零所属月份 YYYY-MM")
+    reset_at: datetime = Field(description="实际执行时间")
+    affected_users: int = Field(default=0, description="被清零的账户数")
+    cleared_seconds: int = Field(default=0, description="清零总时长（秒）")
+    remark: str = Field(default="", max_length=500, description="备注")
+
+
 class PaymentGrantTypeEnum(StrEnumAutoDoc):
     """支付商品对应的权益类型（规格由商品名约定解析，见计划书 §3.3 方案A）"""
 
@@ -246,13 +281,16 @@ class PaymentGrantTypeEnum(StrEnumAutoDoc):
 
 
 class PaymentOrder(BaseSQLModel, table=True):
-    """支付入账记录（幂等键 = Casdoor 支付单 name）
+    """支付入账记录（幂等键 = Casdoor 支付单 name + 商品名）
 
-    行存在即表示该支付已入账；对账时先查后插防重放。
+    新版 Casdoor 购物车支付单可含多个商品（products 数组），故一笔支付单
+    对应多行（每商品一行）；按 (payment_name, product_name) 先查后插防重放。
     """
 
     __table_args__ = (
-        UniqueConstraint("payment_name", name="uq_payment_order_name"),
+        UniqueConstraint(
+            "payment_name", "product_name", name="uq_payment_order_name_product"
+        ),
         Index("idx_payment_order_mid_created", "mid", "created_at"),
     )
 
@@ -289,5 +327,6 @@ __all__ = [
     "RedemptionCode",
     "CodeRedemptionRecord",
     "BrowserUsageDailyStat",
+    "DurationMonthlyReset",
     "PaymentOrder",
 ]

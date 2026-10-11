@@ -172,7 +172,7 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
         - 列表由 list_path 定位（留空则 data 本身即列表）；
         - 每项主 id 由 id_field 提取，调 ResourceRecordService 剔除已成功项。
         """
-        workflow_id = str(self.exec_meta.get("workflow_id") or "")
+        workflow_id = int(self.exec_meta.get("workflow_id") or 0)
         if not workflow_id:
             return ActionResult(
                 success=False,
@@ -181,7 +181,7 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
             )
-        browser_id = str(self.exec_meta.get("browser_id") or "")
+        browser_id = int(self.exec_meta.get("browser_id") or 0)
 
         payload = result.data
         if payload is None:

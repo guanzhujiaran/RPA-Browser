@@ -80,7 +80,7 @@ class LedgerListRequest(BasePaginationReq):
 
     change_types 为逗号分隔的变动类型（见 LedgerChangeType）：
     留空 = 不过滤（全部）；`consume` = 仅消耗；
-    `sign_in,activity,redeem,adjust` = 仅获得。非法取值由 pydantic 校验拦截。
+    `sign_in,activity,redeem,purchase,adjust` = 仅获得。非法取值由 pydantic 校验拦截。
     """
 
     change_types: str = Field(
@@ -131,7 +131,13 @@ class MonthCardInfo(SQLModel):
 class DurationAccountResponse(SQLModel):
     """账户概览响应（数值以 str 传递）"""
 
-    balance_seconds: str = Field(description="剩余时长（秒）")
+    balance_seconds: str = Field(description="剩余总时长（秒）= 赠送 + 付费")
+    granted_balance_seconds: str = Field(
+        description="赠送时长余额（秒，签到/活动，每月初清零）"
+    )
+    paid_balance_seconds: str = Field(
+        description="付费时长余额（秒，时长卡/购买，永久保留）"
+    )
     total_granted_seconds: str = Field(description="累计获得（秒）")
     total_consumed_seconds: str = Field(description="累计消耗（秒）")
     month_card: MonthCardInfo = Field(description="月卡状态")
@@ -146,6 +152,8 @@ class DurationAccountResponse(SQLModel):
     ) -> "DurationAccountResponse":
         return cls(
             balance_seconds=str(account.balance_seconds),
+            granted_balance_seconds=str(account.granted_balance_seconds),
+            paid_balance_seconds=str(account.paid_balance_seconds),
             total_granted_seconds=str(account.total_granted_seconds),
             total_consumed_seconds=str(account.total_consumed_seconds),
             month_card=month_card,
@@ -202,7 +210,7 @@ class DurationLedgerItem(SQLModel):
             if isinstance(record.change_type, LedgerChangeType)
             else str(record.change_type),
             ref_id=record.ref_id or "",
-            workflow_id=record.workflow_id or "",
+            workflow_id=str(record.workflow_id) if record.workflow_id else "",
             run_id=record.run_id or "",
             browser_id=str(record.browser_id) if record.browser_id else "",
             remark=record.remark or "",
@@ -524,7 +532,23 @@ async def get_membership_account(
     auth: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> StandardResponse[DurationAccountResponse]:
-    """获取当前用户的时长账户概览（余额 / 月卡状态 / 今日签到状态）"""
+    """获取当前用户的时长账户概览（余额 / 月卡状态 / 今日签到状态）
+
+    Casdoor 无法跳回 RPA 页面，核销在用户调用相关接口时由服务端主动查询：
+    进入会员页即拉一次该用户的 Casdoor 支付单，把已 Paid 未入账的权益幂等
+    发放（见计划书 §3.3）。Casdoor 抖动只告警、不阻断账户查询。
+    """
+    if auth.user_name:
+        try:
+            await MembershipService.confirm_payments(
+                auth.mid, auth.user_name, session
+            )
+        except Exception as exc:  # noqa: BLE001 - 对账失败不影响账户概览
+            from loguru import logger
+
+            logger.warning(
+                f"[Membership] 账户概览触发支付核销失败，忽略: {exc}"
+            )
     account = await MembershipService.get_or_create_account(auth.mid, session)
     card = await MembershipService.get_active_month_card(auth.mid, session)
     signed_today = await MembershipService.is_signed_today(auth.mid, session)
@@ -899,10 +923,9 @@ async def notify_payment(
     await session.commit()
     return success_response(
         PaymentConfirmResponse(
-            granted=(
-                [PaymentGrantedItem(product=result.product, summary=result.summary)]
-                if result
-                else []
-            )
+            granted=[
+                PaymentGrantedItem(product=item.product, summary=item.summary)
+                for item in result
+            ]
         )
     )

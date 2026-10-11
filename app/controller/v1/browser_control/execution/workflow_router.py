@@ -6,7 +6,6 @@ Workflow 管理路由
 
 from app.services.execution.engine import ExecutionEngine
 from loguru import logger
-import uuid
 from bili_common.models.response import (
     StandardResponse,
     success_response,
@@ -47,6 +46,8 @@ from app.models.workflow.models import (
     WorkflowDuplicateResponse,
     WorkflowForkRequest,
     WorkflowForkResponse,
+    WorkflowSyncRequest,
+    WorkflowSyncResponse,
     WorkflowStepExecuteRequest,
     WorkflowStepExecuteResponse,
     WorkflowRunNowRequest,
@@ -144,11 +145,7 @@ async def create_workflow(
                 f"引用的动作不存在: {request.custom_action_id}",
             )
 
-    # 生成唯一的 workflow_id
-    workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
-
     model = await workflow_crud_svr.create(
-        workflow_id=workflow_id,
         name=request.name,
         mid=auth.mid,
         custom_action_id=request.custom_action_id,
@@ -157,7 +154,6 @@ async def create_workflow(
         trigger_type=request.trigger_type,
         trigger_config=request.trigger_config,
         is_public=request.is_public,
-        enabled_plugins=request.enabled_plugins,
     )
 
     # 同步定时任务（cron 生效即可被调度）
@@ -250,9 +246,7 @@ async def get_workflow_detail(
     if not model or str(model.mid) != str(auth.mid):
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
 
-    # 获取关联的插件列表
-    enabled_plugins = await workflow_crud_svr.get_enabled_plugins(model.workflow_id)
-
+    # 获取工作流详情
     return success_response(
         WorkflowDetailResponse(
             id=model.id,
@@ -273,7 +267,6 @@ async def get_workflow_detail(
             last_run_at=model.last_run_at,
             last_run_status=model.last_run_status,
             next_run_at=model.next_run_at,
-            enabled_plugins=enabled_plugins,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -333,7 +326,6 @@ async def update_workflow(
         trigger_config=request.trigger_config,
         is_enabled=request.is_enabled,
         is_public=request.is_public,
-        enabled_plugins=request.enabled_plugins,
     )
 
     if not model or str(model.mid) != str(auth.mid):
@@ -342,9 +334,6 @@ async def update_workflow(
     # 同步定时任务（启用/cron/浏览器任一变化都需重建或移除）
     await sync_workflow_job(model)
     model = await workflow_crud_svr.get_by_id(model.id) or model
-
-    # 获取关联的插件列表
-    enabled_plugins = await workflow_crud_svr.get_enabled_plugins(model.workflow_id)
 
     return success_response(
         WorkflowDetailResponse(
@@ -366,7 +355,6 @@ async def update_workflow(
             last_run_at=model.last_run_at,
             last_run_status=model.last_run_status,
             next_run_at=model.next_run_at,
-            enabled_plugins=enabled_plugins,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -424,14 +412,8 @@ async def duplicate_workflow(
     if not original or str(original.mid) != str(auth.mid):
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
 
-    # 创建副本
-    new_workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
-
-    # 复制原工作流的插件关联
-    original_plugins = await workflow_crud_svr.get_enabled_plugins(original.workflow_id)
-
+    # 创建副本（workflow_id 由 create 内部生成雪花 int）
     model = await workflow_crud_svr.create(
-        workflow_id=new_workflow_id,
         name=new_name,
         mid=auth.mid,
         custom_action_id=original.custom_action_id,
@@ -440,7 +422,6 @@ async def duplicate_workflow(
         trigger_type=original.trigger_type,
         trigger_config=original.trigger_config,
         is_public=False,
-        enabled_plugins=original_plugins,
     )
 
     # 副本若也是定时触发，同样需要注册调度任务
@@ -483,25 +464,95 @@ async def fork_workflow(
         return error_response(403, "只能 Fork 公开的工作流或自己的工作流")
 
     try:
-        # 执行 Fork
-        model = await workflow_crud_svr.fork(
+        # 执行 Fork（递归深拷贝 Action 依赖树）
+        model, forked_action_count = await workflow_crud_svr.fork(
             id=request.id, target_mid=auth.mid, new_name=request.new_name
         )
 
         if not model:
             return error_response(500, "Fork 失败")
 
+        msg = "Fork 成功"
+        if forked_action_count > 0:
+            msg += f"，已独立复制 {forked_action_count} 个关联动作"
+
         return success_response(
             WorkflowForkResponse(
                 id=model.id,
                 workflow_id=model.workflow_id,
                 name=model.name,
-                forked_from=original.name,
+                forked_from=original.workflow_id,
             ),
-            msg="Fork 成功",
+            msg=msg,
         )
     except ValueError as e:
         return error_response(400, str(e))
+    except Exception as e:
+        from app.models.common.exceptions.base_exception import BaseException as BizBaseException
+
+        if isinstance(e, BizBaseException):
+            return error_response(e.code or 400, str(e))
+        raise
+
+
+@router.post(
+    "/workflows/sync",
+    summary="同步工作流到上游最新版本",
+    response_model=StandardResponse[WorkflowSyncResponse],
+)
+async def sync_workflow(
+    request: WorkflowSyncRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[WorkflowSyncResponse]:
+    """将 Fork 的工作流同步到原作者最新版本
+
+    同步内容包括：
+    - 工作流触发配置（trigger_type/trigger_config）
+    - 关联的 Action 依赖树（递归同步所有 Fork 副本）
+    - 上游新增的依赖会自动 Fork
+    - 上游已删除/私有化的依赖保留当前副本并报告
+    """
+    try:
+        result = await workflow_crud_svr.sync_from_upstream(
+            id=request.id, mid=auth.mid
+        )
+
+        if result is None:
+            return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
+
+        msg_parts = []
+        if result.get("workflow_config_updated"):
+            msg_parts.append("工作流配置已更新")
+        if result["updated"]:
+            msg_parts.append(f"更新 {len(result['updated'])} 个动作")
+        if result["created"]:
+            msg_parts.append(f"新增 {len(result['created'])} 个动作")
+        if result["unavailable"]:
+            msg_parts.append(
+                f"{len(result['unavailable'])} 个上游动作不可用（已保留当前版本）"
+            )
+        msg = "同步完成：" + "，".join(msg_parts) if msg_parts else "已是最新版本"
+
+        return success_response(
+            WorkflowSyncResponse(
+                workflow_id=result["workflow_id"],
+                updated=result["updated"],
+                created=result["created"],
+                unavailable=result["unavailable"],
+                workflow_config_updated=result.get(
+                    "workflow_config_updated", False
+                ),
+            ),
+            msg=msg,
+        )
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        from app.models.common.exceptions.base_exception import BaseException as BizBaseException
+
+        if isinstance(e, BizBaseException):
+            return error_response(e.code or 400, str(e))
+        raise
 
 
 @router.get("/workflows/{id}/forks", summary="获取工作流的所有 Fork 版本")

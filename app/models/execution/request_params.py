@@ -32,7 +32,9 @@ class ExecutionRequest(SQLModel):
 class ActionExecutionRequest(ExecutionRequest):
     """操作执行请求参数"""
 
-    action_id: str = Field(description="操作ID")
+    action_id: int | str = Field(
+        description="操作ID：内置动作为名字符串，复合动作为雪花 int"
+    )
     params: Dict | AllActionParams | None = Field(default=None, description="操作参数")
     input_data: Dict = Field(default_factory=dict, description="输入数据")
     output_vars: list[str] = Field(default_factory=list, description="输出变量名称列表")
@@ -41,7 +43,9 @@ class ActionExecutionRequest(ExecutionRequest):
 class StepExecutionRequest(ExecutionRequest):
     """步骤执行请求参数"""
 
-    action_id: str = Field(description="操作ID")
+    action_id: int | str = Field(
+        description="操作ID：内置动作为名字符串，复合动作为雪花 int"
+    )
     params: Dict | AllActionParams | None = Field(default=None, description="操作参数")
     step_index: int = Field(default=0, description="步骤索引")
 
@@ -49,9 +53,11 @@ class StepExecutionRequest(ExecutionRequest):
 class WorkflowExecutionRequest(ExecutionRequest):
     """工作流执行请求参数"""
 
-    action_id: str = Field(description="操作ID")
-    workflow_id: str | None = Field(
-        default=None, description="工作流ID（用于关联插件）"
+    action_id: int | str = Field(
+        description="操作ID：内置动作为名字符串，复合动作为雪花 int"
+    )
+    workflow_id: int | None = Field(
+        default=None, description="工作流ID（雪花 int，用于关联插件）"
     )
     input_data: Dict = Field(default_factory=dict, description="输入数据")
     output_vars: list[str] = Field(default_factory=list, description="输出变量名称列表")

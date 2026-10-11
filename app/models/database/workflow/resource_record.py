@@ -22,7 +22,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Column, Index, UniqueConstraint
+from sqlalchemy import BIGINT, JSON, Column, Index, UniqueConstraint
 from sqlmodel import Field
 
 from bili_common.models import StrEnumAutoDoc
@@ -73,14 +73,16 @@ class WorkflowResourceRecord(BaseSQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     mid: str = Field(max_length=255, index=True, description="归属用户ID")
-    workflow_id: str = Field(
-        max_length=100, index=True, description="关联工作流ID（UserWorkflow.workflow_id）"
-    )
-    browser_id: str = Field(
-        max_length=100,
-        default="",
+    workflow_id: int = Field(
+        sa_type=BIGINT,
         index=True,
-        description="执行浏览器ID（工作流绑定浏览器，去重按浏览器隔离）",
+        description="关联工作流ID（UserWorkflow.workflow_id 雪花 int）",
+    )
+    browser_id: int = Field(
+        default=0,
+        sa_type=BIGINT,
+        index=True,
+        description="执行浏览器ID（雪花 int，工作流绑定浏览器，去重按浏览器隔离）",
     )
     run_id: str | None = Field(
         default=None,

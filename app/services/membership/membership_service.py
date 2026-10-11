@@ -4,6 +4,8 @@
 
 核心约定：
     - 只有定时任务（SCHEDULE）工作流消耗时长；手动调试 / 手动运行只记统计不扣费；
+    - 余额双桶：granted（签到/活动赠送，每月初清零）+ paid（时长卡/购买/人工，
+      永久保留），balance = granted + paid；扣减先赠后付；
     - 扣减按「运行实际时长向上取整到分钟」；
     - 余额扣减在事务内行锁（SELECT ... FOR UPDATE）完成，保证并发安全；
     - 服务层方法显式接收 session（依赖注入），不持有全局状态。
@@ -47,6 +49,7 @@ from app.models.database.membership.models import (
     BrowserUsageDailyStat,
     CodeRedemptionRecord,
     DurationLedger,
+    DurationMonthlyReset,
     LedgerChangeType,
     MonthCardRecord,
     MonthCardSourceEnum,
@@ -107,16 +110,25 @@ class MembershipService:
         ).first()
         if account is not None:
             return account
-        session.add(UserDurationAccount(mid=mid))
+        account = UserDurationAccount(mid=mid)
         try:
-            # SAVEPOINT：仅回滚本次 INSERT，避免把调用方已排队的写一起回滚
+            # 注意：必须先进入 SAVEPOINT 再 add/flush。begin_nested() 在发出
+            # SAVEPOINT 前会先把已排队对象刷在外层事务里，若进入前就 pending，
+            # 唯一键冲突会直接回滚整个外层事务并把 session 打成 rollback-pending，
+            # 捕获异常后再执行 SQL 会抛 PendingRollbackError。
             async with session.begin_nested():
+                session.add(account)
                 await session.flush()
+            return account  # 新插入行自带排他锁直到 commit，无需额外加锁
         except IntegrityError:
-            pass  # 并发首次创建：唯一约束冲突，下方重读已有行
+            pass  # 并发首次创建：唯一键冲突，下方重读已有行
+        # 冲突恢复路径必须用加锁当前读：REPEATABLE READ 下普通 SELECT 仍读旧
+        # 快照，看不到并发事务刚提交的行。
         return (
             await session.exec(
-                select(UserDurationAccount).where(UserDurationAccount.mid == mid)
+                select(UserDurationAccount)
+                .where(UserDurationAccount.mid == mid)
+                .with_for_update()
             )
         ).one()
 
@@ -170,6 +182,12 @@ class MembershipService:
 
     # ---------- 时长发放 / 消耗 ----------
 
+    #: 计入「赠送桶」的入账类型（签到 / 活动），每月初清零；
+    #: 其余类型（redeem 时长卡 / purchase 购买 / adjust 人工）计入「付费桶」永久保留
+    _GRANTED_CHANGE_TYPES = frozenset(
+        {LedgerChangeType.SIGN_IN, LedgerChangeType.ACTIVITY}
+    )
+
     @staticmethod
     async def grant_duration(
         mid: int,
@@ -178,12 +196,17 @@ class MembershipService:
         *,
         change_type: LedgerChangeType,
         ref_id: str = "",
-        workflow_id: str | None = None,
+        workflow_id: int | None = None,
         run_id: str | None = None,
         browser_id: int | None = None,
         remark: str = "",
     ) -> UserDurationAccount:
-        """发放时长（正数），写流水并更新账户汇总"""
+        """发放时长（正数），写流水并更新账户汇总
+
+        按 ``change_type`` 自动路由余额桶：
+        - SIGN_IN / ACTIVITY → granted_balance_seconds（赠送桶，月初清零）；
+        - REDEEM / PURCHASE / ADJUST → paid_balance_seconds（付费桶，永久保留）。
+        """
         if seconds <= 0:
             raise ValueError(f"grant_duration seconds must be positive: {seconds}")
         account = await MembershipService.get_or_create_account(mid, session)
@@ -195,7 +218,14 @@ class MembershipService:
                 .with_for_update()
             )
         ).one()
-        locked.balance_seconds += seconds
+        # 不变式：balance_seconds = granted_balance_seconds + paid_balance_seconds
+        if change_type in MembershipService._GRANTED_CHANGE_TYPES:
+            locked.granted_balance_seconds += seconds
+        else:
+            locked.paid_balance_seconds += seconds
+        locked.balance_seconds = (
+            locked.granted_balance_seconds + locked.paid_balance_seconds
+        )
         locked.total_granted_seconds += seconds
         session.add(
             DurationLedger(
@@ -220,12 +250,15 @@ class MembershipService:
         delta_seconds: int,
         session: AsyncSession,
         *,
-        workflow_id: str,
+        workflow_id: int,
         run_id: str,
         browser_id: int,
         remark: str = "定时任务工作流运行消耗",
     ) -> int:
         """对运行扣减指定秒数（行锁，余额封顶不为负），写 CONSUME 流水
+
+        扣减顺序：**先扣赠送桶（granted，月初清零），不足再扣付费桶（paid）**，
+        跨桶时写两条流水（同一 run_id，``_sum_run_charged`` 聚合不受影响）。
 
         Returns:
             实际扣减秒数（余额不足时小于 delta）。
@@ -240,23 +273,42 @@ class MembershipService:
                 .with_for_update()
             )
         ).one()
-        charged = min(delta_seconds, max(locked.balance_seconds, 0))
+        total = max(locked.granted_balance_seconds, 0) + max(
+            locked.paid_balance_seconds, 0
+        )
+        charged = min(delta_seconds, total)
         if charged <= 0:
             return 0
-        locked.balance_seconds -= charged
-        locked.total_consumed_seconds += charged
-        session.add(
-            DurationLedger(
+
+        # 先赠送桶，后付费桶
+        from_granted = min(charged, max(locked.granted_balance_seconds, 0))
+        from_paid = charged - from_granted
+
+        def _consume_ledger(amount: int, bucket_remark: str) -> DurationLedger:
+            return DurationLedger(
                 mid=mid,
-                change_seconds=-charged,
+                change_seconds=-amount,
                 balance_after=locked.balance_seconds,
                 change_type=LedgerChangeType.CONSUME,
                 workflow_id=workflow_id,
                 run_id=run_id,
                 browser_id=browser_id,
-                remark=remark,
+                remark=bucket_remark,
             )
-        )
+
+        if from_granted > 0:
+            locked.granted_balance_seconds -= from_granted
+            locked.balance_seconds -= from_granted
+            session.add(
+                _consume_ledger(from_granted, f"{remark}（赠送时长）")
+            )
+        if from_paid > 0:
+            locked.paid_balance_seconds -= from_paid
+            locked.balance_seconds -= from_paid
+            session.add(
+                _consume_ledger(from_paid, f"{remark}（时长卡余额）")
+            )
+        locked.total_consumed_seconds += charged
         session.add(locked)
         await session.flush()
         return charged
@@ -282,7 +334,7 @@ class MembershipService:
         run_seconds: float,
         session: AsyncSession,
         *,
-        workflow_id: str,
+        workflow_id: int,
         run_id: str,
         browser_id: int,
         already_charged: int,
@@ -362,11 +414,12 @@ class MembershipService:
             is_makeup=False,
             makeup_card_cost=0,
         )
-        session.add(record)
         try:
             # 并发双提交由唯一键 (mid, sign_date) 兜底：转成业务码而不是 500。
-            # SAVEPOINT 保证仅回滚本次 INSERT，不影响调用方已排队的写。
+            # add 必须放在 SAVEPOINT 内（见 get_or_create_account 的说明），
+            # 否则冲突会回滚整个外层事务而不是仅回滚本次 INSERT。
             async with session.begin_nested():
+                session.add(record)
                 await session.flush()
         except IntegrityError:
             raise SignInAlreadyTodayException()
@@ -441,10 +494,11 @@ class MembershipService:
             is_makeup=True,
             makeup_card_cost=1,
         )
-        session.add(record)
         try:
-            # 并发重复补签由唯一键 (mid, sign_date) 兜底
+            # 并发重复补签由唯一键 (mid, sign_date) 兜底；add 必须放在
+            # SAVEPOINT 内（见 get_or_create_account 的说明）。
             async with session.begin_nested():
+                session.add(record)
                 await session.flush()
         except IntegrityError:
             raise SignMakeupAlreadySignedException()
@@ -477,18 +531,25 @@ class MembershipService:
         if profile is not None:
             return profile
 
-        session.add(UserSignProfile(mid=mid))
+        profile = UserSignProfile(mid=mid)
         try:
-            # SAVEPOINT：仅回滚本次 INSERT，避免误伤调用方已排队的写
+            # 必须先进入 SAVEPOINT 再 add/flush：否则 begin_nested() 入口的
+            # 预 flush 会让 INSERT 跑在 SAVEPOINT 之外，唯一键冲突直接回滚整个
+            # 外层事务，捕获后 session 仍是 rollback-pending（PendingRollbackError）。
             async with session.begin_nested():
+                session.add(profile)
                 await session.flush()
+            return profile  # 新插入行自带排他锁直到 commit，满足 for_update 场景
         except IntegrityError:
             pass  # 并发首次创建：唯一约束冲突，下方重读已有行
 
-        # MySQL REPEATABLE READ 下必须重新加行锁读取，否则拿到的是快照行
-        retry_stmt = select(UserSignProfile).where(UserSignProfile.mid == mid)
-        if for_update:
-            retry_stmt = retry_stmt.with_for_update()
+        # 冲突恢复路径必须加锁当前读：REPEATABLE READ 下普通 SELECT 仍读旧快照，
+        # 看不到并发事务刚提交的行（无论 for_update 与否都需要当前读）。
+        retry_stmt = (
+            select(UserSignProfile)
+            .where(UserSignProfile.mid == mid)
+            .with_for_update()
+        )
         return (await session.exec(retry_stmt)).one()
 
     @staticmethod
@@ -550,10 +611,11 @@ class MembershipService:
             makeup_cards=granted_cards,
             total_sign_days=profile.total_sign_days,
         )
-        session.add(record)
         try:
-            # 并发重复兑换由唯一键 (mid, tier) 兜底：转成业务码而不是 500
+            # 并发重复兑换由唯一键 (mid, tier) 兜底：转成业务码而不是 500；
+            # add 必须放在 SAVEPOINT 内（见 get_or_create_account 的说明）。
             async with session.begin_nested():
+                session.add(record)
                 await session.flush()
         except IntegrityError:
             raise SignRewardTierExchangedException()
@@ -952,19 +1014,24 @@ class MembershipService:
         casdoor_user: str,
         payment: CasdoorPaymentPayload,
         session: AsyncSession,
-    ) -> PaymentGrantResult | None:
-        """对单笔已支付（Paid）的 Casdoor 支付做幂等入账
+    ) -> list[PaymentGrantResult]:
+        """对单笔已支付（Paid）的 Casdoor 支付做幂等入账（支持多商品支付单）
 
-        校验：支付归属当前用户；商品名能解析出有效权益。
-        入账：先插 paymentorder（唯一键防重放）再 grant。
+        新版 Casdoor 购物车支付单把商品放在 ``products`` 数组（旧版为单字段
+        ``productName``），一笔单可含多个商品，逐商品解析、逐商品幂等入账。
+
+        校验：支付归属当前用户；每个商品名都能解析出有效权益（无法解析的
+              商品只告警跳过，不影响同单其他商品）。
+        入账：每商品先插 paymentorder（(payment_name, product_name) 唯一键
+              防重放）再 grant。
 
         Returns:
-            入账结果；不满足条件（含已入账）返回 None。
+            本次新入账结果列表（已入账 / 无法解析 / 归属不符均不计入）。
         """
         payment_name = payment.payment_name
-        product_name = payment.product_name
-        if not payment_name or not product_name:
-            return None
+        product_names = payment.product_names
+        if not payment_name or not product_names:
+            return []
         # 支付归属校验：他人支付单不得入账到当前用户（大小写归一，避免用户名变更误拒）
         if payment.user.strip().lower() != casdoor_user.strip().lower():
             logger.warning(
@@ -972,73 +1039,89 @@ class MembershipService:
                 f"payment_user={membership_log_mask(payment.user)}, "
                 f"payment={payment_name}"
             )
-            return None
+            return []
 
-        # 幂等：已入账的支付直接跳过
-        exists = (
-            await session.exec(
-                select(PaymentOrder).where(PaymentOrder.payment_name == payment_name)
-            )
-        ).first()
-        if exists is not None:
-            return None
+        results: list[PaymentGrantResult] = []
+        for product_name in product_names:
+            # 商品名约定解析（方案A）：解析失败只跳过该商品并告警，不影响同单其他商品
+            spec = MembershipService.parse_product_spec(product_name)
+            if spec is None:
+                logger.warning(
+                    f"[Membership] 商品名不符合约定，无法解析权益，跳过该商品: "
+                    f"{product_name}, payment={payment_name}（约定见计划书 §3.3）"
+                )
+                continue
+            grant_type, seconds, days = spec
 
-        # 商品名约定解析（方案A）：解析失败拒入账并告警
-        spec = MembershipService.parse_product_spec(product_name)
-        if spec is None:
-            logger.warning(
-                f"[Membership] 商品名不符合约定，无法解析权益，拒入账: {product_name}, "
-                f"payment={payment_name}（约定见计划书 §3.3）"
-            )
-            return None
-        grant_type, seconds, days = spec
+            # 幂等：该支付单的该商品已入账则跳过（多商品支付单按商品粒度防重）
+            exists = (
+                await session.exec(
+                    select(PaymentOrder).where(
+                        PaymentOrder.payment_name == payment_name,
+                        PaymentOrder.product_name == product_name,
+                    )
+                )
+            ).first()
+            if exists is not None:
+                continue
 
-        # 幂等入账：先插记录（唯一键防重放），再入账
-        order = PaymentOrder(
-            payment_name=payment_name,
-            casdoor_user=casdoor_user,
-            mid=mid,
-            product_name=product_name,
-            grant_type=grant_type,
-            duration_seconds=seconds,
-            card_days=days,
-            price=payment.price,
-        )
-        session.add(order)
-        try:
-            # SAVEPOINT：并发对账重复入账时仅回滚本笔，
-            # 不会把 confirm_payments 里前面已入账的笔一起回滚。
-            async with session.begin_nested():
-                await session.flush()
-        except IntegrityError:
-            logger.info(f"[Membership] 支付单已入账，幂等跳过: payment={payment_name}")
-            return None
+            # 幂等入账：先插记录（唯一键防重放），再入账
+            order = PaymentOrder(
+                payment_name=payment_name,
+                casdoor_user=casdoor_user,
+                mid=mid,
+                product_name=product_name,
+                grant_type=grant_type,
+                duration_seconds=seconds,
+                card_days=days,
+                price=payment.price,
+            )
+            try:
+                # SAVEPOINT：并发对账重复入账时仅回滚本笔，
+                # 不会把同轮其他商品 / 其他支付单已入账结果一起回滚。
+                # add 必须放在 SAVEPOINT 内（见 get_or_create_account 的说明），
+                # 否则冲突会回滚整个外层事务，后续商品入账全部 PendingRollbackError。
+                async with session.begin_nested():
+                    session.add(order)
+                    await session.flush()
+            except IntegrityError:
+                logger.info(
+                    f"[Membership] 支付商品已入账，幂等跳过: "
+                    f"payment={payment_name}, product={product_name}"
+                )
+                continue
 
-        if grant_type == PaymentGrantTypeEnum.MONTH_CARD:
-            await MembershipService.grant_month_card(
-                mid,
-                days,
-                session,
-                source=MonthCardSourceEnum.ACTIVITY,
-                ref_id=payment_name,
-                remark=f"购买月卡商品 {product_name}",
-            )
-            return PaymentGrantResult(
-                product=product_name,
-                summary=f"月卡已开通：{days} 天",
-            )
-        await MembershipService.grant_duration(
-            mid,
-            seconds,
-            session,
-            change_type=LedgerChangeType.ACTIVITY,
-            ref_id=payment_name,
-            remark=f"购买时长商品 {product_name}",
-        )
-        return PaymentGrantResult(
-            product=product_name,
-            summary=f"时长已到账：{seconds} 秒",
-        )
+            if grant_type == PaymentGrantTypeEnum.MONTH_CARD:
+                await MembershipService.grant_month_card(
+                    mid,
+                    days,
+                    session,
+                    source=MonthCardSourceEnum.ACTIVITY,
+                    ref_id=payment_name,
+                    remark=f"购买月卡商品 {product_name}",
+                )
+                results.append(
+                    PaymentGrantResult(
+                        product=product_name,
+                        summary=f"月卡已开通：{days} 天",
+                    )
+                )
+            else:
+                await MembershipService.grant_duration(
+                    mid,
+                    seconds,
+                    session,
+                    change_type=LedgerChangeType.PURCHASE,
+                    ref_id=payment_name,
+                    remark=f"购买时长商品 {product_name}",
+                )
+                results.append(
+                    PaymentGrantResult(
+                        product=product_name,
+                        summary=f"时长已到账：{seconds} 秒",
+                    )
+                )
+        return results
 
     @staticmethod
     async def notify_and_grant(
@@ -1047,7 +1130,7 @@ class MembershipService:
         transaction_owner: str,
         transaction_name: str,
         session: AsyncSession,
-    ) -> PaymentGrantResult | None:
+    ) -> list[PaymentGrantResult]:
         """Success URL 跳回后的支付完成流程（计划书 §3.3）
 
         1. get-payment 服务端先核验归属：**确认属于当前用户才允许推进交易**，
@@ -1107,13 +1190,20 @@ class MembershipService:
             mid, casdoor_user, payment, session
         )
 
+    # ---------- Casdoor 支付用户触发核销（无 Success URL 跳转场景，计划书 §3.3） ----------
+
     @staticmethod
     async def confirm_payments(
         mid: int,
         casdoor_user: str,
         session: AsyncSession,
     ) -> list[PaymentGrantResult]:
-        """兜底对账：按用户拉取支付列表，补入账（计划书 §3.3）
+        """用户级支付核销：按用户拉取 Casdoor 支付单，把已 Paid 未入账的幂等补入账
+
+        Casdoor 支付渠道在付款成功后支付单即为 Paid；RPA 缺的只是把权益
+        （月卡 / 时长）幂等发放到用户账号这一步。由于 Casdoor 无法直接跳回
+        RPA 页面，核销改由「用户调用相关接口时主动查询」触发（会员页轮询 /
+        启动定时工作流前），不依赖任何跳转回调，也不做全局后台扫描。
 
         每笔入账在独立 SAVEPOINT 内完成：单笔失败只记录告警并继续，
         避免把本轮前面已入账的结果整体回滚。
@@ -1124,22 +1214,23 @@ class MembershipService:
         payments = await CasdoorPaymentClient.list_user_payments(casdoor_user)
         granted: list[PaymentGrantResult] = []
         for payment in payments:
+            # Casdoor 付款后即为 Paid；未支付单（Created 等）一律不处理
             if not payment.is_paid:
                 continue
             try:
-                async with session.begin_nested():
-                    result = await MembershipService._grant_paid_payment(
-                        mid, casdoor_user, payment, session
-                    )
-                    await session.flush()
-            except Exception as exc:  # noqa: BLE001 - 单笔失败不影响其余订单
+                # _grant_paid_payment 内部已对每个商品用 SAVEPOINT 隔离，
+                # 这里再包一层防止跨商品异常影响同轮其他支付单。
+                results = await MembershipService._grant_paid_payment(
+                    mid, casdoor_user, payment, session
+                )
+                await session.flush()
+            except Exception as exc:  # noqa: BLE001 - 单笔支付失败不影响其余订单
                 logger.error(
                     f"[Membership] 单笔支付入账失败，跳过: "
                     f"payment={payment.payment_name}, {exc}"
                 )
                 continue
-            if result is not None:
-                granted.append(result)
+            granted.extend(results)
         return granted
 
     # ---------- 查询 ----------
@@ -1309,6 +1400,143 @@ class MembershipService:
         ).all()
         return list(items)
 
+    # ---------- 余额月度清零（每月初 cron 任务） ----------
+
+    #: 单批清零账户数（分批提交，避免长事务锁表）
+    _RESET_BATCH = 500
+
+    @staticmethod
+    async def run_monthly_reset() -> None:
+        """月初赠送余额清零任务（APScheduler cron：每月 1 号 00:05）
+
+        口径：只清零「赠送桶」``granted_balance_seconds``（签到 / 活动赠送），
+        「付费桶」``paid_balance_seconds``（时长卡兑换 / 支付购买 / 人工调整）
+        永久保留。月卡不影响本逻辑（月卡权益是定时工作流免扣）。
+
+        幂等：
+        - ``DurationMonthlyReset.period``（被清零月份 YYYY-MM）唯一约束；
+        - 分批行锁处理，中途崩溃重跑只处理未清零账户
+          （已清零账户 granted_balance=0 自然跳过）。
+        全部异常收敛，绝不打断调度器。
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from app.utils.depends.session_manager import DatabaseSessionManager
+
+        now = now_local()
+        # 被清零的月份 = 当前月的上一个月（cron 在次月 1 号触发）
+        first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last_month_date = (first_of_this_month - timedelta(days=1)).date()
+        period = last_month_date.strftime("%Y-%m")
+
+        try:
+            async with DatabaseSessionManager.async_session() as session:
+                # 抢占批次：唯一约束防多实例 / 重跑重复清零
+                session.add(
+                    DurationMonthlyReset(period=period, reset_at=now)
+                )
+                await session.commit()
+        except IntegrityError:
+            logger.info(f"[Membership] {period} 余额清零已执行过，跳过")
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[Membership] 余额清零批次初始化失败: period={period}, {exc}")
+            return
+
+        total_users = 0
+        total_seconds = 0
+        try:
+            while True:
+                batch = await MembershipService._reset_one_batch(period, now)
+                if batch is None:
+                    break  # 无正余额账户，清零完成
+                users, cleared, had_error = batch
+                total_users += users
+                total_seconds += cleared
+                if had_error:
+                    # 批次查询/提交失败：终止本轮，等下次任务（批次行已占，
+                    # 已清零账户 granted_balance=0 会跳过，未清零的继续处理）
+                    logger.error(
+                        f"[Membership] 赠送余额清零中断，等待下次执行: period={period}"
+                    )
+                    return
+                if users < MembershipService._RESET_BATCH:
+                    break
+
+            # 回写批次统计
+            async with DatabaseSessionManager.async_session() as session:
+                row = (
+                    await session.exec(
+                        select(DurationMonthlyReset).where(
+                            DurationMonthlyReset.period == period
+                        )
+                    )
+                ).one()
+                row.affected_users = total_users
+                row.cleared_seconds = total_seconds
+                session.add(row)
+                await session.commit()
+
+            logger.info(
+                f"[Membership] {period} 赠送余额清零完成: "
+                f"accounts={total_users}, seconds={total_seconds}"
+            )
+        except Exception as exc:  # noqa: BLE001 - 批次表已占位，重跑由人工/下月触发
+            logger.error(f"[Membership] 赠送余额清零执行失败: period={period}, {exc}")
+
+    @staticmethod
+    async def _reset_one_batch(
+        period: str, now: datetime
+    ) -> tuple[int, int, bool] | None:
+        """清零一批赠送桶有余额的账户（付费桶不动）
+
+        Returns:
+            None: 已无待清零账户，全部清零完成；
+            (users, cleared, had_error): 本批清零账户数/总秒数/是否发生错误。
+        """
+        from app.utils.depends.session_manager import DatabaseSessionManager
+
+        try:
+            async with DatabaseSessionManager.async_session() as session:
+                accounts = (
+                    await session.exec(
+                        select(UserDurationAccount)
+                        .where(UserDurationAccount.granted_balance_seconds > 0)
+                        .order_by(UserDurationAccount.id.asc())
+                        .limit(MembershipService._RESET_BATCH)
+                        .with_for_update()
+                    )
+                ).all()
+                if not accounts:
+                    return None
+
+                users = 0
+                cleared = 0
+                for acc in accounts:
+                    amount = acc.granted_balance_seconds
+                    if amount <= 0:
+                        continue
+                    acc.granted_balance_seconds = 0
+                    acc.balance_seconds = acc.paid_balance_seconds
+                    session.add(
+                        DurationLedger(
+                            mid=acc.mid,
+                            change_seconds=-amount,
+                            balance_after=acc.balance_seconds,
+                            change_type=LedgerChangeType.MONTHLY_RESET,
+                            ref_id=period,
+                            remark=f"{period} 赠送时长月底清零（时长卡余额保留）",
+                        )
+                    )
+                    session.add(acc)
+                    users += 1
+                    cleared += amount
+                await session.commit()
+                return users, cleared, False
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[Membership] 赠送余额清零批次失败: period={period}, {exc}")
+            return 0, 0, True
+
     # ---------- 工作流计费接入（workflow_runner / 后台心跳调用） ----------
 
     @staticmethod
@@ -1317,7 +1545,7 @@ class MembershipService:
         browser_id: int,
         run_seconds: float,
         *,
-        workflow_id: str,
+        workflow_id: int,
         run_id: str,
         is_scheduled: bool,
     ) -> int | None:

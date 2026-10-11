@@ -159,7 +159,7 @@ class ActionNotAccessibleException(BaseException):
     code = ResponseCode.FORBIDDEN
     msg = "无权访问操作: {action_id}"
 
-    def __init__(self, action_id: str):
+    def __init__(self, action_id: "int | str"):
         self.msg = self.msg.format(action_id=action_id)
 
 
@@ -185,7 +185,7 @@ class ActionNotFoundException(BaseException):
     code = ResponseCode.ACTION_NOT_FOUND
     msg = "引用的操作不存在: {action_id}"
 
-    def __init__(self, action_id: str):
+    def __init__(self, action_id: "int | str"):
         self.msg = self.msg.format(action_id=action_id)
 
 

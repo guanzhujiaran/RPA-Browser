@@ -48,6 +48,21 @@ def register_background_tasks():
         coalesce=True,
     )
 
+    # 赠送余额月初清零 - 每月 1 号 00:05（错开整点，避开月末计费心跳高峰）
+    # 把上月所有账户「赠送桶」（签到/活动）余额清零，付费桶（时长卡/购买）保留；
+    # 批次表 period 唯一保证幂等
+    if settings.duration_monthly_reset_enabled:
+        scheduler_manager_ist.add_cron_job(
+            func=MembershipService.run_monthly_reset,
+            cron_expression="5 0 1 * *",
+            id="duration_monthly_reset",
+            name="剩余时长月初清零",
+            replace_existing=True,
+            misfire_grace_time=3600,  # 停机错过后 1 小时内仍补执行
+            max_instances=1,
+            coalesce=True,
+        )
+
     logger.info("✅ All background tasks registered")
     logger.info("📋 Registered tasks:")
     for job in scheduler_manager_ist.get_jobs():
@@ -63,6 +78,23 @@ async def start_background_tasks():
 
     # 注册所有后台任务
     register_background_tasks()
+
+    # 崩溃恢复：先把上次进程残留的 RUNNING 运行记录收口为 INTERRUPTED，
+    # 否则同浏览器并发防护（browser_id + RUNNING）会把已死运行误判为执行中，
+    # 导致该浏览器的工作流永远无法再启动。必须在重建定时任务之前完成。
+    from app.services.execution.crud_service import workflow_run_crud_svr
+
+    try:
+        stale_runs = await workflow_run_crud_svr.interrupt_stale_running()
+        if stale_runs:
+            logger.warning(
+                f"⚠️ 检测到 {len(stale_runs)} 条因进程重启中断的工作流运行，"
+                f"已收口为 INTERRUPTED: {[r.run_id for r in stale_runs][:20]}"
+            )
+        else:
+            logger.info("✅ 无残留 RUNNING 工作流运行记录")
+    except Exception as exc:  # noqa: BLE001 - 恢复失败不阻塞服务启动
+        logger.exception(f"收口残留 RUNNING 运行记录失败（不阻塞启动）: {exc}")
 
     # 按库重建工作流定时任务（调度外壳：启用 + cron + 已指定浏览器）
     from app.services.execution.workflow_scheduler import register_all_workflow_jobs

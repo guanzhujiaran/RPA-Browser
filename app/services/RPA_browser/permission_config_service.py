@@ -25,7 +25,7 @@ class PermissionConfigService:
             level_name="level0",
             level_value=0,
             permissions=[0, 1, 2, 3, 4, 5, 6],
-            max_fingerprints=0,
+            max_fingerprints=1,
         ),
         PermissionLevelConfig(
             level_name="level1",

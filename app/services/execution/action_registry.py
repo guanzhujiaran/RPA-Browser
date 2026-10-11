@@ -13,6 +13,7 @@ from app.models.database.workflow.models import (
     CompositeActionModel,
 )
 from app.models.execution.action_params import ActionMetadata
+from app.models.execution.action_params import normalize_composite_action_id
 from app.services.execution.actions.all_actions import (
     BUILTIN_ACTION_MAP,
     get_action_class,
@@ -29,30 +30,33 @@ class ActionRegistry:
         self._builtin_map: dict[str, type[BaseAction]] = dict(BUILTIN_ACTION_MAP)
 
     async def get_action_class_for_user(
-        self, action_id: str
+        self, action_id: Any
     ) -> type[BaseAction] | None:
         """
         获取操作类（先查内置，再查用户自定义）
 
         Args:
-            action_id: 操作标识（内置操作为 BuiltinActionType 值，自定义操作为 ca_xxx）
+            action_id: 操作标识（内置操作为 BuiltinActionType 字符串值，
+                自定义复合动作为雪花 int）
             mid: 用户 mid
 
         Returns:
             操作类，未找到返回 None
         """
-        # 1. 先查内置操作
-        builtin = get_action_class(action_id)
-        if builtin:
-            return builtin
+        # 1. 先查内置操作（仅字符串动作名可能命中）
+        if isinstance(action_id, str):
+            builtin = get_action_class(action_id)
+            if builtin:
+                return builtin
 
-        # 2. 再查用户自定义操作（复合操作）
+        # 2. 再查用户自定义操作（复合动作，雪花 int）
         from app.services.execution.actions.control_flow import CompositeAction
 
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(CompositeActionModel).where(
-                    CompositeActionModel.action_id == action_id
+                    CompositeActionModel.action_id
+                    == normalize_composite_action_id(action_id)
                 )
             )
             custom = result.first()
@@ -61,12 +65,12 @@ class ActionRegistry:
 
         return None
 
-    async def get_custom_action_steps(self, action_id: str) -> list[Dict] | None:
+    async def get_custom_action_steps(self, action_id: Any) -> list[Dict] | None:
         """
         获取自定义操作的步骤列表（已确保 action_type 字段存在）
 
         Args:
-            action_id: 操作标识
+            action_id: 复合动作雪花 ID
 
         Returns:
             步骤列表，不是自定义操作返回 None
@@ -76,7 +80,8 @@ class ActionRegistry:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(CompositeActionModel).where(
-                    CompositeActionModel.action_id == action_id
+                    CompositeActionModel.action_id
+                    == normalize_composite_action_id(action_id)
                 )
             )
             custom = result.first()

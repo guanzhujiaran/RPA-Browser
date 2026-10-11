@@ -29,10 +29,36 @@ _browser_id_generator = MinuteSnowflakeIdGenerator(
     sequence_bits=settings.browser_id_sequence_bits,
 )
 
+_action_id_generator = MinuteSnowflakeIdGenerator(
+    worker_id=settings.action_id_worker_id,
+    epoch_sec=settings.action_id_epoch_sec,
+    sequence_bits=settings.action_id_sequence_bits,
+)
+
+_workflow_id_generator = MinuteSnowflakeIdGenerator(
+    worker_id=settings.workflow_id_worker_id,
+    epoch_sec=settings.workflow_id_epoch_sec,
+    sequence_bits=settings.workflow_id_sequence_bits,
+)
+
 
 async def generate_browser_id() -> int:
     """生成一个新的浏览器指纹 ID（短雪花 ID，分钟步进）。"""
     return await _browser_id_generator.next()
 
 
-__all__ = ["generate_browser_id"]
+async def generate_action_id() -> int:
+    """生成一个新的复合动作 ID（短雪花 ID，分钟步进）。"""
+    return await _action_id_generator.next()
+
+
+async def generate_workflow_id() -> int:
+    """生成一个新的工作流 ID（短雪花 ID，分钟步进）。"""
+    return await _workflow_id_generator.next()
+
+
+__all__ = [
+    "generate_browser_id",
+    "generate_action_id",
+    "generate_workflow_id",
+]

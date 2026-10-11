@@ -140,7 +140,9 @@ async def get_admin_status(
     return await _get_admin_status(auth.mid)
 
 
-async def assert_approved(resource_type: str, resource_id: str, action: str) -> None:
+async def assert_approved(
+    resource_type: str, resource_id: "int | str", action: str
+) -> None:
     """校验是否存在「已通过且未过期」的审批单，否则抛 ApprovalRequiredException。
 
     生效开关按 action 维度拆分：
@@ -162,7 +164,7 @@ async def assert_approved(resource_type: str, resource_id: str, action: str) -> 
         result = await session.exec(
             select(ApprovalRequest).where(
                 ApprovalRequest.resource_type == resource_type,
-                ApprovalRequest.resource_id == resource_id,
+                ApprovalRequest.resource_id == str(resource_id),
                 ApprovalRequest.action == action,
                 ApprovalRequest.status == "approved",
             )

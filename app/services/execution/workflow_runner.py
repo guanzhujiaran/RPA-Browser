@@ -168,7 +168,7 @@ async def run_workflow(
                 await guard_session.exec(
                     select(WorkflowRunRecord.run_id).where(
                         WorkflowRunRecord.mid == str(mid),
-                        WorkflowRunRecord.browser_id == str(target_browser_id),
+                        WorkflowRunRecord.browser_id == int(target_browser_id),
                         WorkflowRunRecord.status == WorkflowRunStatusEnum.RUNNING,
                     )
                 )
@@ -268,8 +268,6 @@ async def run_workflow(
         billed_started = time.time()
         page = await entry.browser_session.get_current_page()
 
-        plugins = await workflow_crud_svr.get_enabled_plugins(workflow.workflow_id)
-
         req = WorkflowExecutionRequest(
             mid=mid,
             browser_id=target_browser_id,
@@ -286,9 +284,8 @@ async def run_workflow(
             req,
             steps=steps,
             session_id=str(target_browser_id),
-            browser_id=str(target_browser_id),
+            browser_id=target_browser_id,
             page=page,
-            plugins=plugins,
         )
 
         results_data = [

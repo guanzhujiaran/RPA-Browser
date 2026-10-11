@@ -31,7 +31,6 @@ from app.models.system.rpa_admin import (
 from app.models.database.workflow.models import (
     CompositeActionModel,
     UserWorkflow,
-    UserPlugin,
 )
 from app.utils.depends.admin_depends import require_admin, get_admin_status
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -273,7 +272,6 @@ async def search_resources(
     model_map = {
         "action": (CompositeActionModel, "action_id"),
         "workflow": (UserWorkflow, "workflow_id"),
-        "plugin": (UserPlugin, "plugin_id"),
     }
     if request.resource_type not in model_map:
         return error_response(msg="不支持的资源类型", code=ResponseCode.BAD_REQUEST)
@@ -289,7 +287,7 @@ async def search_resources(
         items = [
             ResourceSearchItemResp(
                 resource_type=request.resource_type,
-                resource_id=getattr(r, id_field),
+                resource_id=str(getattr(r, id_field)),
                 name=r.name,
                 created_at=r.created_at,
             )

@@ -91,6 +91,7 @@ class SchedulerManager:
         id: str | None = None,
         name: str | None = None,
         replace_existing: bool = False,
+        misfire_grace_time: int | None = 1,
         **kwargs,
     ):
         """添加定时任务（Cron 表达式触发）
@@ -101,6 +102,7 @@ class SchedulerManager:
             id: 任务ID
             name: 任务名称
             replace_existing: 是否替换已存在的任务
+            misfire_grace_time: 错过执行时间的宽限时间（秒），None=始终补执行
             **kwargs: 传递给函数的其他参数
         """
         job_id = id or func.__name__
@@ -120,6 +122,7 @@ class SchedulerManager:
             id=job_id,
             name=name or job_id,
             replace_existing=replace_existing,
+            misfire_grace_time=misfire_grace_time,
             **kwargs,
         )
         logger.info(f"✅ Added cron job: {job_id} (cron: {cron_expression})")

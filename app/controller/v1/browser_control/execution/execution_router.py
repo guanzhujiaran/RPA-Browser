@@ -196,11 +196,6 @@ async def execute_workflow(
 
     if request.steps:
         # PipelineBuilder 通过 getattr 统一访问步骤字段，无需 create_workflow_step 二次规范化
-        plugins = (
-            await workflow_crud_svr.get_enabled_plugins(request.workflow_id)
-            if request.workflow_id
-            else []
-        )
         steps = _build_steps(request.steps)
         results = await execution_engine.execute_steps(
             req,
@@ -208,7 +203,6 @@ async def execute_workflow(
             session_id=str(bid),
             browser_id=str(bid),
             page=page,
-            plugins=plugins,
         )
     elif request.action_id:
         from app.services.execution.crud_service import (
@@ -226,12 +220,6 @@ async def execute_workflow(
                 ResponseCode.BUSINESS_ERROR, f"未找到操作: {request.action_id}"
             )
 
-        plugins = (
-            await workflow_crud_svr.get_enabled_plugins(request.workflow_id)
-            if request.workflow_id
-            else []
-        )
-
         normalized_steps = []
         for s in action_model.steps:
             if isinstance(s, dict):
@@ -244,7 +232,6 @@ async def execute_workflow(
             session_id=str(bid),
             browser_id=str(bid),
             page=page,
-            plugins=plugins,
         )
     else:
         return error_response(

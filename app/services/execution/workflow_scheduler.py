@@ -27,8 +27,8 @@ from app.models.database.workflow.models import WorkflowRunTriggerEnum
 JOB_ID_PREFIX = "workflow:"
 
 
-def job_id_of(workflow_id: str) -> str:
-    """工作流对应的调度任务ID"""
+def job_id_of(workflow_id: int) -> str:
+    """工作流对应的调度任务ID（APScheduler job_id 为字符串标识）"""
     return f"{JOB_ID_PREFIX}{workflow_id}"
 
 

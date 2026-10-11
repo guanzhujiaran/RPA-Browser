@@ -77,7 +77,7 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 action_name=self.metadata.name,
             )
 
-        workflow_id = str(self.exec_meta.get("workflow_id") or "")
+        workflow_id = int(self.exec_meta.get("workflow_id") or 0)
         if not workflow_id:
             return ActionResult(
                 success=False,
@@ -86,7 +86,7 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
             )
-        browser_id = str(self.exec_meta.get("browser_id") or "")
+        browser_id = int(self.exec_meta.get("browser_id") or 0)
 
         resource_id = str(p.resource_id).strip()
         if not resource_id:
@@ -146,8 +146,8 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
 
     async def _get_process_count(
         self,
-        workflow_id: str,
-        browser_id: str,
+        workflow_id: int,
+        browser_id: int,
         resource_type: str,
         resource_id: str,
     ) -> int:

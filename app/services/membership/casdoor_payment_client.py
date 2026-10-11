@@ -32,7 +32,14 @@ class CasdoorPaymentPayload(BaseModel):
     name: str = Field(default="", description="支付单唯一名")
     user: str = Field(default="", description="支付用户（Casdoor 用户名）")
     state: str = Field(default="", description="支付状态: Created / Paid / ...")
-    product_name: str = Field(default="", description="关联商品名")
+    product_name: str = Field(
+        default="", description="关联商品名（旧版 Casdoor 单商品字段 productName）"
+    )
+    # 新版 Casdoor 购物车支付单：商品挂在 products 数组（owner/name），
+    # 单个 element 形如 "rpa-monthcard-31d" 或 "Bili/rpa-monthcard-31d"。
+    products: list[str] = Field(
+        default_factory=list, description="关联商品名列表（新版多商品字段 products）"
+    )
     price: float = Field(default=0.0, description="支付金额")
 
     @model_validator(mode="before")
@@ -50,6 +57,28 @@ class CasdoorPaymentPayload(BaseModel):
                 raw.setdefault(snake, raw[camel])
         return raw
 
+    @field_validator("products", mode="before")
+    @classmethod
+    def _products_to_list(cls, value: object) -> list[str]:
+        """归一化 products：去空、去掉可能的 "owner/" 前缀（只保留商品 name）"""
+        if not value:
+            return []
+        if isinstance(value, str):
+            candidates = [value]
+        elif isinstance(value, (list, tuple)):
+            candidates = [str(v) for v in value]
+        else:
+            return []
+        names: list[str] = []
+        for item in candidates:
+            name = item.strip()
+            if not name:
+                continue
+            # Casdoor 元素可能是 "owner/productName"，入账只按商品名约定解析
+            name = name.split("/", 1)[1] if "/" in name else name
+            names.append(name)
+        return names
+
     @field_validator("price", mode="before")
     @classmethod
     def _price_to_float(cls, value: object) -> float:
@@ -64,13 +93,34 @@ class CasdoorPaymentPayload(BaseModel):
         return str(value or "").strip()
 
     @property
+    def product_names(self) -> list[str]:
+        """支付单关联的全部商品名（去重，保序）。
+
+        优先用新版多商品 ``products``；为空时回退旧版单商品 ``productName``。
+        """
+        names = list(self.products)
+        if self.product_name and self.product_name not in names:
+            names.append(self.product_name)
+        seen: set[str] = set()
+        result: list[str] = []
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                result.append(name)
+        return result
+
+    @property
     def payment_name(self) -> str:
         """支付单唯一标识（owner/name）"""
         return f"{self.owner}/{self.name}" if self.owner and self.name else self.name
 
     @property
     def is_paid(self) -> bool:
-        """是否已支付（大小写容错）"""
+        """是否已支付（大小写容错）。
+
+        Casdoor 支付渠道（支付宝 / 微信等）在付款成功后支付单即为 Paid；
+        RPA 只对 Paid 单核销，Created（未付款）等状态一律不处理。
+        """
         return self.state.strip().lower() == "paid"
 
 
@@ -144,7 +194,10 @@ class CasdoorPaymentClient:
 
     @staticmethod
     async def list_user_payments(casdoor_user: str) -> list[CasdoorPaymentPayload]:
-        """查询 Casdoor 支付单列表（服务端全量拉取后按 user 本地过滤，v1 简化）
+        """查询指定用户的 Casdoor 支付单（全量拉取后按 user 本地过滤，v1 简化）
+
+        用户调用会员相关接口时由服务端主动查询核销：支付渠道付款成功后支付单
+        即为 Paid，RPA 据此幂等发放权益，不依赖 Casdoor 跳转回调。
 
         Returns:
             属于指定用户的支付单列表；未配置 / 请求失败抛 RuntimeError。
@@ -172,7 +225,7 @@ class CasdoorPaymentClient:
 
         target = (casdoor_user or "").strip().lower()
         # 与 notify_and_grant 的归属校验保持同一口径（strip + 大小写容错），
-        # 否则 Casdoor 返回的用户名大小写/空格差异会让兜底对账漏单
+        # 否则 Casdoor 返回的用户名大小写/空格差异会让核销漏单
         return [
             p
             for p in CasdoorPaymentClient._parse_payment_list(payload)

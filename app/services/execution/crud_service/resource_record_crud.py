@@ -60,8 +60,8 @@ class ResourceRecordService:
         """
         stmt = select(WorkflowResourceRecord.resource_id).where(
             WorkflowResourceRecord.mid == str(mid),
-            WorkflowResourceRecord.workflow_id == workflow_id,
-            WorkflowResourceRecord.browser_id == str(browser_id or ""),
+            WorkflowResourceRecord.workflow_id == int(workflow_id),
+            WorkflowResourceRecord.browser_id == int(browser_id or 0),
             WorkflowResourceRecord.resource_type == resource_type,
             WorkflowResourceRecord.status == ResourceProcessStatus.SUCCESS,
         )
@@ -160,8 +160,8 @@ class ResourceRecordService:
             rows.append(
                 {
                     "mid": str(mid),
-                    "workflow_id": workflow_id,
-                    "browser_id": str(browser_id or ""),
+                    "workflow_id": int(workflow_id),
+                    "browser_id": int(browser_id or 0),
                     "resource_type": resource_type,
                     "resource_id": raw,
                     "run_id": run_id,
@@ -215,8 +215,8 @@ class ResourceRecordService:
         """
         conditions = [
             WorkflowResourceRecord.mid == str(mid),
-            WorkflowResourceRecord.workflow_id == workflow_id,
-            WorkflowResourceRecord.browser_id == str(browser_id or ""),
+            WorkflowResourceRecord.workflow_id == int(workflow_id),
+            WorkflowResourceRecord.browser_id == int(browser_id or 0),
         ]
         if resource_type is not None:
             conditions.append(
@@ -255,8 +255,8 @@ class ResourceRecordService:
         """
         conditions = [
             WorkflowResourceRecord.mid == str(mid),
-            WorkflowResourceRecord.workflow_id == workflow_id,
-            WorkflowResourceRecord.browser_id == str(browser_id or ""),
+            WorkflowResourceRecord.workflow_id == int(workflow_id),
+            WorkflowResourceRecord.browser_id == int(browser_id or 0),
         ]
         if resource_type is not None:
             conditions.append(

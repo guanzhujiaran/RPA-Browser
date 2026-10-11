@@ -10,7 +10,7 @@ from app.models.execution.action_params import BuiltinActionType
 from typing import Any, Dict, List
 from datetime import datetime
 from pydantic import field_validator
-from sqlalchemy import Column, JSON, Index
+from sqlalchemy import BIGINT, Column, JSON, Index
 from sqlmodel import SQLModel, Field
 
 
@@ -30,16 +30,6 @@ class ErrorHandlingEnum(StrEnumAutoDoc):
     ROLLBACK = "rollback"
 
 
-class PluginHookEnum(StrEnumAutoDoc):
-    """插件钩子类型"""
-
-    BEFORE_ACTION = "before_action"
-    AFTER_ACTION = "after_action"
-    ON_SUCCESS = "on_success"
-    ON_ERROR = "on_error"
-    ON_TIMEOUT = "on_timeout"
-
-
 class ExecutionStatus(StrEnumAutoDoc):
     """执行状态"""
 
@@ -57,6 +47,7 @@ class WorkflowRunStatusEnum(StrEnumAutoDoc):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"  # 进程重启/宕机导致未正常结束（启动时由残留 RUNNING 收口）
 
 
 class WorkflowRunTriggerEnum(StrEnumAutoDoc):
@@ -120,11 +111,11 @@ class CompositeActionModel(CommunityResourceBase, table=True):
         default=None,
         primary_key=True,
     )
-    action_id: str = Field(
+    action_id: int = Field(
+        sa_type=BIGINT,
         index=True,
         unique=True,
-        max_length=100,
-        description="操作唯一标识（系统自动生成，格式：ca_xxx）",
+        description="操作唯一标识（雪花 int，由应用层生成）",
     )
     name: str = Field(max_length=200, description="显示名称")
     version: str = Field(default="1.0.0", max_length=50)
@@ -205,49 +196,6 @@ class CompositeActionTagLink(SQLModel, table=True):
     tag_id: int = Field(foreign_key="tagmodel.id", primary_key=True)
 
 
-class WorkflowPluginRelation(SQLModel, table=True):
-    """工作流插件关联表"""
-
-    id: int | None = Field(
-        default=None,
-        primary_key=True,
-    )
-    workflow_id: str = Field(
-        foreign_key="userworkflow.workflow_id", index=True, description="工作流ID"
-    )
-    plugin_id: str = Field(
-        foreign_key="userplugin.plugin_id", index=True, description="插件ID"
-    )
-    config_params: Dict = Field(
-        default_factory=dict, sa_column=Column(JSON), description="配置参数"
-    )
-
-
-class UserPlugin(CommunityResourceBase, table=True):
-    """用户插件表"""
-
-    __table_args__ = (Index("idx_user_plugin_name_unique", "mid", "name", unique=True),)
-
-    id: int = Field(
-        default=None,
-        primary_key=True,
-    )
-    plugin_id: str = Field(
-        index=True, unique=True, max_length=100, description="插件唯一标识"
-    )
-    name: str = Field(max_length=200, description="插件名称")
-
-    custom_action_id: str = Field(max_length=100, description="要执行的自定义动作ID")
-
-    hook_type: PluginHookEnum = Field(description="钩子类型")
-
-    description: str = Field(default="", max_length=500)
-    forked_from_id: int | None = Field(
-        default=None, foreign_key="userplugin.id", description="Fork 来源的插件ID"
-    )
-    priority: int = Field(default=100, description="优先级")
-
-
 class UserWorkflow(CommunityResourceBase, table=True):
     """用户工作流表 - 定时任务调度配置
 
@@ -262,26 +210,28 @@ class UserWorkflow(CommunityResourceBase, table=True):
     id: int | None = Field(
         primary_key=True,
     )
-    workflow_id: str = Field(
+    workflow_id: int = Field(
+        sa_type=BIGINT,
         index=True,
         unique=True,
-        max_length=100,
-        default="",
-        description="工作流唯一标识",
+        description="工作流唯一标识（雪花 int，由应用层生成）",
     )
     name: str = Field(max_length=200, description="显示名称")
-    custom_action_id: str | None = Field(
+    custom_action_id: int | None = Field(
         default=None,
-        max_length=100,
+        sa_type=BIGINT,
         index=True,
-        description="要执行的自定义动作ID（多对一共享，工作流不得改写该动作）",
+        description="要执行的自定义动作ID（雪花 int，多对一共享，工作流不得改写该动作）",
     )
     description: str = Field(default="", max_length=500)
     forked_from_id: int | None = Field(
         default=None, foreign_key="userworkflow.id", description="Fork 来源的工作流ID"
     )
     browser_id: int | None = Field(
-        default=None, index=True, description="执行目标浏览器ID（定时触发必填）"
+        default=None,
+        sa_type=BIGINT,
+        index=True,
+        description="执行目标浏览器ID（定时触发必填）",
     )
     trigger_type: str = Field(
         default="manual", max_length=50, description="触发类型: manual/cron"
@@ -321,10 +271,15 @@ class WorkflowRunRecord(SQLModel, table=True):
     run_id: str = Field(
         max_length=64, unique=True, index=True, description="运行唯一标识"
     )
-    workflow_id: str = Field(max_length=100, index=True, description="关联工作流ID")
+    workflow_id: int = Field(
+        sa_type=BIGINT, index=True, description="关联工作流ID（雪花 int）"
+    )
     mid: str = Field(max_length=255, index=True, description="触发者用户ID")
-    browser_id: str = Field(
-        default="", max_length=100, index=True, description="执行目标浏览器ID"
+    browser_id: int = Field(
+        default=0,
+        sa_type=BIGINT,
+        index=True,
+        description="执行目标浏览器ID（雪花 int）",
     )
     trigger_source: WorkflowRunTriggerEnum = Field(
         default=WorkflowRunTriggerEnum.MANUAL, description="触发来源"
@@ -375,15 +330,16 @@ class WorkflowRecord(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    workflow_id: str = Field(
-        index=True, unique=True, max_length=100, description="工作流唯一标识"
+    workflow_id: int = Field(
+        sa_type=BIGINT, index=True, unique=True, description="工作流唯一标识（雪花 int）"
     )
     name: str = Field(max_length=200, description="显示名称")
     description: str = Field(default="", max_length=500)
 
     # 单一入口
-    entry_action_id: str = Field(
-        max_length=100, description="入口动作ID（引用 unified_action 表）"
+    entry_action_id: int = Field(
+        sa_type=BIGINT,
+        description="入口动作ID（雪花 int，引用复合动作表）",
     )
 
     # 运行时参数模板

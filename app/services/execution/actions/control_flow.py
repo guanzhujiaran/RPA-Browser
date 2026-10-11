@@ -10,6 +10,7 @@
 """
 
 from app.models.execution.action_params import CompositeParams, CompositeResult
+from app.models.execution.action_params import is_composite_action_id
 from app.models.execution.action_params import IfElseParams, IfElseResult
 from app.models.execution.action_params import LoopParams, LoopResult
 from app.models.execution.action_params import (
@@ -281,11 +282,11 @@ class AtomicStrategy(ExecutionStrategy):
             self.mid, action_id, params, self.context.log_config
         )
 
-        # 确定日志用的 action_type（自定义操作 ca_xxx 映射为 composite）
+        # 确定日志用的 action_type（自定义复合动作映射为 composite）
         log_action_type = (
-            action_id
-            if not action_id.startswith("ca_")
-            else BuiltinActionType.COMPOSITE
+            BuiltinActionType.COMPOSITE
+            if is_composite_action_id(action_id)
+            else action_id
         )
         log_ctx = self._new_log_context(
             action_id, params, step_index, log_action_type, log_config=substep_cfg

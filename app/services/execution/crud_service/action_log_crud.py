@@ -52,11 +52,11 @@ class ActionLogCrudService:
     ) -> list:
         conditions: list = [ActionLogRecord.mid == str(mid)]
         if action_id:
-            conditions.append(ActionLogRecord.action_id == action_id)
+            conditions.append(ActionLogRecord.action_id == str(action_id))
         if execution_id:
             conditions.append(ActionLogRecord.execution_id == execution_id)
         if workflow_id:
-            conditions.append(ActionLogRecord.workflow_id == workflow_id)
+            conditions.append(ActionLogRecord.workflow_id == str(workflow_id))
         if browser_id:
             conditions.append(ActionLogRecord.browser_id == str(browser_id))
         if source:

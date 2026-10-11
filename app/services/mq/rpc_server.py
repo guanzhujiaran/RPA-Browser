@@ -67,7 +67,6 @@ from app.models.database.admin.models import (
 from app.models.database.browser.info import UserBrowserInfo
 from app.models.database.workflow.models import (
     CompositeActionModel,
-    UserPlugin,
     UserWorkflow,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
@@ -81,41 +80,60 @@ broker = RabbitBroker(settings.rabbitmq_url)
 # ---------------------------------------------------------------------------
 
 
-async def _load_resource(biz_type: str, biz_id: int):
-    """按 bizType 加载资源实体（None=类型不支持或资源不存在）。"""
-    async with DatabaseSessionManager.async_session() as session:
+async def _load_resource(biz_type: str, biz_id: str, session=None):
+    """按 bizType + 资源业务 id 加载资源实体（None=类型不支持或资源不存在）。
+
+    bizId 统一为雪花 int 的十进制字符串（RPC 透传），各资源按自己的业务键查询：
+    - rpa_action → ``action_id``（雪花 int）
+    - rpa_workflow → ``workflow_id``（雪花 int）
+    - rpa_browser → ``browser_id``（雪花 int）
+    - rpa_tag → 表主键 ``id``（bizId 为其十进制 id）
+
+    可传入已有 ``session`` 复用（写事务场景，避免实例在另一 session 关闭后 detached）；
+    不传则内部开一个只读 session。
+    """
+    try:
+        numeric_id = int(biz_id)
+    except (TypeError, ValueError):
+        return None
+
+    async def _query(s):
         if biz_type == "rpa_action":
-            r = await session.exec(
-                select(CompositeActionModel).where(CompositeActionModel.id == biz_id)
+            r = await s.exec(
+                select(CompositeActionModel).where(
+                    CompositeActionModel.action_id == numeric_id
+                )
             )
             return r.first()
         if biz_type == "rpa_workflow":
-            r = await session.exec(
-                select(UserWorkflow).where(UserWorkflow.id == biz_id)
+            r = await s.exec(
+                select(UserWorkflow).where(UserWorkflow.workflow_id == numeric_id)
             )
             return r.first()
-        if biz_type == "rpa_plugin":
-            r = await session.exec(select(UserPlugin).where(UserPlugin.id == biz_id))
-            return r.first()
         if biz_type == "rpa_browser":
-            r = await session.exec(
-                select(UserBrowserInfo).where(UserBrowserInfo.browser_id == biz_id)
+            r = await s.exec(
+                select(UserBrowserInfo).where(
+                    UserBrowserInfo.browser_id == numeric_id
+                )
             )
             return r.first()
         if biz_type == "rpa_tag":
-            r = await session.exec(select(ResourceTag).where(ResourceTag.id == biz_id))
+            r = await s.exec(select(ResourceTag).where(ResourceTag.id == numeric_id))
             return r.first()
         return None
 
+    if session is not None:
+        return await _query(session)
+    async with DatabaseSessionManager.async_session() as s:
+        return await _query(s)
 
-def _jump_url(biz_type: str, biz_id: int) -> str:
+
+def _jump_url(biz_type: str, biz_id: str) -> str:
     """按 bizType 生成前端落地页跳转地址。"""
     if biz_type == "rpa_action":
         return "/app/rpa-browser/actions"
     if biz_type == "rpa_workflow":
         return "/app/rpa-browser/workflows"
-    if biz_type == "rpa_plugin":
-        return "/app/rpa-browser/plugins"
     if biz_type == "rpa_browser":
         return f"/app/rpa-browser/stream/{biz_id}"
     if biz_type == "rpa_tag":
@@ -123,10 +141,12 @@ def _jump_url(biz_type: str, biz_id: int) -> str:
     return ""
 
 
-def _to_detail(biz_type: str, biz_id: int, resource) -> ResourceDetail:
+def _to_detail(biz_type: str, biz_id, resource) -> ResourceDetail:
     """把资源实体映射为通用 ResourceDetail。"""
+    # ResourceDetail.bizId 统一为字符串（跨类型 + 避免前端大整数精度丢失）
+    biz_id_str = str(biz_id)
     if resource is None:
-        return ResourceDetail(bizType=biz_type, bizId=biz_id)
+        return ResourceDetail(bizType=biz_type, bizId=biz_id_str)
     # action / workflow / plugin 走 CommunityResourceBase（name + original_mid）
     name = getattr(resource, "name", None) or ""
     author = getattr(resource, "original_mid", None) or getattr(resource, "mid", None)
@@ -143,10 +163,10 @@ def _to_detail(biz_type: str, biz_id: int, resource) -> ResourceDetail:
         author = getattr(resource, "created_by", None)
     return ResourceDetail(
         bizType=biz_type,
-        bizId=biz_id,
+        bizId=biz_id_str,
         name=name,
         authorMid=str(author) if author is not None else None,
-        jumpUrl=_jump_url(biz_type, biz_id),
+        jumpUrl=_jump_url(biz_type, biz_id_str),
     )
 
 
@@ -199,21 +219,16 @@ async def rpc_hide_resource(
         StandardResponse data=HideResourceResult{success, message}
     """
     biz_type = params.bizType
-    if biz_type not in ("rpa_action", "rpa_workflow", "rpa_plugin"):
+    if biz_type not in ("rpa_action", "rpa_workflow"):
         return success_response(
             data=HideResourceResult(
                 success=False,
                 message=f"hide_resource 不处理类型 {biz_type}（lottery 归属 be-bilibili-crawler）",
             )
         )
-    model = {
-        "rpa_action": CompositeActionModel,
-        "rpa_workflow": UserWorkflow,
-        "rpa_plugin": UserPlugin,
-    }[biz_type]
     async with DatabaseSessionManager.async_session() as session:
-        row = await session.exec(select(model).where(model.id == params.bizId))
-        resource = row.first()
+        # 在当前写事务内按业务键加载（action_id / workflow_id），避免 detached
+        resource = await _load_resource(biz_type, params.bizId, session)
         if resource is None:
             return success_response(
                 data=HideResourceResult(success=False, message="资源不存在")
@@ -231,11 +246,10 @@ async def rpc_hide_resource(
 # RPA 资源审核（review_resource）：把「发布到社区审批单」置通过/驳回
 # ---------------------------------------------------------------------------
 
-# bizType -> (资源模型, 资源业务 id 字段, 审批单 resource_type)
-_REVIEW_RESOURCE_MAP: dict[str, tuple[type, str, str]] = {
-    "rpa_action": (CompositeActionModel, "action_id", "action"),
-    "rpa_workflow": (UserWorkflow, "workflow_id", "workflow"),
-    "rpa_plugin": (UserPlugin, "plugin_id", "plugin"),
+# bizType -> 审批单 resource_type（bizId 即资源业务 id，直接匹配审批单 resource_id）
+_REVIEW_RESOURCE_TYPE: dict[str, str] = {
+    "rpa_action": "action",
+    "rpa_workflow": "workflow",
 }
 
 
@@ -250,9 +264,9 @@ async def rpc_review_resource(
         params: ReviewResourceParams{bizType, bizId, decision, operatorMid, note}
 
     说明：
-        - 仅处理 rpa_action / rpa_workflow / rpa_plugin；lottery / rpa_browser 不处理。
-        - 按 bizId(int 表主键) 查资源取业务 id(action_id / workflow_id / plugin_id)，
-          再匹配 rpa_approval 中 (resource_type, resource_id=业务id, action=publish,
+        - 仅处理 rpa_action / rpa_workflow / rpa_tag；lottery / rpa_browser 不处理。
+        - bizId 为资源业务 id（action_id/workflow_id 雪花 int 的十进制字符串），直接匹配
+          rpa_approval 中 (resource_type, resource_id=bizId, action=publish,
           status=pending) 的审批单（多条取 id 最新一条），置 decision。
         - 只改审批单状态，不动资源 is_public（公开/私有保持现状）。
 
@@ -268,10 +282,16 @@ async def rpc_review_resource(
         )
     # rpa_tag：标签不走 rpa_approval 发布审批单，直接置审核状态 + 上架时间
     if biz_type == "rpa_tag":
+        try:
+            tag_pk = int(params.bizId)
+        except (TypeError, ValueError):
+            return success_response(
+                data=ReviewResourceResult(success=False, message="标签 bizId 不合法")
+            )
         async with DatabaseSessionManager.async_session() as session:
             tag = (
                 await session.exec(
-                    select(ResourceTag).where(ResourceTag.id == params.bizId)
+                    select(ResourceTag).where(ResourceTag.id == tag_pk)
                 )
             ).first()
             if tag is None:
@@ -286,24 +306,17 @@ async def rpc_review_resource(
             f"bizId={params.bizId} operatorMid={params.operatorMid}"
         )
         return success_response(data=ReviewResourceResult(success=True))
-    mapping = _REVIEW_RESOURCE_MAP.get(biz_type)
-    if mapping is None:
+    resource_type = _REVIEW_RESOURCE_TYPE.get(biz_type)
+    if resource_type is None:
         return success_response(
             data=ReviewResourceResult(
                 success=False,
                 message=f"review_resource 不处理类型 {biz_type}",
             )
         )
-    model, biz_id_field, resource_type = mapping
+    # bizId 即资源业务 id（action_id / workflow_id），审批单 resource_id 直接存它
+    biz_resource_id = params.bizId
     async with DatabaseSessionManager.async_session() as session:
-        resource = (
-            await session.exec(select(model).where(model.id == params.bizId))
-        ).first()
-        if resource is None:
-            return success_response(
-                data=ReviewResourceResult(success=False, message="资源不存在")
-            )
-        biz_resource_id = str(getattr(resource, biz_id_field))
         # 取该资源发布到社区的待审单（id 倒序取最新一条）
         approval = (
             await session.exec(

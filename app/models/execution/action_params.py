@@ -1083,17 +1083,6 @@ BUILTIN_ACTION_RESULT_MAP: Dict[str, Type[AllActionResult]] = {
 # endregion
 
 
-class PluginConfig(SQLModel):
-    """工作流插件配置 - 单个插件的运行时配置"""
-
-    plugin_id: str = Field(description="插件ID")
-    config_params: Dict = Field(default_factory=dict, description="插件配置参数")
-    hook_type: str = Field(
-        description="钩子类型: before_action/after_action/on_success/on_error/on_timeout"
-    )
-    priority: int = Field(default=100, description="优先级")
-
-
 BUILTIN_ACTION_PARAMS_MAP: Dict[str, Type[AllActionParams]] = {
     BuiltinActionType.CLICK: ClickParams,
     BuiltinActionType.INPUT: InputParams,
@@ -1274,8 +1263,8 @@ def _ensure_action_type(v: Any) -> Any:
     """若 dict 缺少 action_type，从 action_id 自动填充，递归处理 children。"""
     if isinstance(v, dict):
         if "action_type" not in v and "action_id" in v:
-            # 自定义操作（以 ca_ 开头）的 action_type 为 "composite"
-            if v["action_id"].startswith("ca_"):
+            # 自定义操作（雪花 int / 纯数字串）的 action_type 为 "composite"
+            if is_composite_action_id(v["action_id"]):
                 v["action_type"] = "composite"
             else:
                 v["action_type"] = v["action_id"]
@@ -1285,6 +1274,51 @@ def _ensure_action_type(v: Any) -> Any:
                 for c in v["children"]
             ]
     return v
+
+
+# ==================== 复合动作 ID 判断（雪花 int 化）====================
+# 历史上复合动作以 ``ca_xxx`` 字符串标识，内置动作以英文名字符串标识
+# （如 ``click``）。资源 ID 雪花 int 化后，**复合动作 ID 一律为 int**，
+# steps JSON 反序列化后可能是 int，也可能是纯数字字符串（如经过前端/JSON
+# 往返）。下列辅助统一识别，替代散落在各处的 ``startswith("ca_")`` 判断。
+
+
+def is_composite_action_id(action_id: Any) -> bool:
+    """判断 step 的 action_id 是否引用「用户复合动作」（而非内置动作）。
+
+    - int / bool 除外的 int：复合动作（雪花 ID）；
+    - 纯数字字符串：复合动作（JSON 往返后的雪花 ID）；
+    - 其余非空字符串：内置动作名（click/input/...）；
+    - ``ca_`` 前缀：兼容历史数据的复合动作。
+    """
+    if isinstance(action_id, bool):
+        return False
+    if isinstance(action_id, int):
+        return True
+    if isinstance(action_id, str):
+        if action_id.startswith("ca_"):
+            return True
+        s = action_id.strip()
+        if s.isdigit():
+            return True
+    return False
+
+
+def normalize_composite_action_id(action_id: Any) -> int:
+    """把复合动作 ID 归一化为 int（雪花 ID）。
+
+    调用方应先用 :func:`is_composite_action_id` 确认其为复合动作。
+    """
+    if isinstance(action_id, bool):
+        raise ValueError(f"非法的复合动作 ID: {action_id!r}")
+    if isinstance(action_id, int):
+        return action_id
+    if isinstance(action_id, str):
+        s = action_id.strip()
+        if s.startswith("ca_"):
+            raise ValueError(f"历史 ca_ 字符串 ID 已废弃，无法转为雪花 int: {action_id}")
+        return int(s)
+    raise ValueError(f"非法的复合动作 ID: {action_id!r}")
 
 
 # discriminated union: 根据 action_type 字段自动匹配子类

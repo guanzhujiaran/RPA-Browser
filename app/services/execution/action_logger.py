@@ -32,6 +32,7 @@ from app.models.database.log.models import (
     ActionLogStatusEnum,
 )
 from app.models.execution.action_params import ActionLogOption
+from app.models.execution.action_params import is_composite_action_id
 from app.services.execution.crud_service import action_crud_svr, action_log_crud_svr
 
 
@@ -113,8 +114,8 @@ async def resolve_log_option(
     if ctx_log_config is not None:
         return ctx_log_config
 
-    # 3. 自定义操作（ca_xxx）在数据库上的 log_* 配置
-    if action_id.startswith("ca_"):
+    # 3. 自定义复合动作（雪花 int）在数据库上的 log_* 配置
+    if is_composite_action_id(action_id):
         return await _resolve_db_log_option(action_id)
 
     # 4. 内置操作回落到服务端兜底配置
@@ -191,12 +192,12 @@ async def _do_save(
         execution_id=ctx.execution_id or new_execution_id(),
         parent_execution_id=ctx.parent_execution_id,
         depth=ctx.depth,
-        action_id=ctx.action_id,
-        action_name=ctx.action_name or ctx.action_id,
-        action_type=ctx.action_type or ctx.action_id,
+        action_id=str(ctx.action_id),
+        action_name=str(ctx.action_name or ctx.action_id),
+        action_type=str(ctx.action_type or ctx.action_id),
         source=ctx.source,
-        workflow_id=ctx.workflow_id,
-        browser_id=ctx.browser_id,
+        workflow_id=str(ctx.workflow_id) if ctx.workflow_id is not None else None,
+        browser_id=str(ctx.browser_id) if ctx.browser_id is not None else "",
         session_id=ctx.session_id,
         page_url=_safe_page_url(ctx.page),
         status=final_status,
@@ -230,12 +231,12 @@ async def _save_fallback(ctx: ActionLogContext, error_trace: str) -> None:
         execution_id=ctx.execution_id or new_execution_id(),
         parent_execution_id=ctx.parent_execution_id,
         depth=ctx.depth,
-        action_id=ctx.action_id,
-        action_name=ctx.action_name or ctx.action_id,
-        action_type=ctx.action_type or ctx.action_id,
+        action_id=str(ctx.action_id),
+        action_name=str(ctx.action_name or ctx.action_id),
+        action_type=str(ctx.action_type or ctx.action_id),
         source=ctx.source,
-        workflow_id=ctx.workflow_id,
-        browser_id=ctx.browser_id,
+        workflow_id=str(ctx.workflow_id) if ctx.workflow_id is not None else None,
+        browser_id=str(ctx.browser_id) if ctx.browser_id is not None else "",
         session_id=ctx.session_id,
         page_url=_safe_page_url(ctx.page),
         status=ActionLogStatusEnum.FAILED,

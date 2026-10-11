@@ -223,6 +223,19 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 空间、与已发布 ID 可能重叠，仅限清库重建的环境启用，生产保持默认 4。
     browser_id_sequence_bits: int = 4
 
+    # ==================== action_id / workflow_id（短雪花 ID，分钟步进）====================
+    # 对外发布的资源 ID 统一使用雪花 int（见规则 snowflake-id.mdc），废弃旧的
+    # ca_xxx / wf_xxx / UUID 字符串业务 ID。worker_id 与 browser_id(4)、
+    # uid(1)/moment_id(2)/topic_id(3) 错开，避免跨实体在共用列（be-message bizId）碰撞。
+    # epoch 与 browser_id 同一基线（2026-01-01 00:00:00 UTC+8）。
+    action_id_epoch_sec: int = 1767196800
+    action_id_worker_id: int = 5
+    action_id_sequence_bits: int = 4
+
+    workflow_id_epoch_sec: int = 1767196800
+    workflow_id_worker_id: int = 6
+    workflow_id_sequence_bits: int = 4
+
     # 浏览器会话默认配置
     browser_session_auto_cleanup: bool = True  # 是否启用自动清理
     browser_session_max_idle_time: int = 1800  # 最大闲置时间（秒）→ 超过后关实例出池
@@ -249,6 +262,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
 
     # ── 工作流计费心跳（详见 docs/浏览器使用时长与会员权益计划书.md §8）──
     workflow_billing_heartbeat_interval: int = 300  # 定时任务运行中预扣间隔（秒）
+
+    # ── 剩余时长月度清零（每月 1 号 00:05 把上月所有账户余额清零）──
+    duration_monthly_reset_enabled: bool = True  # 是否启用月初余额清零
 
     # ── Casdoor 支付对账（详见计划书 §3.3；Basic auth 使用应用 client 凭证）──
     casdoor_endpoint: str = (

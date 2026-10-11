@@ -91,14 +91,6 @@ browser_control_workflow_router = RouterInfo(
     description="工作流管理 - Workflow CRUD 和执行",
 )
 
-browser_control_plugin_router = RouterInfo(
-    version_tag=DEFAULT_VERSION,
-    router_tag=RouterTag.plugin_management,
-    router_prefix=RouterPrefix.BROWSER_CONTROL,
-    description="插件挂载管理 - Plugin 生命周期钩子配置",
-)
-
-
 browser_control_webrtc_router = RouterInfo(
     version_tag=DEFAULT_VERSION,
     router_tag=RouterTag.session_control,
@@ -140,7 +132,6 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_operation_router,
     browser_control_action_router,  # 自定义操作管理
     browser_control_workflow_router,  # 工作流管理
-    browser_control_plugin_router,  # 插件挂载管理
 ]
 
 # 系统管理相关路由
@@ -189,7 +180,6 @@ __all__ = [
     "browser_control_operation_router",
     "browser_control_action_router",
     "browser_control_workflow_router",
-    "browser_control_plugin_router",
     "browser_control_webrtc_router",
     "browser_control_session_router",
     "admin_router",

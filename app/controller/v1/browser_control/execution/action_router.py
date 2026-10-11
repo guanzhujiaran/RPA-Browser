@@ -5,7 +5,6 @@ Action 管理路由
 """
 
 from typing import Dict, List
-import uuid
 from bili_common.models.response import (
     StandardResponse,
     success_response,
@@ -28,6 +27,8 @@ from app.models.workflow.models import (
     CompositeActionListItemResponse,
     ActionForkRequest,
     ActionForkResponse,
+    ActionSyncRequest,
+    ActionSyncResponse,
     InputVarDefinition,
     TagSearchRequest,
     TagWithCount,
@@ -88,11 +89,8 @@ async def create_custom_action(
     """创建用户自定义操作
 
     用户可以基于系统预注册的操作或插件组合创建自己的操作。
-    action_id 由系统自动生成（格式：ca_xxx），用户仅需提供显示名称 name。
+    action_id 由系统自动生成（雪花 int），用户仅需提供显示名称 name。
     """
-    # 生成唯一的 action_id（格式：ca_xxx）
-    action_id = f"ca_{uuid.uuid4().hex[:12]}"
-
     # 将 InputVarDefinition 对象转换为字典以便正确序列化
     input_vars_dicts = [
         var.model_dump() if hasattr(var, "model_dump") else dict(var)
@@ -100,7 +98,6 @@ async def create_custom_action(
     ]
 
     model = await action_crud_svr.create(
-        action_id=action_id,
         name=request.name,
         mid=auth.mid,
         description=request.description,
@@ -211,6 +208,7 @@ async def list_custom_actions(
 
     items = [
         CompositeActionListItemResponse(
+            id=model.id,
             action_id=model.action_id,
             name=model.name,
             action_type=model.action_type,
@@ -251,7 +249,7 @@ async def get_custom_action(
     if not action_id:
         return error_response(400, "缺少操作action_id")
 
-    model = await action_crud_svr.get_by_action_id(str(action_id))
+    model = await action_crud_svr.get_by_action_id(action_id)
     if not model:
         return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
 
@@ -430,7 +428,7 @@ async def delete_custom_action(
     if not action_id:
         return error_response(400, "缺少操作 action_id")
 
-    model = await action_crud_svr.get_by_action_id(str(action_id))
+    model = await action_crud_svr.get_by_action_id(action_id)
     if not model or model.mid != str(auth.mid):
         return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在或无权限")
 
@@ -505,7 +503,7 @@ async def fork_custom_action(
         return error_response(403, "只能 Fork 公开的操作或自己的操作")
 
     try:
-        # 执行 Fork
+        # 执行 Fork（递归深拷贝所有第三方依赖）
         model = await action_crud_svr.fork(
             id=original.id, target_mid=auth.mid, new_name=request.new_name
         )
@@ -519,10 +517,76 @@ async def fork_custom_action(
                 name=model.name,
                 forked_from=original.name,
             ),
-            msg="Fork 成功",
+            msg="Fork 成功，关联动作已独立复制",
         )
     except ValueError as e:
         return error_response(400, str(e))
+    except Exception as e:
+        # ActionNotAccessibleException / ActionNotFoundException 等
+        from app.models.common.exceptions.base_exception import BaseException as BizBaseException
+
+        if isinstance(e, BizBaseException):
+            return error_response(e.code or 400, str(e))
+        raise
+
+
+@router.post(
+    "/custom_actions/sync",
+    summary="同步自定义操作到上游最新版本",
+    response_model=StandardResponse[ActionSyncResponse],
+)
+async def sync_custom_action(
+    request: ActionSyncRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[ActionSyncResponse]:
+    """将 Fork 的自定义操作同步到原作者最新版本
+
+    会递归同步整个依赖树：
+    - 已有 Fork 副本的子动作会被更新到最新
+    - 上游新增的依赖会自动 Fork
+    - 上游已删除/私有化的依赖会保留当前副本并在 unavailable 中报告
+    """
+    # 校验操作归属
+    model = await action_crud_svr.get_by_action_id(request.action_id)
+    if not model:
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
+    if str(model.mid) != str(auth.mid):
+        return error_response(403, "只能同步自己的操作")
+
+    try:
+        result = await action_crud_svr.sync_from_upstream(
+            action_id=request.action_id,
+            mid=auth.mid,
+        )
+
+        msg_parts = []
+        if result["updated"]:
+            msg_parts.append(f"更新 {len(result['updated'])} 个动作")
+        if result["created"]:
+            msg_parts.append(f"新增 {len(result['created'])} 个动作")
+        if result["unavailable"]:
+            msg_parts.append(
+                f"{len(result['unavailable'])} 个上游动作不可用（已保留当前版本）"
+            )
+        msg = "同步完成：" + "，".join(msg_parts) if msg_parts else "已是最新版本"
+
+        return success_response(
+            ActionSyncResponse(
+                action_id=result["action_id"],
+                updated=result["updated"],
+                created=result["created"],
+                unavailable=result["unavailable"],
+            ),
+            msg=msg,
+        )
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        from app.models.common.exceptions.base_exception import BaseException as BizBaseException
+
+        if isinstance(e, BizBaseException):
+            return error_response(e.code or 400, str(e))
+        raise
 
 
 @router.get("/custom_actions/{id}/forks", summary="获取自定义操作的所有 Fork 版本")
@@ -540,6 +604,7 @@ async def get_action_forks(
 
     items = [
         CompositeActionListItemResponse(
+            id=f.id,
             action_id=f.action_id,
             name=f.name,
             action_type=f.action_type,
