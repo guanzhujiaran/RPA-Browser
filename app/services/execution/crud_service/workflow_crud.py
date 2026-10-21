@@ -11,6 +11,7 @@ from app.models.database.workflow.models import (
     UserWorkflow,
     CompositeActionModel,
 )
+from app.models.workflow.models import UpstreamSyncFlag
 from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.snow_flake_gen import generate_workflow_id
@@ -30,6 +31,14 @@ class WorkflowCrudService:
         trigger_type: str = "manual",
         trigger_config: Dict | None = None,
         is_public: bool = False,
+        notify_on_start: bool = False,
+        notify_on_end: bool = True,
+        log_enabled: bool = False,
+        resume_on_restart: bool = False,
+        auto_sync_upstream: bool = False,
+        browser_ids: list[int] | None = None,
+        concurrent_exec: bool = False,
+        variables: Dict | None = None,
     ) -> UserWorkflow:
         async with DatabaseSessionManager.async_session() as session:
             existing = await session.exec(
@@ -56,6 +65,14 @@ class WorkflowCrudService:
                 trigger_type=trigger_type,
                 trigger_config=trigger_config or {},
                 is_public=is_public,
+                notify_on_start=notify_on_start,
+                notify_on_end=notify_on_end,
+                log_enabled=log_enabled,
+                resume_on_restart=resume_on_restart,
+                auto_sync_upstream=auto_sync_upstream,
+                browser_ids=browser_ids,
+                concurrent_exec=concurrent_exec,
+                variables=variables or {},
             )
             session.add(model)
 
@@ -82,7 +99,9 @@ class WorkflowCrudService:
             return result.first()
 
     @staticmethod
-    async def count_by_user(mid: int, filter_type: str = "all") -> int:
+    async def count_by_user(
+        mid: int, filter_type: str = "all", browser_id: int | None = None
+    ) -> int:
         from sqlmodel import func
 
         async with DatabaseSessionManager.async_session() as session:
@@ -103,6 +122,8 @@ class WorkflowCrudService:
                 query = query.where(
                     (UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true())
                 )
+            if browser_id is not None:
+                query = query.where(UserWorkflow.browser_id == browser_id)
 
             result = await session.exec(query)
             return result.one()
@@ -115,6 +136,7 @@ class WorkflowCrudService:
         filter_type: str = "all",
         sort_by: str = "updated_at",
         sort_order: str = "desc",
+        browser_id: int | None = None,
     ) -> List[UserWorkflow]:
         from sqlmodel import col
 
@@ -136,6 +158,8 @@ class WorkflowCrudService:
                 query = query.where(
                     (UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true())
                 )
+            if browser_id is not None:
+                query = query.where(UserWorkflow.browser_id == browser_id)
 
             sort_field = getattr(UserWorkflow, sort_by, UserWorkflow.updated_at)
             if sort_order == "asc":
@@ -158,6 +182,14 @@ class WorkflowCrudService:
         trigger_config: Dict | None = None,
         is_enabled: bool | None = None,
         is_public: bool | None = None,
+        notify_on_start: bool | None = None,
+        notify_on_end: bool | None = None,
+        log_enabled: bool | None = None,
+        auto_sync_upstream: bool | None = None,
+        resume_on_restart: bool | None = None,
+        browser_ids: list[int] | None = None,
+        concurrent_exec: bool | None = None,
+        variables: Dict | None = None,
     ) -> UserWorkflow | None:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
@@ -189,12 +221,35 @@ class WorkflowCrudService:
                 model.browser_id = browser_id
             if trigger_type is not None:
                 model.trigger_type = trigger_type
+                # 触发配置属于会被同步覆盖的内容：本地修改后自动同步跳过
+                # （docs/fork-上游同步计划书.md）
+                model.local_steps_modified = True
             if trigger_config is not None:
                 model.trigger_config = trigger_config
+                model.local_steps_modified = True
             if is_enabled is not None:
                 model.is_enabled = is_enabled
             if is_public is not None:
                 model.is_public = is_public
+            if notify_on_start is not None:
+                model.notify_on_start = notify_on_start
+            if notify_on_end is not None:
+                model.notify_on_end = notify_on_end
+            if log_enabled is not None:
+                model.log_enabled = log_enabled
+            if resume_on_restart is not None:
+                model.resume_on_restart = resume_on_restart
+            if auto_sync_upstream is not None:
+                model.auto_sync_upstream = auto_sync_upstream
+            if browser_ids is not None:
+                # 空列表显式回到单浏览器模式（browser_id 保留为主浏览器）
+                model.browser_ids = list(browser_ids) if browser_ids else None
+            if concurrent_exec is not None:
+                model.concurrent_exec = concurrent_exec
+            if variables is not None:
+                # 整体替换（前端按动作契约渲染全量值），不做增量合并，
+                # 否则被删掉的变量会一直残留
+                model.variables = variables
 
             model.updated_at = datetime.now()
             await session.commit()
@@ -265,6 +320,12 @@ class WorkflowCrudService:
                 trigger_type=original.trigger_type,
                 trigger_config=original.trigger_config,
                 is_public=False,
+                notify_on_start=original.notify_on_start,
+                notify_on_end=original.notify_on_end,
+                log_enabled=original.log_enabled,
+                resume_on_restart=original.resume_on_restart,
+                # 副本仍属同一用户：变量值一并复制，避免重新填一遍
+                variables=dict(original.variables or {}),
             )
 
             session.add(new_model)
@@ -274,13 +335,22 @@ class WorkflowCrudService:
 
     @staticmethod
     async def fork(
-        id: int, target_mid: int, new_name: str | None = None
+        id: int,
+        target_mid: int,
+        new_name: str | None = None,
+        auto_sync_upstream: bool = False,
     ) -> tuple[UserWorkflow | None, int]:
         """Fork 工作流，并递归深拷贝其引用的 Action 依赖树
 
         - 顶层 Action 如果属于他人，会通过 fork_deep 复制整棵第三方依赖树
         - 顶层 Action 如果已属于自己，直接保留引用
         - 浏览器是私有资源不继承
+
+        Args:
+            id: 上游工作流数据库 ID
+            target_mid: Fork 目标用户 mid
+            new_name: 新工作流名称（可选）
+            auto_sync_upstream: 是否开启上游自动同步（外壳与顶层 Action 同时生效）
 
         Returns:
             (新工作流, 连带 Fork 的 Action 数量)；工作流不存在返回 (None, 0)
@@ -306,6 +376,10 @@ class WorkflowCrudService:
             original_trigger_type = original.trigger_type
             original_trigger_config = original.trigger_config
             original_is_public = original.is_public
+            original_notify_on_start = original.notify_on_start
+            original_notify_on_end = original.notify_on_end
+            original_log_enabled = original.log_enabled
+            original_updated_at = original.updated_at
 
         # ── 递归 Fork Action 依赖树 ──
         forked_action_count = 0
@@ -325,6 +399,7 @@ class WorkflowCrudService:
                 top_action, all_actions = await action_crud_svr.fork_deep(
                     action_id=original_custom_action_id,
                     target_mid=target_mid,
+                    auto_sync_upstream=auto_sync_upstream,
                 )
                 new_custom_action_id = top_action.action_id
                 forked_action_count = len(all_actions)
@@ -338,7 +413,7 @@ class WorkflowCrudService:
         async with DatabaseSessionManager.async_session() as session:
             existing = await session.exec(
                 select(UserWorkflow).where(
-                    (UserWorkflow.mid == target_mid)
+                    (UserWorkflow.mid == str(target_mid))
                     & (UserWorkflow.name == new_name)
                 )
             )
@@ -358,6 +433,17 @@ class WorkflowCrudService:
                 trigger_config=original_trigger_config,
                 is_public=False,
                 forked_from_id=original_id,
+                # 上游同步快照：记录"此副本同步自上游哪个版本"（docs/fork-上游同步计划书.md）
+                last_synced_at=original_updated_at,
+                auto_sync_upstream=auto_sync_upstream,
+                local_steps_modified=False,
+                notify_on_start=original_notify_on_start,
+                notify_on_end=original_notify_on_end,
+                log_enabled=original_log_enabled,
+                resume_on_restart=bool(original.resume_on_restart),
+                # 变量值是原作者的配置（可能含 token 等敏感值），Fork 给他人不继承，
+                # 由 Fork 方按动作契约自行填写（定义仍从动作读时获取）。
+                variables={},
             )
 
             session.add(new_model)
@@ -401,7 +487,8 @@ class WorkflowCrudService:
             mid: 当前用户 mid
 
         Returns:
-            同步结果 dict；工作流不存在返回 None
+            同步结果 dict；工作流不存在返回 None。
+            local_overwritten: 同步是否覆盖了本地修改（外壳触发配置或 Action 内容）
         """
         from app.services.execution.crud_service.action_crud import action_crud_svr
 
@@ -425,6 +512,7 @@ class WorkflowCrudService:
                     "created": [],
                     "unavailable": [],
                     "workflow_config_updated": False,
+                    "local_overwritten": False,
                 }
 
             # 查找上游工作流
@@ -436,7 +524,11 @@ class WorkflowCrudService:
             upstream_wf = upstream_result.first()
 
             workflow_config_updated = False
+            local_overwritten = False
             if upstream_wf:
+                # 本地修改保护：同步前捕获外壳配置是否被用户改过
+                if workflow.local_steps_modified:
+                    local_overwritten = True
                 # 同步触发配置（不同步 browser_id，那是私有资源）
                 if upstream_wf.trigger_config != workflow.trigger_config:
                     workflow.trigger_config = upstream_wf.trigger_config
@@ -445,6 +537,9 @@ class WorkflowCrudService:
                     workflow.trigger_type = upstream_wf.trigger_type
                     workflow_config_updated = True
                 workflow.updated_at = datetime.now()
+                # 同步快照前移：外壳已与上游当前版本一致（docs/fork-上游同步计划书.md）
+                workflow.last_synced_at = upstream_wf.updated_at
+                workflow.local_steps_modified = False
                 session.add(workflow)
 
             await session.commit()
@@ -454,6 +549,7 @@ class WorkflowCrudService:
                 "updated": [],
                 "created": [],
                 "unavailable": [],
+                "local_overwritten": False,
             }
             if workflow.custom_action_id:
                 action_result = await action_crud_svr.sync_from_upstream(
@@ -461,13 +557,145 @@ class WorkflowCrudService:
                     mid=mid,
                 )
 
+            if action_result.get("local_overwritten"):
+                local_overwritten = True
+
             return {
                 "workflow_id": workflow.workflow_id,
                 "updated": action_result.get("updated", []),
                 "created": action_result.get("created", []),
                 "unavailable": action_result.get("unavailable", []),
                 "workflow_config_updated": workflow_config_updated,
+                "local_overwritten": local_overwritten,
             }
+
+    # ═══════════════ 上游同步状态（批量标注） ═══════════════
+
+    @staticmethod
+    async def attach_upstream_update_flags(
+        models: List[UserWorkflow],
+    ) -> Dict[int, UpstreamSyncFlag]:
+        """批量计算每个工作流的「是否需要同步上游」状态
+
+        一次 IN 查询取回所有上游的 updated_at / is_public，避免 N+1。
+
+        need_sync 判定（docs/fork-上游同步计划书.md §4.1）：
+        forked_from_id 非空 且上游存在且公开 且
+        上游.updated_at > last_synced_at（last_synced_at 为 None 视为需要同步）。
+        上游已删除/私有化：不提示同步（保留当前副本）。
+
+        Args:
+            models: 待标注的工作流列表（通常是列表接口的一页结果）
+
+        Returns:
+            {model.id: UpstreamSyncFlag}；非 Fork 资源不出现在结果中
+        """
+        flags: Dict[int, UpstreamSyncFlag] = {}
+        fork_models = [m for m in models if m.forked_from_id]
+        if not fork_models:
+            return flags
+
+        upstream_ids = list({m.forked_from_id for m in fork_models})
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(
+                    UserWorkflow.id,
+                    UserWorkflow.updated_at,
+                    UserWorkflow.is_public,
+                ).where(UserWorkflow.id.in_(upstream_ids))
+            )
+            upstream_map: Dict[int, tuple[datetime, bool]] = {
+                row[0]: (row[1], bool(row[2])) for row in result.all()
+            }
+
+        for m in fork_models:
+            assert m.id is not None
+            upstream = upstream_map.get(m.forked_from_id)
+            if not upstream or not upstream[1]:
+                # 上游已删除或私有化：不提示同步
+                flags[m.id] = UpstreamSyncFlag(
+                    has_upstream_update=False, upstream_updated_at=None
+                )
+                continue
+            upstream_updated_at = upstream[0]
+            has_update = (
+                m.last_synced_at is None or upstream_updated_at > m.last_synced_at
+            )
+            flags[m.id] = UpstreamSyncFlag(
+                has_upstream_update=has_update,
+                upstream_updated_at=int(upstream_updated_at.timestamp()),
+            )
+        return flags
+
+    # ── 管理端（root）全量查询 ──────────────────────────────
+
+    @staticmethod
+    def _apply_admin_filters(
+        query,
+        mid: int | None = None,
+        name: str | None = None,
+        is_public: bool | None = None,
+        is_enabled: bool | None = None,
+    ):
+        """按管理端筛选条件收敛查询（不带任何默认 mid 归属限制）"""
+        from sqlmodel import col
+
+        if mid is not None:
+            query = query.where(UserWorkflow.mid == str(mid))
+        if name:
+            query = query.where(col(UserWorkflow.name).like(f"%{name.strip()}%"))
+        if is_public is not None:
+            query = query.where(UserWorkflow.is_public == is_public)
+        if is_enabled is not None:
+            query = query.where(UserWorkflow.is_enabled == is_enabled)
+        return query
+
+    @staticmethod
+    async def count_all(
+        mid: int | None = None,
+        name: str | None = None,
+        is_public: bool | None = None,
+        is_enabled: bool | None = None,
+    ) -> int:
+        """统计全部用户的工作流数量（管理端全量视图）"""
+        from sqlmodel import func
+
+        async with DatabaseSessionManager.async_session() as session:
+            query = select(func.count(UserWorkflow.id))
+            query = WorkflowCrudService._apply_admin_filters(
+                query, mid, name, is_public, is_enabled
+            )
+            return (await session.exec(query)).one()
+
+    @staticmethod
+    async def list_all(
+        skip: int = 0,
+        limit: int = 100,
+        sort_by: str = "updated_at",
+        sort_order: str = "desc",
+        mid: int | None = None,
+        name: str | None = None,
+        is_public: bool | None = None,
+        is_enabled: bool | None = None,
+    ) -> List[UserWorkflow]:
+        """列出全部用户的工作流（管理端全量视图，跨作者、支持筛选与排序）"""
+        from sqlmodel import col
+
+        async with DatabaseSessionManager.async_session() as session:
+            query = select(UserWorkflow)
+            query = WorkflowCrudService._apply_admin_filters(
+                query, mid, name, is_public, is_enabled
+            )
+
+            sort_field = getattr(UserWorkflow, sort_by, UserWorkflow.updated_at)
+            if sort_order == "asc":
+                query = query.order_by(col(sort_field).asc())
+            else:
+                query = query.order_by(col(sort_field).desc())
+
+            query = query.offset(skip).limit(limit)
+            result = await session.exec(query)
+            return result.all()
 
     @staticmethod
     async def list_scheduling() -> List[UserWorkflow]:
@@ -505,7 +733,8 @@ class WorkflowCrudService:
                 update(UserWorkflow).where(UserWorkflow.id == id).values(**values)
             )
             await session.commit()
-            return True
 
 
+# 单例：供包内 __init__ 与其他模块直接导入使用
 workflow_crud_svr = WorkflowCrudService()
+      

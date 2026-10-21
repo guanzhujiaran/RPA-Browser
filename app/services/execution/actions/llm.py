@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, create_model, Field as PydanticField
 
-from app.services.execution.actions.base import BaseAction, ActionResult
+from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.models.execution.action_params import LLMParams, LLMResult
 from app.models.database.workflow.models import BuiltinActionType
 
@@ -218,6 +218,11 @@ class LLMAction(BaseAction[LLMParams]):
             is_structured=True,
             structured_data=structured_data,
         )
+
+
+# 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
+
+register_action_class(LLMAction)
 
 
 # ── 工具函数 ───────────────────────────────────────────────

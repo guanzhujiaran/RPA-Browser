@@ -20,11 +20,14 @@ from app.models.execution.action_params import (
     MarkResourceResultParams,
     MarkResourceResultResult,
 )
-from app.services.execution.actions.base import BaseAction, ActionResult
+from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.services.execution.crud_service.resource_record_crud import (
     ResourceRecordService,
 )
-from app.models.database.workflow.resource_record import WorkflowResourceRecord
+from app.models.database.workflow.resource_record import (
+    ResourceProcessStatus,
+    WorkflowResourceRecord,
+)
 from app.utils.depends.session_manager import DatabaseSessionManager
 from sqlmodel import select
 
@@ -98,7 +101,14 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 action_name=self.metadata.name,
             )
 
-        run_id = self.exec_meta.get("run_id")
+        # 工作流运行里 execution_id 即运行记录 run_id（workflow_runner 用同一个值），
+        # 只沿用 execution_id 一个名字，避免两套标识混淆；落库时写入 run_id 列
+        execution_id = self.exec_meta.get("execution_id")
+        effective_status = p.status or (
+            ResourceProcessStatus.SUCCESS
+            if p.success
+            else ResourceProcessStatus.FAILED
+        )
         try:
             await ResourceRecordService.upsert_result(
                 self.mid,
@@ -107,7 +117,8 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 p.resource_type,
                 resource_id,
                 bool(p.success),
-                run_id=str(run_id) if run_id else None,
+                status=p.status,
+                run_id=str(execution_id) if execution_id else None,
                 fail_reason=p.fail_reason,
                 extra=p.extra,
             )
@@ -128,7 +139,7 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
         logger.info(
             f"[MarkResourceResultAction] workflow={workflow_id} "
             f"browser={browser_id} type={p.resource_type} "
-            f"id={resource_id} success={p.success} count={process_count}"
+            f"id={resource_id} status={effective_status} count={process_count}"
         )
         return ActionResult(
             success=True,
@@ -137,6 +148,7 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 resource_type=p.resource_type,
                 resource_id=resource_id,
                 success=bool(p.success),
+                status=effective_status,
                 process_count=process_count,
             ),
             execution_time=time.time() - start_time,
@@ -168,3 +180,8 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 return int(rec or 0)
         except Exception:  # noqa: BLE001
             return 0
+
+
+# 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
+
+register_action_class(MarkResourceResultAction)

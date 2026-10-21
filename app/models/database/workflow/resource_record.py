@@ -11,7 +11,8 @@
     - 不同用户互不影响；
     - fork 出的新工作流 workflow_id 不同，默认不继承历史。
 
-去重口径：仅 status='success' 参与去重；failed 下次仍会被捞起重试（断点续跑）。
+去重口径：status='success'（已处理成功）与 status='skipped'（显式跳过，如活动已结束）
+都属于终态、参与去重；status='failed' 下次仍会被捞起重试（断点续跑）。
 
 约定：
     - mid 沿用 CommunityResourceBase 的 str 存储（工作流模块统一用 str(max_length=255)）；
@@ -23,6 +24,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import BIGINT, JSON, Column, Index, UniqueConstraint
+from pydantic import NaiveDatetime
 from sqlmodel import Field
 
 from bili_common.models import StrEnumAutoDoc
@@ -34,7 +36,7 @@ class ResourceProcessStatus(StrEnumAutoDoc):
 
     SUCCESS = "success"  # 处理成功：后续执行默认跳过
     FAILED = "failed"  # 处理失败：下次仍会被捞起重试
-    SKIPPED = "skipped"  # 显式跳过（不参与去重，仅做标记）
+    SKIPPED = "skipped"  # 显式跳过（终态，如活动已结束）：与 success 一样参与去重
 
 
 class WorkflowResourceRecord(BaseSQLModel, table=True):
@@ -113,9 +115,9 @@ class WorkflowResourceRecord(BaseSQLModel, table=True):
         sa_column=Column(JSON),
         description="预留：资源快照等附加信息（标题/跳转等，便于前端展示）",
     )
-    first_processed_at: datetime = Field(
+    first_processed_at: NaiveDatetime = Field(
         default_factory=datetime.now, description="首次处理时间"
     )
-    last_processed_at: datetime = Field(
+    last_processed_at: NaiveDatetime = Field(
         default_factory=datetime.now, index=True, description="最近一次处理时间"
     )

@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import JSON, UniqueConstraint
+from pydantic import NaiveDatetime
 from sqlmodel import Field
 
 from app.models.base.base_sqlmodel import BaseSQLModel
@@ -124,7 +125,7 @@ class AdminAuditLog(BaseSQLModel, table=True):
     target_type: str = Field(default="", description="目标类型")
     target_id: str = Field(default="", description="目标 ID")
     detail: str = Field(default="", description="操作详情（JSON 文本）")
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: NaiveDatetime = Field(default_factory=datetime.now)
 
 
 class BanType(StrEnumAutoDoc):
@@ -170,14 +171,14 @@ class UserBan(BaseSQLModel, table=True):
     )
     reason: str = Field(default="", description="封禁理由")
     banned_by: int = Field(index=True, description="执行封禁的管理员 mid")
-    banned_at: datetime = Field(
+    banned_at: NaiveDatetime = Field(
         default_factory=datetime.now, description="封禁开始时间"
     )
-    expired_at: Optional[datetime] = Field(
+    expired_at: NaiveDatetime | None = Field(
         default=None, index=True, description="封禁到期时间，为空表示永久封禁"
     )
-    lifted_by: Optional[int] = Field(default=None, description="解封操作者 mid")
-    lifted_at: Optional[datetime] = Field(default=None, description="解封时间")
+    lifted_by: int | None = Field(default=None, description="解封操作者 mid")
+    lifted_at: NaiveDatetime | None = Field(default=None, description="解封时间")
     lift_reason: str = Field(default="", description="解封理由")
     note: str = Field(default="", description="备注")
 

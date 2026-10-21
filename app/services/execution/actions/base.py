@@ -17,6 +17,7 @@ from app.models.execution.action_params import (
     BuiltinActionName,
     BuiltinActionType,
     AllActionResult,
+    build_action_metadata,
 )
 import contextlib
 from typing import Type
@@ -24,10 +25,66 @@ from app.models.execution.action_params import ActionMetadata
 from botright.playwright_mock import Page
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import Any, List, Dict
 
 ParamsT = TypeVar("ParamsT", bound=SQLModel)
 DataT = TypeVar("DataT", default=Any)
+
+# ============ 内置动作类注册表（依赖倒置） ============
+# 各内置动作模块在底部调用 ``register_action_class`` 自注册；查找方
+# （如控制流策略层按 action_id 实例化子步骤动作）只依赖本叶子模块，
+# 避免「all_actions 汇总表 → control_flow → all_actions」的循环导入。
+
+_ACTION_CLASS_REGISTRY: dict[str, type["BaseAction[Any]"]] = {}
+
+
+def register_action_class(action_cls: type["BaseAction[Any]"]) -> None:
+    """把内置动作类注册进注册表（key 取 action_id 的字符串 value）"""
+    action_id = getattr(action_cls, "action_id", None)
+    if action_id is None:
+        return
+    _ACTION_CLASS_REGISTRY[str(getattr(action_id, "value", action_id))] = action_cls
+
+
+def get_action_class(action_id: Any) -> type["BaseAction[Any]"] | None:
+    """按 action_id（内置动作名字符串 / BuiltinActionType）查找已注册的动作类"""
+    if action_id is None:
+        return None
+    return _ACTION_CLASS_REGISTRY.get(str(getattr(action_id, "value", action_id)))
+
+
+def get_registered_action_classes() -> dict[str, type["BaseAction[Any]"]]:
+    """已注册内置动作类的快照（供汇总表构建，调用方拿到后即与后续注册解耦）"""
+    return dict(_ACTION_CLASS_REGISTRY)
+
+
+@dataclass(frozen=True)
+class CustomActionResolver:
+    """自定义（复合）动作解析槽位。
+
+    由引擎层（``engine``）在模块级经 ``set_custom_action_resolver`` 填充；
+    控制流策略层（``AtomicStrategy``）经 ``get_custom_action_resolver`` 查找，
+    使 control_flow 无需 import action_registry → all_actions → control_flow
+    这一会成环的依赖链。
+    """
+
+    get_action_class: Callable  # async (action_id) -> type[BaseAction] | None
+    get_steps: Callable  # async (action_id) -> list[dict] | None
+
+
+_custom_action_resolver: CustomActionResolver | None = None
+
+
+def set_custom_action_resolver(resolver: CustomActionResolver) -> None:
+    """填充自定义动作解析器（引擎层启动时调用）"""
+    global _custom_action_resolver
+    _custom_action_resolver = resolver
+
+
+def get_custom_action_resolver() -> CustomActionResolver | None:
+    """获取自定义动作解析器（未填充时返回 None）"""
+    return _custom_action_resolver
 
 
 class ExecutionPhase(StrEnumAutoDoc):
@@ -54,6 +111,12 @@ class ActionResult(Generic[DataT]):
     output: Dict = field(default_factory=dict)
     variables: Dict = field(default_factory=dict)
     replaced_params: Dict = field(default_factory=dict)
+    #: 该失败是否已被 `on_error=continue` **显式容忍**。
+    #:
+    #: 由 Pipeline 在按 continue 跳过失败步骤时置 True：这类失败仍进入运行消息 / 步骤日志、
+    #: 仍计入 `failed_count`（便于排查），但**不参与「整次运行是否失败」的结论**——
+    #: 判定失败的只有「未知异常」与「on_error=stop（含重试耗尽）」。
+    tolerated: bool = False
 
 
 @dataclass
@@ -196,8 +259,8 @@ class BaseAction(ABC, Generic[ParamsT]):
 
     @property
     def metadata(self) -> ActionMetadata:
-        """返回动作元数据，委托给 action_type.metadata"""
-        return self.action_type.metadata
+        """返回动作元数据，由 action_type 构建"""
+        return build_action_metadata(self.action_type)
 
     def add_log(self, message: str):
         """添加日志"""
@@ -252,11 +315,28 @@ class BaseAction(ABC, Generic[ParamsT]):
                 action_id=self.action_id,
                 action_name=self.action_name,
             )
+        self._annotate_error_context(action_result)
         self._merge_output_vars(action_result)
         action_result.variables = {
             k: v for k, v in self.variables.items() if not callable(v)
         }
         return action_result
+
+    def _annotate_error_context(self, action_result: ActionResult) -> None:
+        """给失败结果统一补「动作名(动作ID)」上下文前缀。
+
+        各动作内部普遍以裸 ``str(e)`` 上报错误（Playwright / httpx / LangChain
+        异常串），单条操作日志看不出是哪个动作、什么场景出的错。在统一出口补前缀，
+        复合动作嵌套执行时逐层叠加，可直接定位到最内层失败步骤，例如：
+        ``[点击(click)] Timeout 5000ms exceeded ... waiting for locator(".xxx")``
+        """
+        if action_result.success or not action_result.error:
+            return
+        action_id = getattr(action_result.action_id, "value", action_result.action_id)
+        action_name = getattr(action_result.action_name, "value", action_result.action_name)
+        prefix = f"[{action_name or self.action_name}({action_id})]"
+        if not action_result.error.startswith(prefix):
+            action_result.error = f"{prefix} {action_result.error}"
 
     def preview(self) -> dict:
         """

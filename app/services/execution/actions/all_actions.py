@@ -1,7 +1,19 @@
-# 内置动作映射常量
-from app.models.execution.action_params import ActionMetadata, BuiltinActionType
+# 内置动作汇总表：import 全部内置动作模块触发自注册，并提供兼容查询 API
+from app.models.execution.action_params import (
+    ActionMetadata,
+    BuiltinActionType,
+    build_action_metadata,
+)
 from typing import Type
-from app.services.execution.actions.interaction import (
+
+from app.services.execution.actions.base import (
+    BaseAction,
+    get_action_class,
+    get_registered_action_classes,
+)
+
+# import 全部内置动作模块 → 触发各自底部的 register_action_class 自注册
+from app.services.execution.actions.interaction import (  # noqa: F401
     ClickAction,
     InputAction,
     ScrollAction,
@@ -10,68 +22,45 @@ from app.services.execution.actions.interaction import (
     GetTextAction,
     GetWindowAction,
 )
-from app.services.execution.actions.navigation import NavigateAction, NewPageAction
-from app.services.execution.actions.screenshot import ScreenshotAction
-from app.services.execution.actions.llm import LLMAction
-from app.services.execution.actions.fetch_external_data import FetchExternalDataAction
-from app.services.execution.actions.mark_resource_result import MarkResourceResultAction
-from app.services.execution.actions.random_pick import RandomPickAction
-from app.services.execution.actions.debug import PrintAction
-from app.services.execution.actions.control_flow import LoopAction, IfElseAction
-from typing import Dict
-
-AllActionType = (
-    ClickAction
-    | InputAction
-    | ScrollAction
-    | WaitAction
-    | HoverAction
-    | GetTextAction
-    | GetWindowAction
-    | NavigateAction
-    | NewPageAction
-    | ScreenshotAction
-    | LLMAction
-    | FetchExternalDataAction
-    | MarkResourceResultAction
-    | RandomPickAction
-    | PrintAction
-    | LoopAction
-    | IfElseAction
+from app.services.execution.actions.navigation import (  # noqa: F401
+    NavigateAction,
+    NewPageAction,
 )
-BUILTIN_ACTION_MAP: Dict[str, Type[AllActionType]] = {
-    BuiltinActionType.CLICK: ClickAction,
-    BuiltinActionType.INPUT: InputAction,
-    BuiltinActionType.SCROLL: ScrollAction,
-    BuiltinActionType.WAIT: WaitAction,
-    BuiltinActionType.HOVER: HoverAction,
-    BuiltinActionType.GET_TEXT: GetTextAction,
-    BuiltinActionType.GET_WINDOW: GetWindowAction,
-    BuiltinActionType.NAVIGATE: NavigateAction,
-    BuiltinActionType.NEW_PAGE: NewPageAction,
-    BuiltinActionType.SCREENSHOT: ScreenshotAction,
-    BuiltinActionType.LLM: LLMAction,
-    BuiltinActionType.FETCH_EXTERNAL_DATA: FetchExternalDataAction,
-    BuiltinActionType.MARK_RESOURCE_RESULT: MarkResourceResultAction,
-    BuiltinActionType.RANDOM_PICK: RandomPickAction,
-    BuiltinActionType.PRINT: PrintAction,
-    BuiltinActionType.LOOP: LoopAction,
-    BuiltinActionType.IF_ELSE: IfElseAction,
-}
+from app.services.execution.actions.screenshot import ScreenshotAction  # noqa: F401
+from app.services.execution.actions.llm import LLMAction  # noqa: F401
+from app.services.execution.actions.fetch_external_data import (  # noqa: F401
+    FetchExternalDataAction,
+)
+from app.services.execution.actions.mark_resource_result import (  # noqa: F401
+    MarkResourceResultAction,
+)
+from app.services.execution.actions.random_pick import RandomPickAction  # noqa: F401
+from app.services.execution.actions.debug import PrintAction  # noqa: F401
+from app.services.execution.actions.list_utils import (  # noqa: F401
+    ShuffleListAction,
+    SortListAction,
+    PickLineAction,
+)
+from app.services.execution.actions.bili import BiliReserveAction  # noqa: F401
+from app.services.execution.actions.control_flow import (  # noqa: F401
+    LoopAction,
+    IfElseAction,
+)
+from typing import Dict  # noqa: F401
 
-
-def get_action_class(action_id: str) -> Type[AllActionType] | None:
-    """获取动作类"""
-    return BUILTIN_ACTION_MAP.get(action_id)
+# 内置动作映射常量：构建自 base 的注册表快照（各动作模块自注册，单一数据源）。
+# key 为 action_id 的字符串 value；StrEnum 与其 value 哈希相等，
+# 故 ``MAP.get(BuiltinActionType.CLICK)`` 与 ``MAP.get("click")`` 等价。
+BUILTIN_ACTION_MAP: Dict[str, Type[BaseAction]] = get_registered_action_classes()
 
 
 def get_all_actions_metadata() -> list[ActionMetadata]:
     """获取所有注册的动作元数据"""
-    return [action_type.metadata for action_type in BuiltinActionType]
+    return [build_action_metadata(action_type) for action_type in BuiltinActionType]
 
 
 def get_action_metadata(action_type: BuiltinActionType) -> ActionMetadata:
-    return action_type.metadata
+    return build_action_metadata(action_type)
 
 
 __all__ = [
@@ -80,5 +69,4 @@ __all__ = [
     "get_all_actions_metadata",
     "get_action_metadata",
     "BuiltinActionType",
-    "AllActionType",
 ]

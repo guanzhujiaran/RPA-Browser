@@ -6,12 +6,13 @@ from typing import Dict, Any, List
 
 import contextlib
 import asyncio
+import traceback
 import socket
 import ipaddress
 from urllib.parse import urlparse
 import time
 from loguru import logger
-from app.services.execution.actions.base import BaseAction, ActionResult
+from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.models.execution.action_params import (
     NavigateParams,
     NewPageParams,
@@ -328,8 +329,6 @@ class NavigateAction(BaseAction[NavigateParams]):
             )
 
         except Exception as e:
-            import traceback
-
             error_traceback = traceback.format_exc()
             logger.error(f"[NavigateAction] 导航操作执行异常: {e}\n{error_traceback}")
             return ActionResult(
@@ -491,8 +490,6 @@ class NewPageAction(BaseAction[NewPageParams]):
                 )
 
         except Exception as e:
-            import traceback
-
             error_traceback = traceback.format_exc()
             logger.error(
                 f"[NewPageAction] 新建页面操作执行异常: {e}\n{error_traceback}"
@@ -508,3 +505,9 @@ class NewPageAction(BaseAction[NewPageParams]):
                     f"Traceback:\n{error_traceback}",
                 ],
             )
+
+
+# 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
+
+register_action_class(NavigateAction)
+register_action_class(NewPageAction)

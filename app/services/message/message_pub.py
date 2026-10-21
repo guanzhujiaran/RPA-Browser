@@ -29,12 +29,18 @@ async def publish_message(
     content: str,
     push_type: Optional[str] = "text",
     config: Optional[Union[PushChannelConfig, dict]] = None,
+    mid: Optional[int] = None,
 ) -> None:
-    """发布一条推送请求到 message-service（兼容旧签名，行为同 bili-common 公共函数）。"""
+    """发布一条推送请求到 message-service（兼容旧签名，行为同 bili-common 公共函数）。
+
+    ``mid`` 为接收人 mid，message-service 投递侧据此判定用户级外部推送总开关
+    （push_enabled / 免打扰时段）；缺省 None 表示不做用户级拦截。
+    """
     await publish_push_message(
         title=title,
         content=content,
         push_type=push_type,
         config=config,
         amqp_url=settings.rabbitmq_url,
+        mid=mid,
     )

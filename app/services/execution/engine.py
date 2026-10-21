@@ -24,15 +24,19 @@ Execution Engine — 操作执行引擎
 """
 
 from app.services.execution.pipeline import PipelineBuilder, Pipeline, ActionExecutor
+from app.services.execution.cancellation import cancellation_registry
 from app.services.execution.actions.base import BaseAction, ActionResult
-from app.services.execution.scope import Scope
+from app.services.execution.scope import Scope, TemplateResolveError
 from botright.playwright_mock.page import Page
 import time
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from app.services.execution.workflow_progress import WorkflowRunProgressReporter
 
 from app.models.database.log.models import ActionLogSourceEnum, ActionLogStatusEnum
 from app.services.execution.action_logger import (
@@ -49,12 +53,20 @@ from app.services.execution.crud_service import (
 from app.models.execution.action_params import (
     ActionMetadata,
     BaseWorkflowStep,
-    BuiltinActionType,
     ActionLogOption,
+    BuiltinActionType,
 )
 from app.models.execution.condition_models import ConditionRule
 from app.services.execution.actions.control_flow import (
     CompositeAction as CompositeActionClass,
+)
+from app.services.execution.actions.all_actions import (
+    get_action_class,
+    get_action_metadata,
+)
+from app.services.execution.actions.base import (
+    CustomActionResolver,
+    set_custom_action_resolver,
 )
 from app.services.execution.action_registry import action_registry
 from app.services.RPA_browser.session.live_service import live_service
@@ -62,6 +74,16 @@ from app.models.execution.request_params import (
     ExecutionRequest,
     ActionExecutionRequest,
     params_to_dict,
+)
+
+# 自定义（复合）动作解析槽位：控制流策略层（AtomicStrategy）经 base 的
+# CustomActionResolver 查找，从而无需 import action_registry →
+# all_actions → control_flow 这一会成环的依赖链。
+set_custom_action_resolver(
+    CustomActionResolver(
+        get_action_class=action_registry.get_action_class_for_user,
+        get_steps=action_registry.get_custom_action_steps,
+    )
 )
 
 
@@ -84,10 +106,15 @@ class ExecutionEngine:
         execution_id: str | None = None,
         parent_execution_id: str | None = None,
         log_source: ActionLogSourceEnum = ActionLogSourceEnum.ACTION,
+        workflow_log_enabled: bool | None = None,
     ) -> ActionResult:
         """执行单个操作。
 
         路由 /actions/execute 直接调用此方法。
+
+        Args:
+            workflow_log_enabled: 工作流级日志开关（三态）；None 表示未经工作流
+                调度，按动作自身配置 / 项目兜底解析（既有默认行为）。
         """
         if page is None:
             raise ValueError("必须提供 page 参数")
@@ -114,6 +141,7 @@ class ExecutionEngine:
                 or new_execution_id(),
                 parent_execution_id=parent_execution_id,
                 log_source=log_source,
+                workflow_log_enabled=workflow_log_enabled,
             )
         finally:
             await live_service.touch(req.mid, browser_id, source="action")
@@ -128,6 +156,9 @@ class ExecutionEngine:
         browser_id: str,
         page: Page,
         depth: int = 0,
+        workflow_log_enabled: bool | None = None,
+        progress: "WorkflowRunProgressReporter | None" = None,
+        skip_steps: int = 0,
     ) -> List[ActionResult]:
         """执行工作流步骤列表。
 
@@ -138,18 +169,34 @@ class ExecutionEngine:
             2. scope = Scope(req.variables)  （所有步骤共享同一引用）
             3. pipeline.execute(scope, executor)  （left-fold）
 
+        Args:
+            workflow_log_enabled: 工作流粒度的日志采集开关（三态：
+                ``UserWorkflow.log_enabled``）。``None``=未设置（听从动作级 /
+                项目兜底）；``True/False``=本次运行显式开/关，压制动作级与项目级。
+                单操作执行不传，行为保持不变。
+            progress: 运行进度上报器（仅工作流调度执行注入）；None 时不做任何埋点。
+            skip_steps: 断点恢复起点：跳过前 N 个已完成步骤，从第 N 个（0 基）继续执行。
+                被跳过的步骤不再产生副作用，其成功计数已由旧运行继承。
+
         时间复杂度：O(N)，N 为步骤数（不含嵌套）。
         """
         # 自动化运行期间占用会话（pin），禁止闲置降级/关闭；结束时刷新活跃再解除
         live_service.pin(req.mid, browser_id)
         try:
-            scope = Scope(req.variables)
-            scope.set("execute_steps_func", self.execute_steps)
             req_auth_headers = getattr(req, "auth_headers", {}) or {}
             exec_id = getattr(req, "execution_id", "") or new_execution_id()
             workflow_id = getattr(req, "workflow_id", None)
 
-            pipeline = PipelineBuilder.build(steps)
+            scope = Scope(req.variables)
+            scope.set("execute_steps_func", self.execute_steps)
+            # 协作式停止钩子：按本次运行的 execution_id 查询取消注册表，
+            # 使 Pipeline / LoopStep 能在步骤边界响应「手动停止」（见 cancellation.py）
+            scope.cancel_check = lambda: cancellation_registry.is_cancelled(exec_id)
+            # 运行进度上报器：顶层步骤由 Pipeline 上报，循环轮次由 LoopStep 上报
+            scope.progress = progress
+
+            remaining_steps = steps[skip_steps:] if skip_steps > 0 else steps
+            pipeline = PipelineBuilder.build(remaining_steps)
 
             async def executor(
                 action_id: str,
@@ -171,9 +218,11 @@ class ExecutionEngine:
                     depth=depth,
                     workflow_id=workflow_id,
                     log_source=ActionLogSourceEnum.WORKFLOW,
+                    workflow_log_enabled=workflow_log_enabled,
                 )
 
-            return await pipeline.execute(scope, executor)
+            # top_level=True：只有顶层管道把步骤计入运行进度（嵌套循环体/分支体不重复计数）
+            return await pipeline.execute(scope, executor, top_level=True)
         finally:
             await live_service.touch(req.mid, browser_id, source="workflow")
             live_service.unpin(req.mid, browser_id)
@@ -197,11 +246,16 @@ class ExecutionEngine:
         depth: int = 0,
         workflow_id: str | None = None,
         log_source: ActionLogSourceEnum = ActionLogSourceEnum.ACTION,
+        workflow_log_enabled: bool | None = None,
     ) -> ActionResult:
         """执行单个 action 并按用户配置采集操作日志。
 
         这是所有浏览器操作执行的唯一入口（单操作 / 工作流步骤都会经过），
         因此在此处统一埋点，保证日志采集不遗漏。
+
+        Args:
+            workflow_log_enabled: 工作流级日志开关（三态）。None 表示未经工作流
+                调度，按动作自身配置 / 项目兜底解析（单操作执行的默认行为）。
         """
         exec_id = execution_id or new_execution_id()
         log_ctx = ActionLogContext(
@@ -234,6 +288,7 @@ class ExecutionEngine:
             depth=depth,
             workflow_id=workflow_id,
             log_ctx=log_ctx,
+            workflow_log_enabled=workflow_log_enabled,
         )
 
         log_ctx.action_name = str(result.action_name or action_id)
@@ -263,6 +318,7 @@ class ExecutionEngine:
         depth: int = 0,
         workflow_id: str | None = None,
         log_ctx: ActionLogContext | None = None,
+        workflow_log_enabled: bool | None = None,
     ) -> ActionResult:
         """执行单个 action 的核心方法。
 
@@ -288,9 +344,20 @@ class ExecutionEngine:
                 replaced_params=dict(params),
             )
 
-        # InputAction 的变量缺失或为 None 时替换为空字符串
-        resolve_default = "" if action_id == BuiltinActionType.INPUT else None
-        merged = scope.resolve_params(dict(params), default=resolve_default)
+        # 严格解析调用参数：模板变量缺失 / 值为 None / 点路径中断即报错终止本操作，
+        # 禁止把未解析的 {{placeholder}} 字面量带入下游动作继续执行。
+        # 注意：内联 steps 树不作为「本次调用参数」解析（其中含循环变量等仅在子步骤
+        # 执行期才存在的模板，交由各子步骤执行时按作用域解析），否则会误报缺失。
+        raw_params = dict(params)
+        inline_steps = raw_params.pop("steps", None)
+        try:
+            merged = scope.resolve_params(raw_params, strict=True)
+        except TemplateResolveError as e:
+            return self._fail(
+                str(e), action_id, start, replaced_params=dict(raw_params)
+            )
+        if inline_steps is not None:
+            merged["steps"] = inline_steps
         if issubclass(action_class, CompositeActionClass):
             # 校验用户是否有权执行此复合操作（自身或公开）
             ca_model = await action_crud_svr.get_by_action_id(action_id)
@@ -311,6 +378,11 @@ class ExecutionEngine:
                 await action_crud_svr.validate_steps_referenced_actions(
                     steps_to_validate, mid
                 )
+            # 自定义复合操作的显示名（如「参与B站抽奖」）：执行结果与操作日志
+            # 统一用它，而非内置类型名「复合操作」——否则日志列表认不出是哪条动作
+            composite_display_name = ca_model.name if ca_model else None
+        else:
+            composite_display_name = None
 
         action: BaseAction = action_class.new_action(
             mid=mid,
@@ -320,9 +392,11 @@ class ExecutionEngine:
             output_vars=output_vars,
         )
         # 解析本操作的日志采集配置，供内部子步骤继承（自定义操作按其基础配置，
-        # 内置操作按服务端兜底；也可由执行参数中的 log 选项显式覆盖）
+        # 内置操作按项目兜底；也可由执行参数中的 log 选项显式覆盖）。
+        # workflow_log_enabled 为工作流级总闸（三态）：非 None 时压制动作级与项目级。
+        # 完整优先级见 action_logger.resolve_log_option 文档字符串。
         log_cfg: ActionLogOption | None = await resolve_log_option(
-            mid, action_id, merged
+            mid, action_id, merged, None, workflow_log_enabled
         )
         if log_ctx is not None:
             log_ctx.log_config = log_cfg
@@ -354,7 +428,7 @@ class ExecutionEngine:
 
             result.execution_time = time.time() - start
             result.action_id = action_id
-            result.action_name = action.action_name
+            result.action_name = composite_display_name or action.action_name
             result.replaced_params = merged
 
             return result
@@ -406,9 +480,6 @@ class ExecutionEngine:
         params: dict | None = None,
         input_vars: dict | None = None,
     ) -> Dict[str, Any]:
-        from app.models.execution.action_params import BuiltinActionType
-        from app.services.execution.actions.all_actions import get_action_class
-
         action_class = await action_registry.get_action_class_for_user(action_id)
         is_composite = action_class is not None and issubclass(
             action_class, CompositeActionClass
@@ -478,8 +549,6 @@ class ExecutionEngine:
         预览辅助 — 保留以维持现有 preview 功能。
         TODO: 可后续用 Scope + Pipeline.preview() 替代。
         """
-        from app.services.execution.actions.all_actions import get_action_class
-
         base = {
             "step_index": step_index,
             "action_id": action_id,
@@ -615,9 +684,6 @@ class ExecutionEngine:
     async def validate_action(
         mid: int, action_id: str, params: dict | None = None
     ) -> Dict[str, Any]:
-        from app.models.execution.action_params import BuiltinActionType
-        from app.services.execution.actions.all_actions import get_action_metadata
-
         action_class = await action_registry.get_action_class_for_user(action_id)
         if not action_class:
             raise ValueError(f"未找到操作: {action_id}")

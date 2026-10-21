@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 from datetime import datetime
 from pydantic import field_validator
 from sqlalchemy import BIGINT, Column, JSON, Index
+from pydantic import NaiveDatetime
 from sqlmodel import SQLModel, Field
 
 
@@ -48,6 +49,7 @@ class WorkflowRunStatusEnum(StrEnumAutoDoc):
     SUCCESS = "success"
     FAILED = "failed"
     INTERRUPTED = "interrupted"  # 进程重启/宕机导致未正常结束（启动时由残留 RUNNING 收口）
+    CANCELLED = "cancelled"  # 用户在运行中手动点击「停止」
 
 
 class WorkflowRunTriggerEnum(StrEnumAutoDoc):
@@ -74,8 +76,19 @@ class CommunityResourceBase(SQLModel):
     is_verified: bool = Field(default=False, description="是否经过官方验证")
     forks_count: int = Field(default=0, description="被 Fork 次数")
     forked_from_id: int | None = Field(default=None, description="Fork 来源的资源ID")
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    # === Fork 上游同步（详见 docs/fork-上游同步计划书.md） ===
+    last_synced_at: NaiveDatetime | None = Field(
+        default=None,
+        description="最近一次同步时上游的 updated_at；None = 需要同步上游",
+    )
+    auto_sync_upstream: bool = Field(
+        default=False, description="是否开启上游自动同步（仅 Fork 资源有意义）"
+    )
+    local_steps_modified: bool = Field(
+        default=False, description="同步后用户是否修改过 steps（True 时自动同步跳过）"
+    )
+    created_at: NaiveDatetime = Field(default_factory=datetime.now)
+    updated_at: NaiveDatetime = Field(default_factory=datetime.now)
 
     @field_validator("mid", "original_mid", mode="before")
     @classmethod
@@ -164,7 +177,10 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     retry_delay: float = Field(default=1.0)
 
     # === 操作日志采集配置（随 action 一起增删改，无需单独设置） ===
-    log_enabled: bool = Field(default=False, description="是否采集该操作的执行日志")
+    log_enabled: bool | None = Field(
+        default=None,
+        description="是否采集该操作的执行日志（None=未设置，听从工作流/项目开关）",
+    )
     log_record_params: bool = Field(
         default=True, description="是否记录变量替换后的入参"
     )
@@ -241,12 +257,47 @@ class UserWorkflow(CommunityResourceBase, table=True):
         sa_column=Column(JSON),
         description='触发配置，cron 触发时为 {"cron": "*/5 * * * *"}',
     )
-    last_run_at: datetime | None = Field(default=None, description="上次运行结束时间")
+    last_run_at: NaiveDatetime | None = Field(default=None, description="上次运行结束时间")
     last_run_status: str | None = Field(
         default=None, max_length=20, description="上次运行状态: running/success/failed"
     )
-    next_run_at: datetime | None = Field(
+    next_run_at: NaiveDatetime | None = Field(
         default=None, description="下次计划运行时间（由 cron 推导，仅供展示）"
+    )
+    # === 运行通知开关（开始/结束；结束含成功与失败） ===
+    notify_on_start: bool = Field(
+        default=False, description="工作流开始执行时是否发送通知"
+    )
+    notify_on_end: bool = Field(
+        default=True, description="工作流结束时是否发送通知（成功/失败）"
+    )
+    # === 执行日志开关（三态：None=未设置听从工作流/项目开关，True/False=显式开/关） ===
+    log_enabled: bool | None = Field(
+        default=None, description="工作流执行时是否记录步骤级操作日志"
+    )
+    # === 重启恢复开关（默认关闭：恢复是「至少一次」语义，可能重复外部副作用） ===
+    resume_on_restart: bool = Field(
+        default=False,
+        description="服务重启/异常退出后是否自动恢复本次被中断的运行（至少一次语义）",
+    )
+    # === 多浏览器执行 ===
+    browser_ids: list[int] | None = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="执行目标浏览器ID列表；为空时回落到 browser_id（单浏览器）",
+    )
+    concurrent_exec: bool = Field(
+        default=False,
+        description="多浏览器时是否并发执行（False=按列表顺序串行，一个浏览器跑完再跑下一个）",
+    )
+    # === 输入变量值 ===
+    variables: Dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description=(
+            "工作流级输入变量值 {name: value}：运行期覆盖被引用动作声明的变量默认值"
+            "（变量定义不落库，始终以动作契约/声明为准）"
+        ),
     )
 
 
@@ -300,11 +351,54 @@ class WorkflowRunRecord(SQLModel, table=True):
         default=None, max_length=2000, description="失败原因"
     )
     duration_ms: float = Field(default=0.0, description="总耗时(毫秒)")
-    started_at: datetime = Field(
+    started_at: NaiveDatetime = Field(
         default_factory=datetime.now, index=True, description="开始时间"
     )
-    finished_at: datetime | None = Field(default=None, description="结束时间")
-    notified: bool = Field(default=False, description="失败通知是否已发送")
+    finished_at: NaiveDatetime | None = Field(default=None, description="结束时间")
+    notified: bool = Field(default=False, description="结束通知（外部推送）是否已发送")
+    # === 运行期进度（SSE 推送 + 重启恢复检查点） ===
+    completed_steps: int = Field(
+        default=0, description="已完成步骤数（运行中实时递增，即恢复检查点）"
+    )
+    current_step_index: int = Field(
+        default=0, description="当前步骤在顶层步骤列表中的下标（0 基）"
+    )
+    current_step_name: str = Field(
+        default="", max_length=200, description="当前/最近执行的步骤显示名"
+    )
+    loop_action_name: str = Field(
+        default="", max_length=200, description="当前循环步骤显示名（非循环为空）"
+    )
+    loop_index: int = Field(
+        default=0, description="当前循环轮次（1 基，0 表示尚未进入循环）"
+    )
+    loop_total: int = Field(
+        default=0, description="当前循环总轮次；0 = 未知（condition 循环）"
+    )
+    # 第二条进度条：当前这一轮的循环体内动作进度
+    loop_body_completed: int = Field(
+        default=0, description="本轮循环体内已完成动作数"
+    )
+    loop_body_total: int = Field(
+        default=0, description="本轮循环体动作总数（0=非循环/未知）"
+    )
+    loop_body_step_name: str = Field(
+        default="", max_length=200, description="本轮循环体内当前动作名"
+    )
+    progress_updated_at: NaiveDatetime | None = Field(
+        default=None, description="最近一次进度上报时间（心跳，用于判断卡死）"
+    )
+    # === 重启断点恢复 ===
+    resumable: bool = Field(
+        default=False, description="本次运行被中断后是否允许恢复（用户停止/执行失败不可恢复）"
+    )
+    resume_of: str | None = Field(
+        default=None, max_length=64, description="恢复来源的运行 ID（首次运行/自动恢复）"
+    )
+    resume_count: int = Field(default=0, description="连续恢复次数（防重启死循环）")
+    checkpoint_step: int = Field(
+        default=0, description="中断时的步骤检查点（= 中断瞬间的 completed_steps）"
+    )
     settled_seconds: int | None = Field(
         default=None,
         description=(
@@ -393,5 +487,5 @@ class WorkflowRecord(SQLModel, table=True):
     version: str = Field(default="1.0.0", max_length=50)
 
     # 时间戳
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: NaiveDatetime = Field(default_factory=datetime.now)
+    updated_at: NaiveDatetime = Field(default_factory=datetime.now)

@@ -44,26 +44,31 @@ class ResourceRecordService:
     # ---------------- 读取（去重） ----------------
 
     @staticmethod
-    async def get_success_ids(
+    async def get_done_ids(
         mid: int | str,
         workflow_id: str,
         browser_id: int | str,
         resource_type: str,
         resource_ids: Iterable[Any] | None = None,
     ) -> set[str]:
-        """取已成功处理的资源 id 集合。
+        """取「已是终态」的资源 id 集合（success / skipped）。
+
+        skipped 表示显式跳过（如活动已结束、页面已无该预约），与 success 一样
+        属于终态，不再被取数捞起；failed 仍可重试（断点续跑）。
 
         Args:
             browser_id: 执行浏览器ID（去重按浏览器隔离）。
             resource_ids: 给定候选 id 时只在该集合内查（IN 收敛，推荐）；
-                          为 None 时返回该工作流该浏览器该类型下全部成功 id（量大慎用）。
+                          为 None 时返回该工作流该浏览器该类型下全部终态 id（量大慎用）。
         """
         stmt = select(WorkflowResourceRecord.resource_id).where(
             WorkflowResourceRecord.mid == str(mid),
             WorkflowResourceRecord.workflow_id == int(workflow_id),
             WorkflowResourceRecord.browser_id == int(browser_id or 0),
             WorkflowResourceRecord.resource_type == resource_type,
-            WorkflowResourceRecord.status == ResourceProcessStatus.SUCCESS,
+            WorkflowResourceRecord.status.in_(  # type: ignore[attr-defined]
+                [ResourceProcessStatus.SUCCESS, ResourceProcessStatus.SKIPPED]
+            ),
         )
         ids_norm = [_norm_id(x) for x in (resource_ids or [])]
         if resource_ids is not None:
@@ -84,11 +89,11 @@ class ResourceRecordService:
         resource_type: str,
         resource_ids: Sequence[Any],
     ) -> list[str]:
-        """从候选 id 中剔除已成功项，返回待处理 id 列表（保持原顺序、去重）。"""
+        """从候选 id 中剔除终态项（success / skipped），返回待处理 id 列表。"""
         norm_ids = list(dict.fromkeys(_norm_id(x) for x in resource_ids))
         if not norm_ids:
             return []
-        done = await ResourceRecordService.get_success_ids(
+        done = await ResourceRecordService.get_done_ids(
             mid, workflow_id, browser_id, resource_type, norm_ids
         )
         return [x for x in norm_ids if x not in done]
@@ -104,6 +109,7 @@ class ResourceRecordService:
         resource_id: Any,
         success: bool,
         *,
+        status: ResourceProcessStatus | None = None,
         run_id: str | None = None,
         fail_reason: str | None = None,
         extra: dict[str, Any] | None = None,
@@ -113,6 +119,9 @@ class ResourceRecordService:
         依赖唯一约束 uq_wf_resource_scope 做 MySQL ON DUPLICATE KEY UPDATE：
         已存在则更新状态/原因/最近处理时间，process_count 累加；
         first_processed_at 仅首次写入，不被覆盖。
+
+        Args:
+            status: 显式状态（success/failed/skipped），优先于 success。
         """
         await ResourceRecordService.bulk_upsert(
             mid,
@@ -121,6 +130,7 @@ class ResourceRecordService:
             resource_type,
             [resource_id],
             success,
+            status=status,
             run_id=run_id,
             fail_reason=fail_reason,
             extra=extra,
@@ -135,6 +145,7 @@ class ResourceRecordService:
         resource_ids: Iterable[Any],
         success: bool,
         *,
+        status: ResourceProcessStatus | None = None,
         run_id: str | None = None,
         fail_reason: str | None = None,
         extra_map: dict[str, dict[str, Any]] | None = None,
@@ -143,11 +154,12 @@ class ResourceRecordService:
         """批量回写同一处理结果的多个资源，返回写入条数。
 
         Args:
+            status: 显式状态（success/failed/skipped），优先于 success。
             extra_map: 按 resource_id（字符串形式）提供各自的快照；优先于统一 extra。
             extra: 所有项统一的快照；extra_map 未命中某项时使用。
         """
         now = datetime.now()
-        status = (
+        status = status or (
             ResourceProcessStatus.SUCCESS if success else ResourceProcessStatus.FAILED
         )
         rows: list[dict[str, Any]] = []
@@ -264,6 +276,112 @@ class ResourceRecordService:
             )
         if status is not None:
             conditions.append(WorkflowResourceRecord.status == status)
+        if resource_id:
+            conditions.append(
+                WorkflowResourceRecord.resource_id.like(f"%{resource_id}%")  # type: ignore[attr-defined]
+            )
+        if run_id:
+            conditions.append(WorkflowResourceRecord.run_id == run_id)
+        if process_count_min is not None:
+            conditions.append(
+                WorkflowResourceRecord.process_count >= int(process_count_min)
+            )
+        if process_count_max is not None:
+            conditions.append(
+                WorkflowResourceRecord.process_count <= int(process_count_max)
+            )
+        if processed_from is not None:
+            conditions.append(
+                WorkflowResourceRecord.last_processed_at >= processed_from
+            )
+        if processed_to is not None:
+            conditions.append(
+                WorkflowResourceRecord.last_processed_at <= processed_to
+            )
+
+        page = max(1, pagination.page)
+        per_page = max(1, pagination.per_page)
+
+        async with DatabaseSessionManager.async_session() as session:
+            total = await session.scalar(
+                select(sa_func.count())
+                .select_from(WorkflowResourceRecord)
+                .where(*conditions)
+            )
+            items = (
+                await session.exec(  # type: ignore[attr-defined]
+                    select(WorkflowResourceRecord)
+                    .where(*conditions)
+                    .order_by(
+                        sa.desc(WorkflowResourceRecord.last_processed_at)  # type: ignore
+                    )
+                    .offset((page - 1) * per_page)
+                    .limit(per_page)
+                )
+            ).all()
+
+        return BasePaginationResp[WorkflowResourceRecord](
+            page=page,
+            per_page=per_page,
+            total=int(total or 0),
+            items=list(items),
+        )
+
+    @staticmethod
+    async def list_records(
+        mid: int | str,
+        workflow_id: int,
+        pagination: BasePaginationReq,
+        *,
+        browser_id: int | None = None,
+        resource_type: str | None = None,
+        status: ResourceProcessStatus | None = None,
+        resource_id: str | None = None,
+        run_id: str | None = None,
+        process_count_min: int | None = None,
+        process_count_max: int | None = None,
+        processed_from: datetime | None = None,
+        processed_to: datetime | None = None,
+    ) -> BasePaginationResp[WorkflowResourceRecord]:
+        """分页查询某工作流的已处理资源记录（按最近处理时间倒序）。
+
+        与 `list_history` 的区别：浏览器可选——前端「已处理数据」看的是整个工作流，
+        不强制先选浏览器（记录本身仍按浏览器隔离存储）。
+        """
+        conditions = [
+            WorkflowResourceRecord.mid == str(mid),
+            WorkflowResourceRecord.workflow_id == int(workflow_id),
+        ]
+        if browser_id is not None:
+            conditions.append(WorkflowResourceRecord.browser_id == int(browser_id))
+        if resource_type:
+            conditions.append(
+                WorkflowResourceRecord.resource_type == resource_type
+            )
+        if status is not None:
+            conditions.append(WorkflowResourceRecord.status == status)
+        if resource_id:
+            conditions.append(
+                WorkflowResourceRecord.resource_id.like(f"%{resource_id}%")  # type: ignore[attr-defined]
+            )
+        if run_id:
+            conditions.append(WorkflowResourceRecord.run_id == run_id)
+        if process_count_min is not None:
+            conditions.append(
+                WorkflowResourceRecord.process_count >= int(process_count_min)
+            )
+        if process_count_max is not None:
+            conditions.append(
+                WorkflowResourceRecord.process_count <= int(process_count_max)
+            )
+        if processed_from is not None:
+            conditions.append(
+                WorkflowResourceRecord.last_processed_at >= processed_from
+            )
+        if processed_to is not None:
+            conditions.append(
+                WorkflowResourceRecord.last_processed_at <= processed_to
+            )
 
         page = max(1, pagination.page)
         per_page = max(1, pagination.per_page)

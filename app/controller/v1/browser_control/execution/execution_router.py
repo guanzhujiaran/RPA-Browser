@@ -254,7 +254,16 @@ async def execute_workflow(
 
     return success_response(
         WorkflowExecuteResponse(
-            execution_id=request.workflow_id or request.action_id or "inline",
+            # workflow_id / action_id 都是雪花 int，响应字段是 str：
+            # 不转字符串会导致整个执行结果在校验阶段 500（步骤其实已跑完，结果却拿不到）
+            execution_id=str(
+                # WorkflowExecuteRequest 未声明 execution_id（引擎内部生成），
+                # 这里用 getattr 兜底，避免直接取属性抛 AttributeError
+                getattr(request, "execution_id", None)
+                or request.workflow_id
+                or request.action_id
+                or "inline"
+            ),
             results=results_data,
             summary={
                 "total": len(results),

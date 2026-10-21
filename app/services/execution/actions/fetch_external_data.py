@@ -24,7 +24,7 @@ from typing import Dict, List, Any
 import httpx
 from loguru import logger
 
-from app.services.execution.actions.base import BaseAction, ActionResult
+from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.models.execution.action_params import (
     FetchExternalDataParams,
     FetchExternalDataResult,
@@ -499,3 +499,8 @@ class FetchExternalDataAction(BaseAction[FetchExternalDataParams]):
             action_id=self.metadata.id,
             action_name=self.metadata.name,
         )
+
+
+# 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
+
+register_action_class(FetchExternalDataAction)

@@ -45,7 +45,11 @@ class ActionLogListRequest(BasePaginationReq):
 
 
 class ActionLogItemResponse(SQLModel):
-    """单条日志记录响应"""
+    """列表项（轻量）：不含 params/result_data/variables/logs 等大字段。
+
+    大字段单行可达数百 KB，列表页/无限滚动若随行下发会瞬间撑爆响应体，
+    故列表只回轻量摘要，完整字段由详情接口按 log_id 单独拉取。
+    """
 
     id: int | None = None
     log_id: str
@@ -63,10 +67,6 @@ class ActionLogItemResponse(SQLModel):
     page_url: str
     status: ActionLogStatusEnum
     success: bool
-    params: Dict | None = None
-    result_data: Dict | None = None
-    variables: Dict | None = None
-    logs: List[str] = Field(default_factory=list)
     error_message: str | None = None
     execution_time: float
     started_at: datetime
@@ -74,15 +74,24 @@ class ActionLogItemResponse(SQLModel):
 
 
 class ActionLogDetailResponse(ActionLogItemResponse):
-    """日志详情响应（当前与列表项一致，便于后续扩展）"""
+    """单条日志详情：在列表项基础上附带重字段（入参/结果/变量/执行日志）"""
 
-    pass
+    params: Dict | None = None
+    result_data: Dict | None = None
+    variables: Dict | None = None
+    logs: List[str] = Field(default_factory=list)
 
 
-class ActionLogByExecutionRequest(SQLModel):
-    """按执行批次查询完整链路"""
+class ActionLogByExecutionRequest(BasePaginationReq):
+    """按执行批次查询步骤链路（分页）
+
+    一次长循环运行的步骤日志可达数千条，全量返回既拖慢响应也撑爆前端渲染，
+    因此与 `action-logs/list` 用同一套 `page` / `per_page` 口径分页。
+    """
 
     execution_id: str = Field(description="执行批次ID")
+    page: int = Field(default=1, ge=1, description="页码，从 1 开始")
+    per_page: int = Field(default=50, ge=1, le=500, description="每页数量（默认 50）")
 
 
 class ActionLogDeleteRequest(SQLModel):

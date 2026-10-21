@@ -5,6 +5,7 @@ Action 管理路由
 """
 
 from typing import Dict, List
+from loguru import logger
 from bili_common.models.response import (
     StandardResponse,
     success_response,
@@ -17,6 +18,7 @@ from app.utils.depends.admin_depends import assert_approved
 from fastapi import Depends
 from app.services.execution.crud_service import action_crud_svr
 from app.services.execution.crud_service.action_crud import ActionCrudService
+from app.services.execution.action_logger import invalidate_cache
 from app.models.workflow.models import (
     CompositeActionCreateRequest,
     CompositeActionUpdateRequest,
@@ -33,9 +35,16 @@ from app.models.workflow.models import (
     TagSearchRequest,
     TagWithCount,
     NameSearchRequest,
+    UpstreamSyncFlag,
 )
-from app.models.execution.action_params import ActionMetadataResponse
+from app.models.execution.action_params import (
+    ActionMetadataResponse,
+    BuiltinActionType,
+    build_action_metadata,
+)
 from app.models.base.base_sqlmodel import BasePaginationResp
+from app.models.common.exceptions.base_exception import BaseException as BizBaseException
+from app.services.execution.variable_contract import compute_custom_action_variable_contract
 from ..base import new_action_router
 
 router = new_action_router()
@@ -46,6 +55,26 @@ def _convert_steps(steps: list) -> list[Dict]:
     return [
         step.model_dump() if hasattr(step, "model_dump") else step for step in steps
     ]
+
+
+def _upstream_sync_kwargs(
+    model, flag: UpstreamSyncFlag | None = None
+) -> Dict:
+    """构造响应中的上游同步状态字段（docs/fork-上游同步计划书.md）
+
+    Args:
+        model: CompositeActionModel
+        flag: attach_upstream_update_flags 的批量计算结果；不传则按"无上游更新"处理
+    """
+    return {
+        "has_upstream_update": flag.has_upstream_update if flag else False,
+        "upstream_updated_at": flag.upstream_updated_at if flag else None,
+        "last_synced_at": (
+            int(model.last_synced_at.timestamp()) if model.last_synced_at else None
+        ),
+        "auto_sync_upstream": model.auto_sync_upstream,
+        "local_steps_modified": model.local_steps_modified,
+    }
 
 
 # ============ 系统预注册操作（只读，全 POST） ============
@@ -59,11 +88,9 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
 
     返回精简版 Action 元数据，仅包含 action_id 和 json_schema
     """
-    from app.models.execution.action_params import BuiltinActionType
-
     response_actions = []
     for action_type in BuiltinActionType:
-        meta = action_type.metadata
+        meta = build_action_metadata(action_type)
         response_actions.append(
             ActionMetadataResponse(
                 action_id=action_type.value,
@@ -73,6 +100,9 @@ async def list_registered_actions() -> StandardResponse[List[ActionMetadataRespo
                 icon_series=meta.icon_series,
                 icon_id=meta.icon_id,
                 json_schema=meta.json_schema or {},
+                # 变量契约（显式声明 + {{...}} 模板扫描兜底），前端据此渲染变量绑定区
+                input_variables=meta.input_variables,
+                output_variables=meta.output_variables,
             )
         )
     return success_response(response_actions)
@@ -121,6 +151,9 @@ async def create_custom_action(
         log_retention_days=request.log_retention_days,
     )
 
+    # 采集配置缓存按 action 维度 TTL 缓存，增删改后立即失效，避免改配置后需等 TTL 生效
+    invalidate_cache(model.action_id)
+
     # 将字典转换回 InputVarDefinition 对象
     input_vars_objs = [
         InputVarDefinition(**var) if isinstance(var, dict) else var
@@ -163,8 +196,84 @@ async def create_custom_action(
             is_verified=model.is_verified,
             forks_count=model.forks_count,
             forked_from_id=model.forked_from_id,
+            **_upstream_sync_kwargs(model),
             created_at=model.created_at,
             updated_at=model.updated_at,
+        )
+    )
+
+
+@router.post(
+    BrowserControlRouterPath.custom_actions_import, summary="从 JSON 导入自定义操作"
+)
+async def import_custom_action(
+    request: CompositeActionCreateRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[CompositeActionDetailResponse]:
+    """从 JSON 导入自定义操作
+
+    请求体即「导出 JSON」内容（可携带 mid / id / created_at / version / likes_count
+    等数据库冗余字段，自动忽略）。导入会在**当前用户名下新建**一份动作，
+    action_id 由系统重新生成（雪花 int），不影响原动作。
+    """
+    if not request.steps:
+        return error_response(ResponseCode.INVALID_PARAM, "导入内容缺少 steps 步骤列表")
+    return await create_custom_action(request, auth)
+
+
+@router.post(
+    BrowserControlRouterPath.custom_actions_export, summary="导出自定义操作为 JSON"
+)
+async def export_custom_action(
+    request: CompositeActionGetRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[CompositeActionCreateRequest]:
+    """导出自定义操作
+
+    返回体与「创建 / 导入」请求体字段完全一致，可直接保存为 .json 后再由导入接口还原；
+    仅本人或已公开的动作可导出。
+    """
+    action_id = request.action_id
+    if not action_id:
+        return error_response(400, "缺少操作action_id")
+
+    model = await action_crud_svr.get_by_action_id(action_id)
+    if not model:
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
+
+    if model.mid != str(auth.mid) and not model.is_public:
+        return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
+
+    tags = await action_crud_svr.get_tags_for_action(model.id)
+    input_vars_objs = [
+        InputVarDefinition(**var) if isinstance(var, dict) else var
+        for var in (model.input_vars or [])
+    ]
+
+    return success_response(
+        CompositeActionCreateRequest(
+            name=model.name,
+            action_type=model.action_type,
+            description=model.description,
+            icon_series=model.icon_series,
+            icon_id=model.icon_id,
+            parameters_schema=model.parameters_schema or [],
+            steps=_convert_steps(model.steps or []),
+            tags=tags,
+            input_vars=input_vars_objs,
+            output_vars=model.output_vars or [],
+            is_public=model.is_public,
+            timeout=model.timeout,
+            retry_on_error=model.retry_on_error,
+            retry_times=model.retry_times,
+            retry_delay=model.retry_delay,
+            log_enabled=model.log_enabled,
+            log_record_params=model.log_record_params,
+            log_record_result=model.log_record_result,
+            log_record_variables=model.log_record_variables,
+            log_only_on_error=model.log_only_on_error,
+            log_max_payload_length=model.log_max_payload_length,
+            log_retention_days=model.log_retention_days,
         )
     )
 
@@ -206,6 +315,9 @@ async def list_custom_actions(
     # 批量加载标签
     tags_map = await action_crud_svr.get_tags_for_actions([m.id for m in models])
 
+    # 批量计算上游同步状态（一次 IN 查询，避免 N+1）
+    sync_flags = await action_crud_svr.attach_upstream_update_flags(models)
+
     items = [
         CompositeActionListItemResponse(
             id=model.id,
@@ -225,6 +337,7 @@ async def list_custom_actions(
             is_verified=model.is_verified,
             forks_count=model.forks_count,
             forked_from_id=model.forked_from_id,
+            **_upstream_sync_kwargs(model, sync_flags.get(model.id)),
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -266,13 +379,14 @@ async def get_custom_action(
     steps_data = _convert_steps(model.steps)
     try:
         ca_ids = ActionCrudService._collect_ca_action_ids(steps_data)
-        if ca_ids:
-            detail_map = await action_crud_svr.get_validated_action_details(
-                ca_ids, auth.mid
-            )
-            ActionCrudService._annotate_steps_with_action_details(
-                steps_data, detail_map
-            )
+        detail_map = (
+            await action_crud_svr.get_validated_action_details(ca_ids, auth.mid)
+            if ca_ids
+            else {}
+        )
+        # 必须无条件调用：复合动作写 action_detail，内置动作写 icon_series/icon_id。
+        # 此前整段被 `if ca_ids` 包住，纯内置步骤的动作拿不到图标，前端流程图只能回落通用图标。
+        ActionCrudService._annotate_steps_with_action_details(steps_data, detail_map)
     except Exception as e:
         return error_response(
             getattr(e, "code", 403), str(e.msg) if hasattr(e, "msg") else str(e)
@@ -280,6 +394,18 @@ async def get_custom_action(
 
     # 从多对多关联表加载标签
     tags = await action_crud_svr.get_tags_for_action(model.id)
+
+    # 聚合步骤树得到对外变量契约（静态推导，失败不阻塞详情）
+
+    try:
+        input_variables, output_variables = (
+            await compute_custom_action_variable_contract(steps_data)
+        )
+    except Exception:
+        input_variables, output_variables = [], []
+
+    # 上游同步状态（单条详情）
+    sync_flags = await action_crud_svr.attach_upstream_update_flags([model])
 
     return success_response(
         CompositeActionDetailResponse(
@@ -296,6 +422,8 @@ async def get_custom_action(
             tags=tags,
             input_vars=input_vars_objs,
             output_vars=model.output_vars,
+            input_variables=input_variables,
+            output_variables=output_variables,
             is_enabled=model.is_enabled,
             is_public=model.is_public,
             timeout=model.timeout,
@@ -314,6 +442,7 @@ async def get_custom_action(
             is_verified=model.is_verified,
             forks_count=model.forks_count,
             forked_from_id=model.forked_from_id,
+            **_upstream_sync_kwargs(model, sync_flags.get(model.id)),
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -347,6 +476,7 @@ async def update_custom_action(
         id=existing.id,
         name=request.name,
         description=request.description,
+        parameters_schema=request.parameters_schema,
         steps=request.steps,
         tags=request.tags,
         input_vars=input_vars_dicts,
@@ -365,10 +495,14 @@ async def update_custom_action(
         log_only_on_error=request.log_only_on_error,
         log_max_payload_length=request.log_max_payload_length,
         log_retention_days=request.log_retention_days,
+        auto_sync_upstream=request.auto_sync_upstream,
     )
 
     if not model:
         return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
+
+    # 采集配置缓存按 action 维度 TTL 缓存，更新后立即失效
+    invalidate_cache(request.action_id)
 
     # 将字典转换回 InputVarDefinition 对象
     input_vars_objs = [
@@ -378,6 +512,9 @@ async def update_custom_action(
 
     # 从多对多关联表加载标签
     tags = await action_crud_svr.get_tags_for_action(model.id)
+
+    # 上游同步状态（更新后重新计算：本地修改标记可能刚被置上）
+    sync_flags = await action_crud_svr.attach_upstream_update_flags([model])
 
     return success_response(
         CompositeActionDetailResponse(
@@ -412,6 +549,7 @@ async def update_custom_action(
             is_verified=model.is_verified,
             forks_count=model.forks_count,
             forked_from_id=model.forked_from_id,
+            **_upstream_sync_kwargs(model, sync_flags.get(model.id)),
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -434,6 +572,8 @@ async def delete_custom_action(
 
     success = await action_crud_svr.delete(model.id)
     if success:
+        # 删除后立即失效采集配置缓存
+        invalidate_cache(action_id)
         return success_response({"message": "删除成功"})
     else:
         return error_response(500, "删除失败")
@@ -491,7 +631,8 @@ async def fork_custom_action(
     类似 GitHub 的 Fork 功能，允许用户复制公开的社区操作到自己的空间，并可以选择重命名。
 
     Args:
-        request: {"action_id": <操作action_id>, "new_name": <新名称（可选）>}
+        request: {"action_id": <操作action_id>, "new_name": <新名称（可选）>,
+                  "auto_sync_upstream": <是否开启上游自动同步，默认 false>}
     """
     # 获取原操作
     original = await action_crud_svr.get_by_action_id(request.action_id)
@@ -505,7 +646,10 @@ async def fork_custom_action(
     try:
         # 执行 Fork（递归深拷贝所有第三方依赖）
         model = await action_crud_svr.fork(
-            id=original.id, target_mid=auth.mid, new_name=request.new_name
+            id=original.id,
+            target_mid=auth.mid,
+            new_name=request.new_name,
+            auto_sync_upstream=request.auto_sync_upstream,
         )
 
         if not model:
@@ -515,16 +659,19 @@ async def fork_custom_action(
             ActionForkResponse(
                 action_id=model.action_id,
                 name=model.name,
-                forked_from=original.name,
+                forked_from=original.action_id,
             ),
             msg="Fork 成功，关联动作已独立复制",
         )
     except ValueError as e:
+        # ValueError 包含 pydantic 校验失败（响应体字段类型不匹配等），
+        # 此前仅静默返回 400，日志里看不到任何痕迹，排查困难
+        logger.opt(exception=True).error(
+            f"Fork 自定义操作失败 action_id={request.action_id}: {e}"
+        )
         return error_response(400, str(e))
     except Exception as e:
         # ActionNotAccessibleException / ActionNotFoundException 等
-        from app.models.common.exceptions.base_exception import BaseException as BizBaseException
-
         if isinstance(e, BizBaseException):
             return error_response(e.code or 400, str(e))
         raise
@@ -568,6 +715,8 @@ async def sync_custom_action(
             msg_parts.append(
                 f"{len(result['unavailable'])} 个上游动作不可用（已保留当前版本）"
             )
+        if result.get("local_overwritten"):
+            msg_parts.append("已覆盖本地修改")
         msg = "同步完成：" + "，".join(msg_parts) if msg_parts else "已是最新版本"
 
         return success_response(
@@ -576,14 +725,16 @@ async def sync_custom_action(
                 updated=result["updated"],
                 created=result["created"],
                 unavailable=result["unavailable"],
+                local_overwritten=bool(result.get("local_overwritten")),
             ),
             msg=msg,
         )
     except ValueError as e:
+        logger.opt(exception=True).error(
+            f"同步自定义操作失败 action_id={request.action_id}: {e}"
+        )
         return error_response(400, str(e))
     except Exception as e:
-        from app.models.common.exceptions.base_exception import BaseException as BizBaseException
-
         if isinstance(e, BizBaseException):
             return error_response(e.code or 400, str(e))
         raise
@@ -601,6 +752,9 @@ async def get_action_forks(
         return error_response(ResponseCode.ACTION_NOT_FOUND, "操作不存在")
 
     forks = await action_crud_svr.list_forks(id, skip, limit)
+
+    # 批量计算上游同步状态
+    sync_flags = await action_crud_svr.attach_upstream_update_flags(forks)
 
     items = [
         CompositeActionListItemResponse(
@@ -620,6 +774,7 @@ async def get_action_forks(
             is_verified=f.is_verified,
             forks_count=f.forks_count,
             forked_from_id=f.forked_from_id,
+            **_upstream_sync_kwargs(f, sync_flags.get(f.id)),
             created_at=f.created_at,
             updated_at=f.updated_at,
         )

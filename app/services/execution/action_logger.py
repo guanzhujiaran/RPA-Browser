@@ -2,15 +2,19 @@
 浏览器操作日志采集
 
 职责（解耦合，无单独 Recorder 单例）：
-    1. resolve_log_option：按优先级解析「本次执行是否采集、采集哪些字段」
-       - 执行参数中显式携带的 log 选项（BaseActionParams.log）
-       - 父操作透传下来的采集配置（复合/循环/分支控制流的子步骤继承）
-       - 自定义操作（ca_xxx）在 CompositeActionModel 上的 log_* 字段
-       - 内置操作回落到服务端 settings.action_log_* 兜底
+    1. resolve_log_option：按优先级解析「本次执行是否采集、采集哪些字段」。
+       三级开关均为三态（None=未设置，听从下一级；True/False=显式开/关），
+       优先级从高到低：
+           1) 执行参数中显式携带的 log 选项（BaseActionParams.log）
+           2) 父操作透传下来的已解析配置（复合/循环/分支子步骤继承）
+           3) 工作流开关（UserWorkflow.log_enabled，仅工作流执行时传入）
+           4) 动作开关（CompositeActionModel.log_enabled）
+           5) 项目兜底（settings.action_log_default_enabled）
     2. save_action_log：将一次 action 执行的上下文 + 结果落库到 ActionLogRecord
 
 设计原则：
-    采集失败绝不影响业务执行 —— save_action_log 内部吞掉所有异常，仅打印告警日志。
+    采集失败绝不影响业务执行 —— save_action_log 内部吞掉所有异常，仅打印告警日志；
+    落库默认走 RabbitMQ 异步消费（action_log_use_mq），投递失败熔断回落同步直写。
 """
 
 from __future__ import annotations
@@ -25,6 +29,12 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
+from bili_common.core.log_pub import (
+    ACTION_LOG_SCHEMA_VERSION,
+    ActionLogMessage,
+    publish_action_log,
+)
+
 from app.config import settings
 from app.models.database.log.models import (
     ActionLogRecord,
@@ -34,6 +44,7 @@ from app.models.database.log.models import (
 from app.models.execution.action_params import ActionLogOption
 from app.models.execution.action_params import is_composite_action_id
 from app.services.execution.crud_service import action_crud_svr, action_log_crud_svr
+from app.utils.json_utils import jsonify, shrink_json_payload
 
 
 def new_execution_id() -> str:
@@ -57,9 +68,17 @@ _FALLBACK_CONFIG = ActionLogOption(
 _DB_CACHE: Dict[str, tuple[float, Optional[ActionLogOption]]] = {}
 _DB_CACHE_TTL = 30.0
 
+# MQ 投递熔断截止时间（monotonic 秒）：投递失败后进入冷却期，期间直接同步直写，
+# 避免队列不可用时每条日志都触发一次 broker 建连等待、拖死 RPA 执行线程
+_MQ_COOLDOWN_UNTIL: float = 0.0
+
 
 async def _resolve_db_log_option(action_id: str) -> Optional[ActionLogOption]:
-    """从 CompositeActionModel 的 log_* 字段解析自定义操作的采集配置"""
+    """从 CompositeActionModel 的 log_* 字段解析自定义操作的采集配置（三态）。
+
+    返回 None 表示「未设置」（模型缺失 / log_enabled 为 NULL），由调用方继续向
+    下一级（项目兜底）解析；返回 option 时其 enabled 为显式布尔值。
+    """
     cached = _DB_CACHE.get(action_id)
     if cached and cached[0] > time.monotonic():
         return cached[1]
@@ -67,9 +86,9 @@ async def _resolve_db_log_option(action_id: str) -> Optional[ActionLogOption]:
     option: Optional[ActionLogOption] = None
     try:
         model = await action_crud_svr.get_by_action_id(action_id)
-        if model is not None and getattr(model, "log_enabled", False):
+        if model is not None and getattr(model, "log_enabled", None) is not None:
             option = ActionLogOption(
-                enabled=True,
+                enabled=bool(model.log_enabled),
                 record_params=model.log_record_params,
                 record_result=model.log_record_result,
                 record_variables=model.log_record_variables,
@@ -86,6 +105,21 @@ async def _resolve_db_log_option(action_id: str) -> Optional[ActionLogOption]:
     return option
 
 
+async def _resolve_action_option(action_id: str) -> Optional[ActionLogOption]:
+    """动作级采集配置：仅复合动作可能有显式配置；None 表示未设置。"""
+    if not is_composite_action_id(action_id):
+        return None
+    return await _resolve_db_log_option(action_id)
+
+
+def _with_enabled(
+    option: Optional[ActionLogOption], enabled: bool
+) -> ActionLogOption:
+    """以 option 的字段级配置为基底，仅覆盖 enabled；option 为空时用兜底字段配置。"""
+    base = option if option is not None else _FALLBACK_CONFIG
+    return base.model_copy(update={"enabled": enabled})
+
+
 def invalidate_cache(mid: int | str | None = None) -> None:
     """配置变更后清理缓存；按 action 维度缓存，直接全量清理即可"""
     _DB_CACHE.clear()
@@ -96,10 +130,20 @@ async def resolve_log_option(
     action_id: str,
     replaced_params: Dict | None = None,
     ctx_log_config: Optional[ActionLogOption] = None,
+    workflow_log_enabled: bool | None = None,
 ) -> Optional[ActionLogOption]:
-    """解析生效的日志采集配置（优先级从高到低）。
+    """解析生效的日志采集配置（优先级从高到低，开关均为三态）。
 
-    返回 None 表示「本次不采集」（包括显式关闭 / 未启用）。
+    任一级显式取值（True/False）即终止解析；None（未设置）继续向下一级。
+
+    1. 执行参数中显式携带的 log 选项（BaseActionParams.log）；
+    2. 父操作透传的已解析配置（复合/循环/分支控制流的子步骤继承）；
+    3. 工作流开关 `workflow_log_enabled`（仅工作流执行时由 engine 传入）：
+       本次运行的总闸，显式开/关都压制动作级与项目级；字段级配置仍取自动作自身；
+    4. 动作开关（CompositeActionModel.log_enabled，三态）；
+    5. 项目兜底（settings.action_log_default_enabled，内置操作也回落至此）。
+
+    返回 None 表示「本次不采集」（含解析失败降级）。
     """
     # 1. 执行参数中显式携带的 log 选项（BaseActionParams.log）
     if isinstance(replaced_params, dict):
@@ -114,11 +158,18 @@ async def resolve_log_option(
     if ctx_log_config is not None:
         return ctx_log_config
 
-    # 3. 自定义复合动作（雪花 int）在数据库上的 log_* 配置
-    if is_composite_action_id(action_id):
-        return await _resolve_db_log_option(action_id)
+    # 3. 工作流级开关（本次运行的总闸；显式开/关压制动作级与项目级）
+    if workflow_log_enabled is not None:
+        return _with_enabled(
+            await _resolve_action_option(action_id), bool(workflow_log_enabled)
+        )
 
-    # 4. 内置操作回落到服务端兜底配置
+    # 4. 动作级开关（三态；None=未设置时继续向项目兜底解析）
+    action_option = await _resolve_action_option(action_id)
+    if action_option is not None:
+        return action_option
+
+    # 5. 内置操作 / 均未设置 → 项目兜底
     return _FALLBACK_CONFIG
 
 
@@ -202,24 +253,76 @@ async def _do_save(
         page_url=_safe_page_url(ctx.page),
         status=final_status,
         success=success,
-        params=_safe_jsonify(ctx.params) if option.record_params else None,
+        params=(
+            shrink_json_payload(
+                _redact_sensitive(jsonify(ctx.params)),
+                option.max_payload_length,
+            )
+            if option.record_params
+            else None
+        ),
         result_data=(
-            _safe_jsonify(
-                {
-                    "success": success,
-                    "data": getattr(result, "data", None),
-                }
+            shrink_json_payload(
+                _redact_sensitive(
+                    jsonify(
+                        {
+                            "success": success,
+                            "data": getattr(result, "data", None),
+                        }
+                    )
+                ),
+                option.max_payload_length,
             )
             if option.record_result
             else None
         ),
-        variables=_safe_jsonify(ctx.variables) if option.record_variables else None,
-        logs=_safe_jsonify(getattr(result, "logs", None)),
+        variables=(
+            shrink_json_payload(
+                _redact_sensitive(jsonify(ctx.variables)),
+                option.max_payload_length,
+            )
+            if option.record_variables
+            else None
+        ),
+        logs=normalize_logs(getattr(result, "logs", None)),
         error_message=str(getattr(result, "error", None) or "") or None,
         execution_time=float(getattr(result, "execution_time", 0.0) or 0.0),
         started_at=ctx.started_at,
         finished_at=datetime.now(),
     )
+    await _persist(record)
+
+
+async def _persist(record: ActionLogRecord) -> None:
+    """落库一次操作日志。
+
+    MQ 开关开启时优先投递队列（把日志落库与业务执行解耦，执行协程只承担一次
+    fire-and-forget 投递，不同步等待落库），投递失败则回落为同步直写，
+    保证「日志不因队列不可用而丢失」；开关关闭时行为与改造前完全一致。
+
+    熔断：投递失败后进入 `settings.action_log_mq_cooldown_seconds` 冷却期，
+    冷却期内直接同步直写——避免队列不可用时每条日志都触发一次 broker 建连等待，
+    把 RPA 执行线程拖死；冷却结束自动重试投递（恢复后回到 MQ 异步落库）。
+    """
+    global _MQ_COOLDOWN_UNTIL
+    if settings.action_log_use_mq and time.monotonic() >= _MQ_COOLDOWN_UNTIL:
+        try:
+            await publish_action_log(
+                ActionLogMessage(
+                    schema_version=ACTION_LOG_SCHEMA_VERSION,
+                    record=record.model_dump(mode="json"),
+                ),
+                amqp_url=settings.rabbitmq_url,
+            )
+            return
+        except Exception:
+            _MQ_COOLDOWN_UNTIL = (
+                time.monotonic() + settings.action_log_mq_cooldown_seconds
+            )
+            logger.warning(
+                f"[ActionLog] 投递日志队列失败，进入 {settings.action_log_mq_cooldown_seconds}s "
+                f"熔断（期间同步直写）: {traceback.format_exc()}"
+            )
     await action_log_crud_svr.create(record)
 
 
@@ -259,39 +362,56 @@ def _safe_page_url(page: Any) -> str:
         return ""
 
 
-def _safe_jsonify(value: Any) -> Dict | None:
-    """将任意值转为可存 JSON 列的 dict，失败则返回包含错误信息的 dict"""
-    if value is None:
-        return None
-    try:
-        data = _to_jsonable(value)
-        if not isinstance(data, dict):
-            data = {"value": data}
-        return data
-    except Exception:
-        return {"_serialization_error": str(traceback.format_exc())}
+# 敏感字段关键词黑名单（按 key 大小写不敏感的子串匹配）
+_SENSITIVE_KEYWORDS = (
+    "llm_api_key",
+    "llm_server_url",
+    "token",
+    "password",
+    "secret",
+    "api_key",
+)
+_REDACTED_VALUE = "***"
 
 
-def _to_jsonable(value: Any, depth: int = 0) -> Any:
-    """递归将任意对象转为可 JSON 序列化的结构"""
-    if depth > 8:
-        return str(value)
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "model_dump"):
-        try:
-            return _to_jsonable(value.model_dump(), depth + 1)
-        except Exception:
-            return str(value)
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(kw in lowered for kw in _SENSITIVE_KEYWORDS)
+
+
+def _redact_sensitive(value: Any) -> Any:
+    """递归脱敏：key 命中黑名单的字段值替换为 `***`。
+
+    脱敏在**生产端**就地完成（绝不「全量投递 + 消费端过滤」），
+    避免 `llm_api_key` 等敏感信息进入消息队列或落库。
+    """
     if isinstance(value, dict):
-        return {str(k): _to_jsonable(v, depth + 1) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_to_jsonable(v, depth + 1) for v in value]
-    if callable(value):
-        return f"<callable {getattr(value, '__name__', 'anonymous')}>"
-    return str(value)
+        return {
+            str(k): (
+                _REDACTED_VALUE if _is_sensitive_key(str(k)) else _redact_sensitive(v)
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_sensitive(v) for v in value]
+    return value
+
+
+def normalize_logs(value: Any) -> list[str]:
+    """将执行过程日志规范为字符串列表。
+
+    `logs` 列的模型类型是 List[str]，但历史上曾误用 `jsonify` 写入，
+    导致列表被包成 {"value": [...]}；此函数同时兼容该脏数据。
+    """
+    if isinstance(value, dict) and set(value.keys()) == {"value"}:
+        value = value["value"]
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [v if isinstance(v, str) else str(v) for v in value]
+    return [str(value)]
 
 
 __all__ = [

@@ -78,6 +78,8 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     custom_actions_create = "/custom-actions/create"
     custom_actions_update = "/custom-actions/update"
     custom_actions_delete = "/custom-actions/delete"
+    custom_actions_import = "/custom-actions/import"
+    custom_actions_export = "/custom-actions/export"
     custom_actions_tags = "/custom-actions/tags"
     custom_actions_tags_search = "/custom-actions/tags/search"
     custom_actions_names_search = "/custom-actions/names/search"
@@ -88,12 +90,21 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     workflows_create = "/workflows/create"
     workflows_update = "/workflows/update"
     workflows_delete = "/workflows/delete"
+    workflows_import = "/workflows/import"
+    workflows_export = "/workflows/export"
     workflows_duplicate = "/workflows/duplicate"
     workflows_execute = "/workflows/execute"
     workflows_execute_step = "/workflows/execute-step"
     workflows_run = "/workflows/run"
     workflows_runs = "/workflows/runs"
     workflows_runs_get = "/workflows/runs/get"
+    workflows_runs_stop = "/workflows/runs/stop"
+    # 运行进度 SSE 事件流（首帧快照 + 进度推送 + 心跳，终态后关闭）
+    workflows_runs_events = "/workflows/runs/events"
+    # 断点恢复：手动「继续运行」被中断的运行
+    workflows_runs_resume = "/workflows/runs/resume"
+    # 已处理资源记录（去重数据源，含记录主键 id 与业务主键 resource_id）
+    workflows_resources_list = "/workflows/resources/list"
 
     # === 操作日志查询 ===
     action_logs_list = "/action-logs/list"
@@ -136,7 +147,6 @@ class NotifyRouterPath(StrEnumAutoDoc):
     upsert_notify_config = "/notify/conf/upsert"
     read_notify_config = "/notify/conf/read"
     delete_notify_config = "/notify/conf/delete"
-    test_notify = "/notify/test"
 
 
 class AdminPermissionRouterPath(StrEnumAutoDoc):
@@ -145,3 +155,18 @@ class AdminPermissionRouterPath(StrEnumAutoDoc):
     permission_levels = "/permission/levels"
     permission_update = "/permission/update"
     permission_reset = "/permission/reset"
+
+
+class AdminWorkflowRouterPath(StrEnumAutoDoc):
+    """工作流管理端路由路径 - prefix: /api/admin/rpa（仅 root）
+
+    root 对全部用户的工作流拥有完整管理特权，与用户侧
+    /browser/control/workflows/* 隔离，避免普通用户页面混入全量数据。
+    """
+
+    workflow_list = "/workflow/list"
+    workflow_get = "/workflow/get"
+    workflow_update = "/workflow/update"
+    workflow_delete = "/workflow/delete"
+    workflow_set_enabled = "/workflow/set-enabled"
+    workflow_runs = "/workflow/runs"

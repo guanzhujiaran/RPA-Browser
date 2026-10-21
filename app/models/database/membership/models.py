@@ -12,6 +12,7 @@ from datetime import date, datetime
 from enum import Enum as PyEnum
 
 from sqlalchemy import BIGINT, Enum as SAEnum, Index, UniqueConstraint
+from pydantic import NaiveDatetime
 from sqlmodel import Field
 
 from bili_common.models import StrEnumAutoDoc
@@ -133,8 +134,8 @@ class MonthCardRecord(BaseSQLModel, table=True):
     source: MonthCardSourceEnum = Field(
         sa_type=enum_value_type(MonthCardSourceEnum), description="来源"
     )
-    start_at: datetime = Field(description="生效时间")
-    expire_at: datetime = Field(description="到期时间（不含）")
+    start_at: NaiveDatetime = Field(description="生效时间")
+    expire_at: NaiveDatetime = Field(description="到期时间（不含）")
     ref_id: str = Field(
         default="", max_length=100, description="关联业务ID（兑换码等）"
     )
@@ -209,7 +210,7 @@ class RedemptionCode(BaseSQLModel, table=True):
     max_uses: int = Field(default=1, description="最大兑换次数")
     used_count: int = Field(default=0, description="已兑换次数")
     is_enabled: bool = Field(default=True, description="是否启用")
-    expire_at: datetime | None = Field(
+    expire_at: NaiveDatetime | None = Field(
         default=None, description="兑换码本身的有效期（None=永久）"
     )
     batch_no: str = Field(default="", max_length=64, index=True, description="批次号")
@@ -267,7 +268,7 @@ class DurationMonthlyReset(BaseSQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     period: str = Field(max_length=7, index=True, description="清零所属月份 YYYY-MM")
-    reset_at: datetime = Field(description="实际执行时间")
+    reset_at: NaiveDatetime = Field(description="实际执行时间")
     affected_users: int = Field(default=0, description="被清零的账户数")
     cleared_seconds: int = Field(default=0, description="清零总时长（秒）")
     remark: str = Field(default="", max_length=500, description="备注")

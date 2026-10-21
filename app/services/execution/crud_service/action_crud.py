@@ -13,6 +13,7 @@ from app.models.database.workflow.models import (
     TagModel,
     CompositeActionTagLink,
 )
+from app.models.workflow.models import UpstreamSyncFlag
 from app.models.execution.action_params import (
     BaseWorkflowStep,
     is_composite_action_id,
@@ -184,17 +185,43 @@ class ActionCrudService:
         return detail_map
 
     @staticmethod
+    def _builtin_icon(action_type: Any) -> tuple[int, int]:
+        """内置操作 → 默认展示图标 ``(icon_series, icon_id)``。
+
+        与内置动作元数据（``BuiltinActionType.icon``，编辑器工具箱拿到的同一份
+        ``icon_series``/``icon_id``）同源，保证动作详情里的步骤、流程图与编辑器图标一致。
+        非内置类型或未登记图标时返回 ``(0, 0)``（前端回落内置图标）。
+        """
+        if not isinstance(action_type, str) or not action_type:
+            return 0, 0
+        try:
+            return BuiltinActionType(action_type).icon
+        except ValueError:
+            return 0, 0
+
+    @staticmethod
     def _annotate_steps_with_action_details(
         steps: list[Dict],
         detail_map: Dict[int, Dict],
     ) -> None:
-        """递归为 steps 中的复合动作引用添加 action_detail 字段"""
+        """递归为 steps 标注展示元数据
+
+        - 复合动作引用（``ca_``）：写入 ``action_detail``（名称 / 描述 / 图标等完整信息）；
+        - 内置操作：写入 ``icon_series`` / ``icon_id``。steps 里只有 ``action_id``，
+          不标注的话前端只能回落到通用图标，与编辑器（工具箱走内置动作元数据）不一致。
+        """
         for step in steps:
             action_id = step.get("action_id")
             if is_composite_action_id(action_id):
                 step["action_detail"] = detail_map.get(
                     normalize_composite_action_id(action_id)
                 )
+            else:
+                icon_series, icon_id = ActionCrudService._builtin_icon(
+                    step.get("action_type") or action_id
+                )
+                step["icon_series"] = icon_series
+                step["icon_id"] = icon_id
             params = step.get("params")
             if isinstance(params, dict):
                 for key in ("TrueBranch", "FalseBranch", "loopBranch"):
@@ -306,7 +333,7 @@ class ActionCrudService:
         retry_on_error: bool = False,
         retry_times: int = 0,
         retry_delay: float = 1.0,
-        log_enabled: bool = False,
+        log_enabled: bool | None = None,
         log_record_params: bool = True,
         log_record_result: bool = True,
         log_record_variables: bool = False,
@@ -538,6 +565,7 @@ class ActionCrudService:
         log_only_on_error: bool | None = None,
         log_max_payload_length: int | None = None,
         log_retention_days: int | None = None,
+        auto_sync_upstream: bool | None = None,
     ) -> CompositeActionModel | None:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
@@ -565,6 +593,8 @@ class ActionCrudService:
                 model.parameters_schema = parameters_schema
             if steps is not None:
                 model.steps = steps
+                # 用户主动修改 steps = 本地修改，自动同步将跳过（docs/fork-上游同步计划书.md）
+                model.local_steps_modified = True
             if tags is not None:
                 await ActionCrudService._set_tags_for_action(session, model.id, tags)
             if input_vars is not None:
@@ -601,6 +631,8 @@ class ActionCrudService:
                 model.log_max_payload_length = log_max_payload_length
             if log_retention_days is not None:
                 model.log_retention_days = log_retention_days
+            if auto_sync_upstream is not None:
+                model.auto_sync_upstream = auto_sync_upstream
 
             model.updated_at = datetime.now()
             await session.commit()
@@ -678,7 +710,10 @@ class ActionCrudService:
 
     @staticmethod
     async def fork(
-        id: int, target_mid: int, new_name: str | None = None
+        id: int,
+        target_mid: int,
+        new_name: str | None = None,
+        auto_sync_upstream: bool = False,
     ) -> CompositeActionModel | None:
         """Fork Action（递归深拷贝所有第三方依赖）
 
@@ -698,6 +733,7 @@ class ActionCrudService:
             action_id=action_id,
             target_mid=target_mid,
             new_name=new_name,
+            auto_sync_upstream=auto_sync_upstream,
         )
         return top_model
 
@@ -708,6 +744,7 @@ class ActionCrudService:
         action_id: int,
         target_mid: int,
         new_name: str | None = None,
+        auto_sync_upstream: bool = False,
     ) -> tuple[CompositeActionModel, list[CompositeActionModel]]:
         """递归深拷贝一个 Action 及其所有第三方复合动作依赖
 
@@ -721,6 +758,8 @@ class ActionCrudService:
             action_id: 要 Fork 的顶层 Action 的雪花 action_id
             target_mid: Fork 目标用户 mid
             new_name: 顶层 Action 的新名称（可选）
+            auto_sync_upstream: 顶层副本是否开启上游自动同步（嵌套子副本不开启，
+                其更新由顶层副本的自动同步递归覆盖）
 
         Returns:
             (顶层新 Action, 所有新建的 Action 列表[含顶层])
@@ -844,6 +883,10 @@ class ActionCrudService:
                     else [],
                     is_public=False,
                     forked_from_id=original.id,
+                    # 上游同步快照：记录"此副本同步自上游哪个版本"（docs/fork-上游同步计划书.md）
+                    last_synced_at=original.updated_at,
+                    auto_sync_upstream=auto_sync_upstream if is_top_level else False,
+                    local_steps_modified=False,
                     log_enabled=original.log_enabled,
                     log_record_params=original.log_record_params,
                     log_record_result=original.log_record_result,
@@ -914,6 +957,7 @@ class ActionCrudService:
                 "updated": 被更新内容的 Action 名称列表,
                 "created": 新 Fork 的 Action 名称列表,
                 "unavailable": 上游已不可用的 action_id 列表,
+                "local_overwritten": 同步是否覆盖了用户的本地修改（local_steps_modified）,
             }
         """
         import copy
@@ -922,6 +966,7 @@ class ActionCrudService:
         updated_names: list[str] = []
         created_names: list[str] = []
         unavailable_ids: list[int] = []
+        local_overwritten = False
 
         async with DatabaseSessionManager.async_session() as session:
 
@@ -1009,6 +1054,7 @@ class ActionCrudService:
                 )
 
                 # 更新当前 Fork 副本的内容（保留名称、mid、action_id、forked_from_id、is_public）
+                had_local_edit = fork_model.local_steps_modified
                 fork_model.steps = replaced_steps
                 fork_model.action_type = upstream.action_type
                 fork_model.is_composite = upstream.is_composite
@@ -1042,6 +1088,11 @@ class ActionCrudService:
                 fork_model.log_retention_days = upstream.log_retention_days
                 fork_model.description = f"Forked from: {upstream.name}"
                 fork_model.updated_at = datetime.now()
+                # 同步快照前移：副本已与上游当前版本一致，本地修改标记随之清零
+                fork_model.last_synced_at = upstream.updated_at
+                fork_model.local_steps_modified = False
+                if had_local_edit:
+                    local_overwritten = True
 
                 session.add(fork_model)
                 updated_names.append(fork_model.name)
@@ -1160,6 +1211,11 @@ class ActionCrudService:
                     else [],
                     is_public=False,
                     forked_from_id=upstream_child.id,
+                    # 上游同步快照：新建副本即与上游当前版本一致；
+                    # 嵌套副本不开启自动同步，由顶层副本的同步递归覆盖
+                    last_synced_at=upstream_child.updated_at,
+                    auto_sync_upstream=False,
+                    local_steps_modified=False,
                     log_enabled=upstream_child.log_enabled,
                     log_record_params=upstream_child.log_record_params,
                     log_record_result=upstream_child.log_record_result,
@@ -1199,7 +1255,66 @@ class ActionCrudService:
             "updated": updated_names,
             "created": created_names,
             "unavailable": unavailable_ids,
+            "local_overwritten": local_overwritten,
         }
+
+    # ═══════════════ 上游同步状态（批量标注） ═══════════════
+
+    @staticmethod
+    async def attach_upstream_update_flags(
+        models: List[CompositeActionModel],
+    ) -> Dict[int, UpstreamSyncFlag]:
+        """批量计算每个 Action 的「是否需要同步上游」状态
+
+        一次 IN 查询取回所有上游的 updated_at / is_public，避免 N+1。
+
+        need_sync 判定（docs/fork-上游同步计划书.md §4.1）：
+        forked_from_id 非空 且上游存在且公开 且
+        上游.updated_at > last_synced_at（last_synced_at 为 None 视为需要同步）。
+        上游已删除/私有化：不提示同步（保留当前副本）。
+
+        Args:
+            models: 待标注的 Action 列表（通常是列表接口的一页结果）
+
+        Returns:
+            {model.id: UpstreamSyncFlag}；非 Fork 资源不出现在结果中
+        """
+        flags: Dict[int, UpstreamSyncFlag] = {}
+        fork_models = [m for m in models if m.forked_from_id]
+        if not fork_models:
+            return flags
+
+        upstream_ids = list({m.forked_from_id for m in fork_models})
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(
+                    CompositeActionModel.id,
+                    CompositeActionModel.updated_at,
+                    CompositeActionModel.is_public,
+                ).where(CompositeActionModel.id.in_(upstream_ids))
+            )
+            upstream_map: Dict[int, tuple[datetime, bool]] = {
+                row[0]: (row[1], bool(row[2])) for row in result.all()
+            }
+
+        for m in fork_models:
+            assert m.id is not None
+            upstream = upstream_map.get(m.forked_from_id)
+            if not upstream or not upstream[1]:
+                # 上游已删除或私有化：不提示同步
+                flags[m.id] = UpstreamSyncFlag(
+                    has_upstream_update=False, upstream_updated_at=None
+                )
+                continue
+            upstream_updated_at = upstream[0]
+            has_update = (
+                m.last_synced_at is None or upstream_updated_at > m.last_synced_at
+            )
+            flags[m.id] = UpstreamSyncFlag(
+                has_upstream_update=has_update,
+                upstream_updated_at=int(upstream_updated_at.timestamp()),
+            )
+        return flags
 
     @staticmethod
     async def list_tags_by_user(mid: int) -> List[str]:

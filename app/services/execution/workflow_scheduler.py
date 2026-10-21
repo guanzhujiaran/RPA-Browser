@@ -21,7 +21,7 @@ from loguru import logger
 from app.models.database.workflow.models import UserWorkflow
 from app.scheduler_manager import scheduler_manager_ist
 from app.services.execution.crud_service import workflow_crud_svr
-from app.services.execution.workflow_runner import run_workflow
+from app.services.execution.workflow_runner import launch_workflow_run
 from app.models.database.workflow.models import WorkflowRunTriggerEnum
 
 JOB_ID_PREFIX = "workflow:"
@@ -180,7 +180,11 @@ async def run_workflow_job(workflow_id: str) -> None:
             )
             return
 
-        await run_workflow(workflow, trigger_source=WorkflowRunTriggerEnum.SCHEDULE)
+        # 异步启动：立即返回 run_id，执行在后台 task 中进行，不阻塞调度线程
+        run_id = launch_workflow_run(
+            workflow, trigger_source=WorkflowRunTriggerEnum.SCHEDULE
+        )
+        logger.info(f"[WorkflowScheduler] 已启动定时运行: run={run_id}")
 
         # 运行后刷新下次触发时间（跨天 / 表达式变更场景）
         cron = extract_cron(workflow)

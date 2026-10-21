@@ -29,6 +29,7 @@ from sqlalchemy import func, select
 
 from datetime import datetime
 
+from bili_common.models.push import PushChannelConfig
 from bili_common.models.response import (
     StandardResponse,
     error_response,
@@ -42,6 +43,8 @@ from bili_common.rpc.rpa import (
     CreateTagResult,
     DetachTagParams,
     DetachTagResult,
+    GetNotifyConfigParams,
+    GetNotifyConfigResult,
     GetResourceDetailParams,
     GetResourceDetailResult,
     HideResourceParams,
@@ -537,6 +540,39 @@ async def rpc_list_tags_by_target(
 
 
 # ---------------------------------------------------------------------------
+# 用户外部推送渠道配置（2.62.0）：互动事件站外推送
+# ---------------------------------------------------------------------------
+
+
+@broker.subscriber(rpa_rpc_routing_key_for(RpaRpcMethodName.GET_NOTIFY_CONFIG))
+@rpc_safe
+async def rpc_get_notify_config(
+    params: GetNotifyConfigParams,
+) -> StandardResponse:
+    """获取用户的外部推送渠道配置（get_notify_config，2.62.0）。
+
+    be-message 在互动事件外推时调用：取该用户的**全局**通知配置
+    （``rpa_notification_config``，browser_id=None），映射为 bili-common
+    ``PushChannelConfig`` 返回；未配置渠道时 config=None（弱依赖，不抛错）。
+    """
+    from app.services.RPA_browser.browser.notification_service import (
+        NotificationService,
+    )
+
+    async with DatabaseSessionManager.async_session() as session:
+        row = await NotificationService.get_notification_config(
+            str(params.mid), session, browser_id=None
+        )
+    # NotificationConfig 缺 push_plus_url 等字段、且多出 mid/id/browser_id，
+    # PushChannelConfig 的 extra="ignore" 会忽略多余字段、缺字段走默认值。
+    config = PushChannelConfig(**row.model_dump()) if row is not None else None
+    return success_response(
+        data=GetNotifyConfigResult(config=config),
+        msg="success" if config is not None else "notify config not found",
+    )
+
+
+# ---------------------------------------------------------------------------
 # 生命周期（供 main.py lifespan 调用）
 # ---------------------------------------------------------------------------
 
@@ -566,4 +602,5 @@ __all__ = [
     "rpc_detach_tag",
     "rpc_list_tags",
     "rpc_list_tags_by_target",
+    "rpc_get_notify_config",
 ]

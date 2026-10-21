@@ -14,7 +14,12 @@ import asyncio
 from loguru import logger
 from app.services.mq.rpc_client import rpc_client
 from app.services.mq.rpc_server import start_rpc_server, stop_rpc_server
+from app.services.execution.action_log_consumer import (
+    start_log_consumer,
+    stop_log_consumer,
+)
 from app.services.RPA_browser.session.session_status_bus import session_status_bus
+from app.services.execution.workflow_progress import workflow_run_progress_bus
 
 
 def _setup_windows_event_loop() -> None:
@@ -43,6 +48,8 @@ async def lifespan(app: FastAPI):
 
     # 会话状态 SSE 推送：绑定事件循环，供非循环线程发布状态时安全投递
     session_status_bus.bind_loop(asyncio.get_running_loop())
+    # 工作流运行进度 SSE 推送：同上（进度上报可能在执行线程投递）
+    workflow_run_progress_bus.bind_loop(asyncio.get_running_loop())
 
     # 参照 FastapiApp lifespan 模式：先执行 alembic upgrade head，再检查 Schema 一致性
     if settings.alembic_auto_migrate:
@@ -69,10 +76,35 @@ async def lifespan(app: FastAPI):
     # 启动 RPA 资源 RPC 服务端（2.18.0：供 be-message 获取资源详情）
     await start_rpc_server()
 
+    # 断点恢复：把「服务重启导致中断」且开启了 resume_on_restart 的运行从
+    # checkpoint 之后重新拉起（至少一次语义，循环内资源由处理记录去重）。
+    # 放在 RPC 就绪之后：恢复出来的运行会立刻执行步骤，HTTP 类动作依赖 RPC 链路。
+    from app.services.execution.workflow_runner import resume_interrupted_runs
+
+    try:
+        resumed = await resume_interrupted_runs()
+        if resumed:
+            logger.warning(
+                f"⚠️ 已从断点恢复 {len(resumed)} 条中断的工作流运行: {resumed[:20]}"
+            )
+    except Exception as exc:  # noqa: BLE001 - 恢复失败不阻塞服务启动
+        logger.exception(f"启动断点恢复失败（不阻塞启动）: {exc}")
+
+    # 启动操作日志 MQ 消费端（可选：仅当 action_log_use_mq 开启时）。
+    # 启动失败不阻塞服务：发布端在投递失败时会自动回落同步直写（日志不丢），
+    # 队列里堆积的消息等消费端下次启动后再被幂等落库。
+    if settings.action_log_use_mq:
+        try:
+            await start_log_consumer()
+        except Exception as exc:  # noqa: BLE001 - 日志消费端不可用不阻塞启动
+            logger.warning(f"操作日志 MQ 消费端启动失败（期间日志回落同步直写）: {exc}")
+
     logger.info("lifespan complete!")
     yield
     await stop_background_tasks()
     await stop_virtual_display()
+    if settings.action_log_use_mq:
+        await stop_log_consumer()
     await stop_rpc_server()
     await rpc_client.close()
 

@@ -19,7 +19,8 @@ from app.models.execution.action_params import (
     RandomPickParams,
     RandomPickResult,
 )
-from app.services.execution.actions.base import BaseAction, ActionResult
+from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
+from app.services.execution.scope import TemplateResolveError
 
 _TEMPLATE_RE = re.compile(r"\{\{([\w.]+)\}\}")
 
@@ -77,7 +78,12 @@ class RandomPickAction(BaseAction[RandomPickParams]):
 
         def _sub(m: "re.Match") -> str:
             v = self._walk(m.group(1))
-            return "" if v is None else str(v)
+            if v is None:
+                # 变量缺失 / 值为 None / 点路径中断 → 显式抛错终止，不再静默填空字符串
+                raise TemplateResolveError(
+                    m.group(0), m.group(1), "变量不存在、为空或点路径中断"
+                )
+            return str(v)
 
         return _TEMPLATE_RE.sub(_sub, value)
 
@@ -137,3 +143,8 @@ class RandomPickAction(BaseAction[RandomPickParams]):
             action_id=self.metadata.id,
             action_name=self.metadata.name,
         )
+
+
+# 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
+
+register_action_class(RandomPickAction)

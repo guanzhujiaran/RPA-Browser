@@ -171,13 +171,17 @@ class NotificationService:
         config = await NotificationService.get_notification_config(
             mid, session, browser_id
         )
+        # 携带接收人 mid：外部推送总开关（push_enabled / 免打扰）由 message-service 统一判定
+        gate = {"mid": int(mid)} if str(mid).strip().isdigit() else {}
         if config is None:
             # 无 per-user 配置时，回落到 docker-compose 中共享的全局 MESSAGE_CONFIG
             # message_config 始终为 pydantic 模型（可能为空），直接交给 message-service 兜底
             global_conf = settings.message_config
-            await NotificationService.push_msg_by_config(title, content, global_conf)
+            await NotificationService.push_msg_by_config(
+                title, content, global_conf, **gate
+            )
             return
-        await NotificationService.push_msg_by_config(title, content, config)
+        await NotificationService.push_msg_by_config(title, content, config, **gate)
 
     @classmethod
     async def push_msg_by_config(

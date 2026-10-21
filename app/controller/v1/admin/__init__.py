@@ -15,6 +15,9 @@ from app.controller.v1.admin.permission_router import router as permission_sub_r
 from app.controller.v1.admin.membership_admin_router import (
     router as membership_admin_sub_router,
 )
+from app.controller.v1.admin.workflow_admin_router import (
+    router as workflow_admin_sub_router,
+)
 from app.models.router.all_routes import admin_router
 from app.utils.controller.router_path import gen_api_router
 
@@ -28,5 +31,6 @@ router.include_router(user_ban_sub_router)
 router.include_router(browser_monitor_sub_router)
 router.include_router(permission_sub_router)
 router.include_router(membership_admin_sub_router)
+router.include_router(workflow_admin_sub_router)
 
 __all__ = ["router"]

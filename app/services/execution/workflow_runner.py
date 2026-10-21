@@ -1,383 +1,78 @@
-"""
-工作流执行器（调度外壳的运行时）
+"""工作流执行器（调度外壳的运行时）—— 兼容入口
+
+原 1094 行单文件已按职责拆分为 ``app/services/execution/workflow/`` 包：
+
+===========================  ============================================
+模块                         职责
+===========================  ============================================
+``workflow/precheck.py``     前置校验 + ``WorkflowRunnerError``
+``workflow/notify.py``       运行通知（双通道投递）
+``workflow/guards.py``       僵尸回收 / 会话释放 / 停止宽限期
+``workflow/run_workflow.py`` 执行主体（阶段化 helper）
+``workflow/launcher.py``     异步启动 / 任务收尾 / 断点恢复
+===========================  ============================================
 
 职责：把「工作流（引用一个复合操作 + 触发配置 + 目标浏览器）」真正跑起来，
 并产出可观测结果：
     - WorkflowRunRecord：一次运行的聚合记录（不依赖 action 的 log_enabled）
     - ActionLogRecord：步骤级明细（由 ExecutionEngine.execute_steps 自动写入，
       source=workflow + workflow_id，通过 execution_id 与运行记录 1:1 关联）
-    - 失败推送：复用 NotificationConfig + push_msg（发布到 message-service）
+    - 运行通知：开始/结束（成功/失败）双通道汇报，外部推送复用
+      NotificationConfig + push_msg，站内系统通知经 be-message RPC（无需配置）
 
 设计约束：
     1. 工作流不改写引用的 action，只按顺序执行其 steps（action 是多对一共享资产）。
     2. 定时运行允许自动拉起浏览器会话（headless），无需人工先开会话。
     3. 本模块所有异常都被收敛为「运行失败」，绝不向上抛出打断调度线程。
+
+本文件仅做**全量 re-export**，保证
+``from app.services.execution.workflow_runner import X`` 既有引用零改动；
+新代码请直接从 ``app.services.execution.workflow`` 子模块导入。
 """
 
-from __future__ import annotations
-
-import time
-from datetime import datetime
-from typing import Any, Dict, List
-
-from loguru import logger
-
-from app.models.database.workflow.models import (
-    UserWorkflow,
-    WorkflowRunRecord,
-    WorkflowRunStatusEnum,
-    WorkflowRunTriggerEnum,
+from app.services.execution.workflow.guards import (
+    _collect_zombie_runs,
+    _list_running_for_browser,
+    _reap_dead_run,
+    _release_browser_after_run,
+    _release_session_mark,
+    enforce_stop_grace,
+    list_alive_running_for_browser,
+    reap_zombie_runs,
 )
-from app.models.execution.request_params import WorkflowExecutionRequest
-from app.services.execution.crud_service import (
-    action_crud_svr,
-    workflow_crud_svr,
-    workflow_run_crud_svr,
+from app.services.execution.workflow.launcher import (
+    _finalize_run_if_needed,
+    _on_run_task_done,
+    launch_workflow_run,
+    resume_interrupted_runs,
+    resume_run_record,
 )
+from app.services.execution.workflow.notify import _notify_run, _run_notify_content
+from app.services.execution.workflow.precheck import (
+    WorkflowRunnerError,
+    _load_normalized_steps,
+    _resolve_target_browser_id,
+)
+from app.services.execution.workflow.run_workflow import run_workflow
 
-
-class WorkflowRunnerError(Exception):
-    """工作流运行前置校验失败（配置类问题，非执行异常）"""
-
-
-async def _resolve_target_browser_id(
-    workflow: UserWorkflow, browser_id: int | None
-) -> int:
-    """解析执行目标浏览器：手动运行优先用入参，否则用工作流上配置的"""
-    target = browser_id if browser_id is not None else workflow.browser_id
-    if target is None:
-        raise WorkflowRunnerError("工作流未配置执行目标浏览器")
-    return int(target)
-
-
-async def _load_normalized_steps(workflow: UserWorkflow) -> List[Any]:
-    """加载并归一化被引用 action 的步骤"""
-    if not workflow.custom_action_id:
-        raise WorkflowRunnerError("工作流未关联任何动作")
-
-    action_model = await action_crud_svr.get_by_action_id(workflow.custom_action_id)
-    if not action_model:
-        raise WorkflowRunnerError(f"关联的动作不存在: {workflow.custom_action_id}")
-    if not getattr(action_model, "is_enabled", True):
-        raise WorkflowRunnerError(f"关联的动作已被禁用: {workflow.custom_action_id}")
-
-    from app.models.execution.action_params import (
-        _ensure_action_type,
-        workflow_step_adapter,
-    )
-
-    normalized: List[Any] = []
-    for step in action_model.steps or []:
-        if isinstance(step, dict):
-            step = workflow_step_adapter.validate_python(_ensure_action_type(step))
-        normalized.append(step)
-    if not normalized:
-        raise WorkflowRunnerError(
-            f"关联的动作没有任何步骤: {workflow.custom_action_id}"
-        )
-    return normalized
-
-
-async def _notify_failure(
-    workflow: UserWorkflow,
-    mid: int,
-    browser_id: int | None,
-    run_id: str,
-    summary: Dict[str, Any],
-    error_message: str | None,
-) -> bool:
-    """失败推送（未配置通知渠道时静默跳过，推送异常只告警）
-
-    返回 True 表示推送已发出（用于标记 run 记录 notified）。
-    """
-    try:
-        from app.services.RPA_browser.browser import BrowserService
-        from app.services.message import push_msg
-        from app.utils.depends.session_manager import DatabaseSessionManager
-
-        async with DatabaseSessionManager.async_session() as session:
-            config = await BrowserService(mid).get_notification_config(
-                session, browser_id
-            )
-        if not config:
-            logger.info(f"[WorkflowRunner] 未配置推送通知，跳过失败通知: run={run_id}")
-            return False
-
-        detail = error_message or (
-            f"成功 {summary.get('success', 0)} / 失败 {summary.get('failed', 0)}"
-            f"（共 {summary.get('total', 0)} 步）"
-        )
-        content = (
-            f"工作流：{workflow.name}（{workflow.workflow_id}）\n"
-            f"触发方式：{workflow.trigger_type}\n"
-            f"目标浏览器：{browser_id}\n"
-            f"运行记录：{run_id}\n"
-            f"失败详情：{detail}"
-        )
-        await push_msg.send(
-            title=f"工作流执行失败: {workflow.name}",
-            content=content,
-            conf=config,
-            subject=push_msg.PushSubject.FAILURE,
-        )
-        return True
-    except Exception as exc:  # noqa: BLE001 - 通知失败绝不影响业务
-        logger.warning(f"[WorkflowRunner] 发送失败通知异常: run={run_id}, error={exc}")
-        return False
-
-
-async def run_workflow(
-    workflow: UserWorkflow,
-    *,
-    trigger_source: WorkflowRunTriggerEnum = WorkflowRunTriggerEnum.MANUAL,
-    browser_id: int | None = None,
-    auth_headers: Dict[str, str] | None = None,
-) -> Dict[str, Any]:
-    """执行一次工作流（手动 / 定时共用入口）
-
-    Args:
-        workflow: 工作流记录（必须是已落库的模型）
-        trigger_source: 触发来源，写入运行记录
-        browser_id: 运行目标浏览器，None 时使用工作流上配置的 browser_id
-
-    Returns:
-        {
-            run_id, status, total, success_count, failed_count,
-            error, execution_id, results: [...]
-        }
-    """
-    from app.services.execution.engine import ExecutionEngine
-    from app.services.RPA_browser.session.live_service import live_service
-
-    mid = int(workflow.mid)
-    started = time.time()
-
-    # ---------- 前置校验 ----------
-    try:
-        target_browser_id = await _resolve_target_browser_id(workflow, browser_id)
-        steps = await _load_normalized_steps(workflow)
-        # 跨进程并发防护：同一浏览器同一时间只允许一个工作流执行（计划书 §8.6）
-        # 会话内的内存互斥（entry.workflow_run_id）只在单进程内有效，多实例部署时
-        # 必须靠运行记录表兜底，否则同一会话会被两个工作流共用 → 双份计费 / 统计错乱。
-        from sqlmodel import select
-
-        from app.utils.depends.session_manager import DatabaseSessionManager
-
-        async with DatabaseSessionManager.async_session() as guard_session:
-            running_run_id = (
-                await guard_session.exec(
-                    select(WorkflowRunRecord.run_id).where(
-                        WorkflowRunRecord.mid == str(mid),
-                        WorkflowRunRecord.browser_id == int(target_browser_id),
-                        WorkflowRunRecord.status == WorkflowRunStatusEnum.RUNNING,
-                    )
-                )
-            ).first()
-        if running_run_id:
-            raise WorkflowRunnerError(
-                f"该浏览器已有工作流在执行（run={running_run_id}），"
-                "请调整定时计划避免同浏览器并发"
-            )
-        # 时长权益校验：仅定时任务消耗时长（计划书 §3.1）；手动运行不校验不扣费
-        if trigger_source == WorkflowRunTriggerEnum.SCHEDULE:
-            from app.services.membership.membership_service import MembershipService
-            from app.utils.depends.session_manager import DatabaseSessionManager
-
-            async with DatabaseSessionManager.async_session() as membership_session:
-                allowed = await MembershipService.check_run_allowed(
-                    mid, membership_session
-                )
-            if not allowed:
-                raise WorkflowRunnerError(
-                    "时长余额不足：定时任务需要时长或月卡（签到/兑换码可获取）"
-                )
-    except WorkflowRunnerError as exc:
-        target = browser_id if browser_id is not None else workflow.browser_id
-        run = await workflow_run_crud_svr.create_running(
-            workflow_id=workflow.workflow_id,
-            mid=mid,
-            browser_id=target if target is not None else "",
-            trigger_source=trigger_source,
-            total=0,
-        )
-        await workflow_run_crud_svr.finish(
-            run_id=run.run_id,
-            status=WorkflowRunStatusEnum.FAILED,
-            error_message=str(exc),
-            duration_ms=(time.time() - started) * 1000,
-        )
-        await workflow_crud_svr.update_run_state(
-            id=workflow.id,
-            status=WorkflowRunStatusEnum.FAILED.value,
-            last_run_at=datetime.now(),
-        )
-        # 配置类失败同样要通知，避免定时任务静默失效
-        notified = await _notify_failure(
-            workflow=workflow,
-            mid=mid,
-            browser_id=target,
-            run_id=run.run_id,
-            summary={"total": 0, "success": 0, "failed": 0},
-            error_message=str(exc),
-        )
-        if notified:
-            await workflow_run_crud_svr.mark_notified(run.run_id)
-        logger.warning(f"[WorkflowRunner] 前置校验失败: {workflow.workflow_id}, {exc}")
-        return {
-            "run_id": run.run_id,
-            "status": WorkflowRunStatusEnum.FAILED.value,
-            "total": 0,
-            "success_count": 0,
-            "failed_count": 0,
-            "error": str(exc),
-            "execution_id": "",
-            "results": [],
-        }
-
-    # ---------- 创建运行记录（running） ----------
-    run = await workflow_run_crud_svr.create_running(
-        workflow_id=workflow.workflow_id,
-        mid=mid,
-        browser_id=target_browser_id,
-        trigger_source=trigger_source,
-        total=len(steps),
-    )
-    # 运行批次ID 与 步骤日志批次ID 共用，便于下钻
-    execution_id = run.run_id
-
-    error_message: str | None = None
-    billed_started: float | None = None  # 计费计时起点（会话获取成功后才有值）
-    results_data: List[Dict[str, Any]] = []
-    status = WorkflowRunStatusEnum.SUCCESS
-
-    try:
-        # ---------- 会话与页面（定时运行允许自动拉起；统一有头，见计划书 §5.17） ----------
-        entry = await live_service.get_or_create_browser_session_entry(
-            mid=mid, browser_id=target_browser_id, headless=False
-        )
-        # 同浏览器并发防护：一个浏览器会话同一时间只允许一个工作流执行
-        # （避免 workflow_run_id 相互覆盖导致双份计费/统计、熔断误伤，见计划书 §8.6）
-        if entry.workflow_run_id:
-            raise WorkflowRunnerError(
-                f"该浏览器已有工作流在执行（run={entry.workflow_run_id}），"
-                "请调整定时计划避免同浏览器并发"
-            )
-        # 进入执行期互斥：运行期间禁止调试类接口操作同一会话（直播为只读拉流，不受影响）
-        live_service.begin_workflow_run(mid, target_browser_id, run.run_id)
-        # 计费计时起点：会话成功获取后（见计划书 §5 计费接入点）
-        billed_started = time.time()
-        page = await entry.browser_session.get_current_page()
-
-        req = WorkflowExecutionRequest(
-            mid=mid,
-            browser_id=target_browser_id,
-            action_id=workflow.custom_action_id,
-            workflow_id=workflow.workflow_id,
-            variables={},
-            input_data={},
-            output_vars=[],
-            execution_id=execution_id,
-            auth_headers=auth_headers or {},
-        )
-
-        results = await ExecutionEngine().execute_steps(
-            req,
-            steps=steps,
-            session_id=str(target_browser_id),
-            browser_id=target_browser_id,
-            page=page,
-        )
-
-        results_data = [
-            {
-                "success": r.success,
-                "data": r.data,
-                "error": r.error,
-                "execution_time": r.execution_time,
-                "action_id": r.action_id,
-                "action_name": r.action_name,
-            }
-            for r in results
-        ]
-    except Exception as exc:  # noqa: BLE001 - 收敛为运行失败
-        status = WorkflowRunStatusEnum.FAILED
-        error_message = f"{type(exc).__name__}: {exc}"
-        logger.exception(
-            f"[WorkflowRunner] 工作流执行异常: {workflow.workflow_id}, run={run.run_id}"
-        )
-
-    # 退出执行期互斥：无论成功 / 失败 / 异常都必须解除，避免会话被永久锁在「执行中」
-    live_service.end_workflow_run(mid, target_browser_id)
-
-    # ---------- 时长结算与使用统计（仅定时任务计费；手动只记统计，见计划书 §3.1） ----------
-    if billed_started is not None:
-        from app.services.membership.membership_service import MembershipService
-
-        await MembershipService.settle_workflow_run(
-            mid=mid,
-            browser_id=target_browser_id,
-            run_seconds=time.time() - billed_started,
-            workflow_id=workflow.workflow_id,
-            run_id=run.run_id,
-            is_scheduled=trigger_source == WorkflowRunTriggerEnum.SCHEDULE,
-        )
-
-    # ---------- 汇总落库 ----------
-    total = len(results_data)
-    success_count = len([r for r in results_data if r.get("success")])
-    failed_count = len([r for r in results_data if not r.get("success")])
-    if total == 0 and status == WorkflowRunStatusEnum.SUCCESS:
-        # 引擎未返回任何结果（理论上不会）：按失败处理，避免"假成功"
-        status = WorkflowRunStatusEnum.FAILED
-        error_message = error_message or "执行引擎未返回任何步骤结果"
-
-    summary = {"total": total, "success": success_count, "failed": failed_count}
-    if status == WorkflowRunStatusEnum.SUCCESS and failed_count > 0:
-        status = WorkflowRunStatusEnum.FAILED
-        error_message = error_message or f"存在 {failed_count} 个失败步骤"
-
-    duration_ms = (time.time() - started) * 1000
-    await workflow_run_crud_svr.finish(
-        run_id=run.run_id,
-        status=status,
-        success_count=success_count,
-        failed_count=failed_count,
-        execution_id=execution_id,
-        error_message=error_message,
-        duration_ms=duration_ms,
-    )
-    await workflow_crud_svr.update_run_state(
-        id=workflow.id,
-        status=status.value,
-        last_run_at=datetime.now(),
-    )
-
-    # ---------- 失败通知 ----------
-    if status == WorkflowRunStatusEnum.FAILED:
-        notified = await _notify_failure(
-            workflow=workflow,
-            mid=mid,
-            browser_id=target_browser_id,
-            run_id=run.run_id,
-            summary=summary,
-            error_message=error_message,
-        )
-        if notified:
-            await workflow_run_crud_svr.mark_notified(run.run_id)
-
-    logger.info(
-        f"[WorkflowRunner] 运行结束: workflow={workflow.workflow_id}, "
-        f"trigger={trigger_source}, status={status.value}, "
-        f"success={success_count}/{total}, cost={duration_ms:.0f}ms"
-    )
-
-    return {
-        "run_id": run.run_id,
-        "status": status.value,
-        "total": total,
-        "success_count": success_count,
-        "failed_count": failed_count,
-        "error": error_message,
-        "execution_id": execution_id,
-        "results": results_data,
-    }
+__all__ = [
+    "WorkflowRunnerError",
+    "_resolve_target_browser_id",
+    "_load_normalized_steps",
+    "_notify_run",
+    "_run_notify_content",
+    "_list_running_for_browser",
+    "list_alive_running_for_browser",
+    "_release_browser_after_run",
+    "_release_session_mark",
+    "_reap_dead_run",
+    "_collect_zombie_runs",
+    "reap_zombie_runs",
+    "enforce_stop_grace",
+    "run_workflow",
+    "launch_workflow_run",
+    "_on_run_task_done",
+    "_finalize_run_if_needed",
+    "resume_run_record",
+    "resume_interrupted_runs",
+]

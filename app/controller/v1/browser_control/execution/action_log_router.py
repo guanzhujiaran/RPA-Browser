@@ -7,8 +7,6 @@
 （采集「是否启用 / 采集哪些字段」已直接落到 action 的基础配置上，无独立配置接口。）
 """
 
-from typing import List
-
 from bili_common.models.response import (
     StandardResponse,
     success_response,
@@ -18,6 +16,7 @@ from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
 from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
 from fastapi import Depends
+from app.services.execution.action_logger import normalize_logs
 from app.services.execution.crud_service import (
     action_log_crud_svr,
 )
@@ -111,12 +110,33 @@ async def get_action_log(
 async def list_action_logs_by_execution(
     request: ActionLogByExecutionRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[List[ActionLogItemResponse]]:
-    """按 execution_id 拉取一次执行的完整链路（按写入顺序，便于还原调用树）"""
+) -> StandardResponse[BasePaginationResp[ActionLogItemResponse]]:
+    """按 execution_id 分页拉取一次执行的步骤链路（按写入顺序，便于还原调用树）
+
+    单次运行可达数千条步骤日志，因此强制分页：`total` 为该批次总条数，
+    `items` 只回当前页（字段与 `action-logs/list` 的轻量项一致）。
+    """
     if not request.execution_id:
         return error_response(400, "缺少 execution_id")
-    rows = await action_log_crud_svr.list_by_execution(auth.mid, request.execution_id)
-    return success_response([_to_item(r) for r in rows])
+    skip = (request.page - 1) * request.per_page
+    total = await action_log_crud_svr.count(
+        auth.mid, execution_id=request.execution_id
+    )
+    rows = await action_log_crud_svr.list(
+        auth.mid,
+        skip=skip,
+        limit=request.per_page,
+        order_desc=False,  # 升序 = 写入顺序，前端据此还原调用树
+        execution_id=request.execution_id,
+    )
+    return success_response(
+        BasePaginationResp[ActionLogItemResponse](
+            page=request.page,
+            per_page=request.per_page,
+            total=total,
+            items=[_to_item(r) for r in rows],
+        )
+    )
 
 
 @router.post(BrowserControlRouterPath.action_logs_delete, summary="批量删除日志")
@@ -170,6 +190,7 @@ async def stats_action_logs(
 
 
 def _to_item(model) -> ActionLogItemResponse:
+    """轻量列表项：不含 params/result_data/variables/logs 等大 JSON 字段"""
     return ActionLogItemResponse(
         id=model.id,
         log_id=model.log_id,
@@ -187,10 +208,6 @@ def _to_item(model) -> ActionLogItemResponse:
         page_url=model.page_url,
         status=model.status,
         success=model.success,
-        params=model.params,
-        result_data=model.result_data,
-        variables=model.variables,
-        logs=model.logs or [],
         error_message=model.error_message,
         execution_time=model.execution_time,
         started_at=model.started_at,
@@ -199,7 +216,14 @@ def _to_item(model) -> ActionLogItemResponse:
 
 
 def _to_detail(model) -> ActionLogDetailResponse:
-    return ActionLogDetailResponse(**_to_item(model).model_dump())
+    """单条详情：在轻量项基础上补齐大 JSON 字段"""
+    return ActionLogDetailResponse(
+        **_to_item(model).model_dump(),
+        params=model.params,
+        result_data=model.result_data,
+        variables=model.variables,
+        logs=normalize_logs(model.logs),
+    )
 
 
 __all__ = ["router"]

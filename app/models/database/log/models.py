@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import List
 
 from sqlalchemy import Column, Index, JSON
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel
 
 
@@ -38,6 +39,7 @@ class ActionLogRecord(SQLModel, table=True):
 
     __table_args__ = (
         Index("idx_action_log_mid_started", "mid", "started_at"),
+        Index("idx_action_log_mid_id", "mid", "id"),
         Index("idx_action_log_execution_order", "execution_id", "id"),
         {"extend_existing": True},
     )
@@ -95,8 +97,8 @@ class ActionLogRecord(SQLModel, table=True):
     )
     execution_time: float = Field(default=0.0, description="执行耗时(秒)")
 
-    started_at: datetime = Field(default_factory=datetime.now, index=True)
-    finished_at: datetime | None = Field(default=None)
+    started_at: NaiveDatetime = Field(default_factory=datetime.now, index=True)
+    finished_at: NaiveDatetime | None = Field(default=None)
 
 
 __all__ = [

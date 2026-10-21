@@ -263,6 +263,37 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # ── 工作流计费心跳（详见 docs/浏览器使用时长与会员权益计划书.md §8）──
     workflow_billing_heartbeat_interval: int = 300  # 定时任务运行中预扣间隔（秒）
 
+    # ── 僵尸运行收口（进程重启/会话丢失后仍停留在 RUNNING 的运行记录自动置中断）──
+    workflow_stale_run_grace_seconds: int = 600  # 宽限期（秒），覆盖 create_running→拉起浏览器窗口
+    workflow_stale_run_reap_interval: int = 300  # 自动收口扫描间隔（秒）
+
+    # ── 停止宽限期（两阶段停止：先协作式取消，超时后强制终止运行 task）──
+    workflow_stop_grace_seconds: int = 30  # 请求停止后等待协作式收口的宽限期（秒）
+    workflow_stop_scan_interval: int = 10  # 宽限期强制终止扫描间隔（秒）
+
+    # ── Fork 上游自动同步（详见 docs/fork-上游同步计划书.md §4.4）──
+    workflow_upstream_sync_interval: int = 600  # 自动同步扫描间隔（秒）
+
+    # ── 工作流运行进度 SSE（详见 docs/rpa-workflow-调度外壳计划书.md §10）──
+    # 进度事件即时推送，替代前端轮询；心跳必须小于网关空闲超时。
+    workflow_run_sse_heartbeat_interval: int = 15  # SSE 心跳间隔（秒）
+    workflow_run_progress_persist_interval: float = 1.0  # 循环进度落库节流（秒）
+    # 运行消息 detail（步骤返回内容）最大字符数，0=不限制。
+    # 打印 ≠ 落库：SSE 消息只在内存里转发、不写盘，因此默认不裁剪，
+    # 需要给慢网络/大响应兜底时才设成具体字符数。
+    workflow_run_log_detail_max_length: int = 0
+
+    # ── 重启断点恢复（同一计划书 §10.6）──
+    workflow_resume_on_startup: bool = True  # 总开关：启动时执行自动恢复扫描
+    workflow_resume_max_count: int = 3  # 同一条运行最多连续恢复次数（防重启死循环）
+    workflow_resume_max_age_seconds: int = 21600  # 中断超过该时长不再恢复（默认 6h）
+
+    # ── 运行结束后浏览器资源回收 ──
+    # 工作流跑完后，若该浏览器没有其它工作流在运行、且未被用户占用（调试/观看），
+    # 及时关闭会话释放内存。置 False 完全关闭该回收，退回旧的闲置回收兜底。
+    workflow_release_browser_after_run: bool = True
+
+
     # ── 剩余时长月度清零（每月 1 号 00:05 把上月所有账户余额清零）──
     duration_monthly_reset_enabled: bool = True  # 是否启用月初余额清零
 
@@ -372,7 +403,20 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     action_log_max_payload_length: int = (
         4000  # params/result/variables 序列化后最大字符数
     )
-    action_log_default_retention_days: int = 30  # 默认日志保留天数，0 表示永久保留
+    action_log_default_retention_days: int = (
+        7  # 默认日志保留天数（超期由周期清理任务删除），0 表示永久保留
+    )
+    # 操作日志过期清理任务执行间隔（秒）。日志表按 started_at 保留
+    # action_log_default_retention_days 天，防止无限增长占满硬盘
+    action_log_cleanup_interval: int = 24 * 60 * 60
+    # 是否将操作日志落库改为「RabbitMQ 生产 / 消费拆分」：开启后日志投递到
+    # rpa_log_exchange 由同进程消费端异步落库（与业务执行解耦），投递失败自动回落
+    # 同步直写。默认开启（true）：日志不再占用 RPA 执行协程的同步写库时间；
+    # RabbitMQ 本就是 RPC 的硬依赖，停用时日志自动降级为同步直写，不丢日志。
+    action_log_use_mq: bool = True
+    # 日志投递熔断：投递失败后进入冷却期（秒），冷却期内直接同步直写，
+    # 避免队列不可用时每条日志都触发一次建连等待、拖死 RPA 执行线程
+    action_log_mq_cooldown_seconds: float = 30.0
 
 
 settings = Settings()

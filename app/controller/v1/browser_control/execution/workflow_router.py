@@ -18,10 +18,14 @@ from app.utils.depends.admin_depends import assert_approved
 from app.utils.depends.security_depends import verify_browser_ownership
 from bili_common.models.depends import BrowserReqAuthInfo
 from fastapi import Depends
+from fastapi.responses import StreamingResponse
+
+from app.config import settings
 from app.services.RPA_browser.session.live_service import live_service
 from app.models.common.exceptions.base_exception import (
     BaseException as CustomBaseException,
     BrowserWorkflowRunningException,
+    BrowserNotStartedException,
 )
 from app.services.execution.crud_service import (
     workflow_crud_svr,
@@ -34,8 +38,13 @@ from app.services.execution.workflow_scheduler import (
     remove_workflow_job,
     compute_next_run,
 )
-from app.services.execution.workflow_runner import run_workflow
-from app.models.database.workflow.models import WorkflowRunTriggerEnum
+from app.services.execution.workflow_runner import launch_workflow_run
+from app.services.execution.cancellation import cancellation_registry
+from app.services.execution.run_tasks import workflow_run_tasks
+from app.models.database.workflow.models import (
+    WorkflowRunTriggerEnum,
+    WorkflowRunStatusEnum,
+)
 from app.models.workflow.models import (
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
@@ -51,11 +60,25 @@ from app.models.workflow.models import (
     WorkflowStepExecuteRequest,
     WorkflowStepExecuteResponse,
     WorkflowRunNowRequest,
+    WorkflowRunStopRequest,
     WorkflowRunLogListRequest,
     WorkflowRunLogItemResponse,
     WorkflowRunLogDetailResponse,
+    WorkflowResourceRecordListRequest,
+    WorkflowResourceRecordItemResponse,
+    UpstreamSyncFlag,
 )
-from app.models.base.base_sqlmodel import BasePaginationResp
+from app.models.base.base_sqlmodel import BasePaginationReq, BasePaginationResp
+from app.models.database.workflow.resource_record import ResourceProcessStatus
+from app.models.runtime.workflow_progress import WorkflowRunProgressData
+from app.models.workflow.models import WorkflowRunResumeRequest
+from app.services.execution.crud_service.resource_record_crud import (
+    ResourceRecordService,
+)
+from app.services.execution.workflow_progress import (
+    get_run_reporter,
+    iter_workflow_run_events,
+)
 from app.models.execution.request_params import (
     ActionExecutionRequest,
 )
@@ -69,6 +92,26 @@ def _build_auth_headers(auth_info) -> dict[str, str]:
     return {
         "x-bili-mid": str(auth_info.mid),
         "x-bili-level": f"level{auth_info.level}",
+    }
+
+
+def _upstream_sync_kwargs(
+    model, flag: UpstreamSyncFlag | None = None
+) -> dict:
+    """构造响应中的上游同步状态字段（docs/fork-上游同步计划书.md）
+
+    Args:
+        model: UserWorkflow
+        flag: attach_upstream_update_flags 的批量计算结果；不传则按"无上游更新"处理
+    """
+    return {
+        "has_upstream_update": flag.has_upstream_update if flag else False,
+        "upstream_updated_at": flag.upstream_updated_at if flag else None,
+        "last_synced_at": (
+            int(model.last_synced_at.timestamp()) if model.last_synced_at else None
+        ),
+        "auto_sync_upstream": model.auto_sync_upstream,
+        "local_steps_modified": model.local_steps_modified,
     }
 
 
@@ -154,6 +197,13 @@ async def create_workflow(
         trigger_type=request.trigger_type,
         trigger_config=request.trigger_config,
         is_public=request.is_public,
+        notify_on_start=request.notify_on_start,
+        notify_on_end=request.notify_on_end,
+        log_enabled=request.log_enabled,
+        resume_on_restart=request.resume_on_restart,
+        browser_ids=request.browser_ids,
+        concurrent_exec=request.concurrent_exec,
+        variables=request.variables,
     )
 
     # 同步定时任务（cron 生效即可被调度）
@@ -165,6 +215,60 @@ async def create_workflow(
             workflow_id=model.workflow_id,
             name=model.name,
             message="工作流创建成功",
+        )
+    )
+
+
+@router.post(BrowserControlRouterPath.workflows_import, summary="从 JSON 导入工作流")
+async def import_workflow(
+    request: WorkflowCreateRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[WorkflowCreateResponse]:
+    """从 JSON 导入工作流
+
+    请求体即「导出 JSON」内容（可携带 id / workflow_id / created_at / likes_count
+    等数据库冗余字段，自动忽略）。导入会在**当前用户名下新建**一份工作流，
+    workflow_id 重新生成；引用的自定义动作必须已存在。
+    """
+    return await create_workflow(request, auth)
+
+
+@router.post(BrowserControlRouterPath.workflows_export, summary="导出工作流为 JSON")
+async def export_workflow(
+    request: dict,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[WorkflowCreateRequest]:
+    """导出工作流
+
+    返回体与「创建 / 导入」请求体字段完全一致，可直接保存为 .json 后再由导入接口还原。
+
+    Args:
+        request: {"id": <工作流ID>}
+    """
+    workflow_id = request.get("id")
+    if not workflow_id:
+        return error_response(400, "缺少工作流ID")
+
+    model = await workflow_crud_svr.get_by_id(workflow_id)
+    if not model or str(model.mid) != str(auth.mid):
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
+
+    return success_response(
+        WorkflowCreateRequest(
+            name=model.name,
+            custom_action_id=model.custom_action_id,
+            description=model.description,
+            browser_id=model.browser_id,
+            browser_ids=model.browser_ids,
+            concurrent_exec=bool(model.concurrent_exec),
+            trigger_type=model.trigger_type,
+            trigger_config=model.trigger_config or {},
+            is_public=model.is_public,
+            notify_on_start=model.notify_on_start,
+            notify_on_end=model.notify_on_end,
+            log_enabled=model.log_enabled,
+            resume_on_restart=model.resume_on_restart,
+            variables=model.variables or {},
         )
     )
 
@@ -199,6 +303,14 @@ async def list_workflows(
         sort_order=request.sort_order,
     )
 
+    # 当前进行中的运行：一次批量查询带出 workflow_id -> run_id，供卡片展示「运行中/停止」
+    running_run_ids = await workflow_run_crud_svr.list_running_run_ids(
+        [model.workflow_id for model in models]
+    )
+
+    # 批量计算上游同步状态（一次 IN 查询，避免 N+1）
+    sync_flags = await workflow_crud_svr.attach_upstream_update_flags(models)
+
     items = []
     for model in models:
         items.append(
@@ -208,6 +320,11 @@ async def list_workflows(
                 name=model.name,
                 custom_action_id=model.custom_action_id,
                 description=model.description,
+                browser_id=model.browser_id,
+                browser_ids=model.browser_ids,
+                concurrent_exec=bool(model.concurrent_exec),
+                trigger_type=model.trigger_type,
+                trigger_config=model.trigger_config or {},
                 is_enabled=model.is_enabled,
                 is_public=model.is_public,
                 likes_count=model.likes_count,
@@ -215,8 +332,17 @@ async def list_workflows(
                 is_verified=model.is_verified,
                 forks_count=model.forks_count,
                 forked_from_id=model.forked_from_id,
+                running_run_id=running_run_ids.get(model.workflow_id),
+                last_run_at=model.last_run_at,
+                last_run_status=model.last_run_status,
+                next_run_at=model.next_run_at,
+                notify_on_start=model.notify_on_start,
+                notify_on_end=model.notify_on_end,
+                log_enabled=model.log_enabled,
+                resume_on_restart=model.resume_on_restart,
                 created_at=model.created_at,
                 updated_at=model.updated_at,
+                **_upstream_sync_kwargs(model, sync_flags.get(model.id)),
             )
         )
 
@@ -246,6 +372,9 @@ async def get_workflow_detail(
     if not model or str(model.mid) != str(auth.mid):
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
 
+    # 上游同步状态（单条详情）
+    sync_flags = await workflow_crud_svr.attach_upstream_update_flags([model])
+
     # 获取工作流详情
     return success_response(
         WorkflowDetailResponse(
@@ -255,6 +384,8 @@ async def get_workflow_detail(
             custom_action_id=model.custom_action_id,
             description=model.description,
             browser_id=model.browser_id,
+            browser_ids=model.browser_ids,
+            concurrent_exec=bool(model.concurrent_exec),
             trigger_type=model.trigger_type,
             trigger_config=model.trigger_config or {},
             is_enabled=model.is_enabled,
@@ -267,8 +398,13 @@ async def get_workflow_detail(
             last_run_at=model.last_run_at,
             last_run_status=model.last_run_status,
             next_run_at=model.next_run_at,
+            notify_on_start=model.notify_on_start,
+            notify_on_end=model.notify_on_end,
+            log_enabled=model.log_enabled,
+            variables=model.variables or {},
             created_at=model.created_at,
             updated_at=model.updated_at,
+            **_upstream_sync_kwargs(model, sync_flags.get(model.id)),
         )
     )
 
@@ -326,6 +462,14 @@ async def update_workflow(
         trigger_config=request.trigger_config,
         is_enabled=request.is_enabled,
         is_public=request.is_public,
+        notify_on_start=request.notify_on_start,
+        notify_on_end=request.notify_on_end,
+        log_enabled=request.log_enabled,
+        resume_on_restart=request.resume_on_restart,
+        auto_sync_upstream=request.auto_sync_upstream,
+        browser_ids=request.browser_ids,
+        concurrent_exec=request.concurrent_exec,
+        variables=request.variables,
     )
 
     if not model or str(model.mid) != str(auth.mid):
@@ -335,6 +479,9 @@ async def update_workflow(
     await sync_workflow_job(model)
     model = await workflow_crud_svr.get_by_id(model.id) or model
 
+    # 上游同步状态（更新后重新计算：本地修改标记可能刚被置上）
+    sync_flags = await workflow_crud_svr.attach_upstream_update_flags([model])
+
     return success_response(
         WorkflowDetailResponse(
             id=model.id,
@@ -343,6 +490,8 @@ async def update_workflow(
             custom_action_id=model.custom_action_id,
             description=model.description,
             browser_id=model.browser_id,
+            browser_ids=model.browser_ids,
+            concurrent_exec=bool(model.concurrent_exec),
             trigger_type=model.trigger_type,
             trigger_config=model.trigger_config or {},
             is_enabled=model.is_enabled,
@@ -355,8 +504,13 @@ async def update_workflow(
             last_run_at=model.last_run_at,
             last_run_status=model.last_run_status,
             next_run_at=model.next_run_at,
+            notify_on_start=model.notify_on_start,
+            notify_on_end=model.notify_on_end,
+            log_enabled=model.log_enabled,
+            variables=model.variables or {},
             created_at=model.created_at,
             updated_at=model.updated_at,
+            **_upstream_sync_kwargs(model, sync_flags.get(model.id)),
         )
     )
 
@@ -452,7 +606,8 @@ async def fork_workflow(
     - 如果是别人的工作流：仅允许 Fork 公开的工作流（类似 GitHub）
 
     Args:
-        request: {"id": <工作流ID>, "new_name": <新名称（可选）>}
+        request: {"id": <工作流ID>, "new_name": <新名称（可选）>,
+                  "auto_sync_upstream": <是否开启上游自动同步，默认 false>}
     """
     # 获取原工作流
     original = await workflow_crud_svr.get_by_id(request.id)
@@ -466,7 +621,10 @@ async def fork_workflow(
     try:
         # 执行 Fork（递归深拷贝 Action 依赖树）
         model, forked_action_count = await workflow_crud_svr.fork(
-            id=request.id, target_mid=auth.mid, new_name=request.new_name
+            id=request.id,
+            target_mid=auth.mid,
+            new_name=request.new_name,
+            auto_sync_upstream=request.auto_sync_upstream,
         )
 
         if not model:
@@ -486,6 +644,10 @@ async def fork_workflow(
             msg=msg,
         )
     except ValueError as e:
+        # ValueError 包含 pydantic 校验失败，此前静默返回 400，日志无痕
+        logger.opt(exception=True).error(
+            f"Fork 工作流失败 workflow_id={request.id}: {e}"
+        )
         return error_response(400, str(e))
     except Exception as e:
         from app.models.common.exceptions.base_exception import BaseException as BizBaseException
@@ -531,6 +693,8 @@ async def sync_workflow(
             msg_parts.append(
                 f"{len(result['unavailable'])} 个上游动作不可用（已保留当前版本）"
             )
+        if result.get("local_overwritten"):
+            msg_parts.append("已覆盖本地修改")
         msg = "同步完成：" + "，".join(msg_parts) if msg_parts else "已是最新版本"
 
         return success_response(
@@ -542,10 +706,14 @@ async def sync_workflow(
                 workflow_config_updated=result.get(
                     "workflow_config_updated", False
                 ),
+                local_overwritten=bool(result.get("local_overwritten")),
             ),
             msg=msg,
         )
     except ValueError as e:
+        logger.opt(exception=True).error(
+            f"同步工作流失败 workflow_id={request.id}: {e}"
+        )
         return error_response(400, str(e))
     except Exception as e:
         from app.models.common.exceptions.base_exception import BaseException as BizBaseException
@@ -569,6 +737,9 @@ async def get_workflow_forks(
 
     forks = await workflow_crud_svr.list_forks(id, skip, limit)
 
+    # 批量计算上游同步状态
+    sync_flags = await workflow_crud_svr.attach_upstream_update_flags(forks)
+
     items = [
         WorkflowListItemResponse(
             id=f.id,
@@ -582,8 +753,10 @@ async def get_workflow_forks(
             is_verified=f.is_verified,
             forks_count=f.forks_count,
             forked_from_id=f.forked_from_id,
+            log_enabled=f.log_enabled,
             created_at=f.created_at,
             updated_at=f.updated_at,
+            **_upstream_sync_kwargs(f, sync_flags.get(f.id)),
         )
         for f in forks
     ]
@@ -673,6 +846,9 @@ async def run_saved_workflow(
     工作流是调度外壳：此处按工作流引用的动作顺序执行其步骤，并写入运行记录。
     目标浏览器以 **query 的 browser_id 为准**（由 verify_browser_ownership 校验归属），
     body 中的 browser_id 仅作兼容保留、不参与决策；未指定浏览器时回落到工作流配置的 browser_id。
+
+    执行是**异步**的：本接口立即返回 ``run_id``（``status=running``），真正的执行在
+    后台 task 中进行；前端凭 run_id 轮询运行记录或调用停止接口。
     """
     mid = browser_info.auth_info.mid
     browser_id = int(browser_info.browser_id)
@@ -685,13 +861,99 @@ async def run_saved_workflow(
 
     await assert_approved("workflow", model.workflow_id, "execute")
 
-    result = await run_workflow(
+    # 立即返回：后台 task 执行，run_id 已预生成，与最终落库记录一致
+    run_id = launch_workflow_run(
         model,
         trigger_source=WorkflowRunTriggerEnum.MANUAL,
         browser_id=browser_id,
         auth_headers=_build_auth_headers(browser_info.auth_info),
     )
-    return success_response(result)
+    return success_response(
+        {
+            "run_id": run_id,
+            "workflow_id": model.workflow_id,
+            "browser_id": browser_id,
+            "status": WorkflowRunStatusEnum.RUNNING.value,
+        }
+    )
+
+
+@router.post(BrowserControlRouterPath.workflows_runs_stop, summary="停止正在运行的工作流")
+async def stop_workflow_run(
+    request: WorkflowRunStopRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[dict]:
+    """手动停止一次工作流运行（幂等，两阶段）
+
+    借鉴 Docker ``stop``：先请求协作式停止（SIGTERM），宽限期内让执行器在步骤边界
+    自然收口；超时后由周期任务 ``enforce_stop_grace`` 强制终止运行 task（SIGKILL）。
+    对**已结束**的运行本接口幂等返回其最终状态，不报错。
+
+    分三种情形：
+      1. 运行已结束（非 RUNNING）→ 幂等返回最终状态；
+      2. 本实例确有存活运行 task → 下发停止请求，执行引擎在下一个步骤边界终止后续
+         步骤，运行记录收口为 ``cancelled``；
+      3. 记录仍为 RUNNING 但本实例无存活 task（进程重启 / 协程被取消的僵尸记录）→
+         直接清理为 ``interrupted``，并清掉会话上残留的执行期标记，立即解除拦截。
+
+    存活真值取自本实例运行 task 注册表（``workflow_run_tasks``）——**不**以会话标记
+    ``entry.workflow_run_id`` 为存活依据：该标记正常由 ``end_workflow_run`` 解除，
+    崩溃时会残留，若据此判断会把僵尸误当活运行，导致永远无法停止（用户痛点）。
+    """
+    run = await workflow_run_crud_svr.get_by_run_id(request.run_id, auth.mid)
+    if not run:
+        return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
+
+    # 情形 1：已结束 → 幂等返回最终状态（重复点击停止不应报错）
+    if run.status != WorkflowRunStatusEnum.RUNNING:
+        return success_response(
+            {
+                "run_id": run.run_id,
+                "status": run.status,
+                "stopping": False,
+                "already_finished": True,
+            }
+        )
+
+    # 情形 2：本实例有存活运行 task → 请求协作式停止（宽限期后由周期任务强制终止）
+    if workflow_run_tasks.is_alive(run.run_id):
+        cancellation_registry.request_cancel(run.run_id)
+        logger.info(
+            f"[WorkflowRouter] 用户请求停止运行: mid={auth.mid}, run={run.run_id}"
+        )
+        return success_response({"run_id": run.run_id, "stopping": True})
+
+    # 情形 3：僵尸记录（本实例已无存活 task）→ 直接清理残留，无需等运行自然结束
+    reaped = await workflow_run_crud_svr.interrupt_stale_running(
+        reason="用户停止：运行实例已不存在，已清理残留运行记录",
+        run_ids=[run.run_id],
+    )
+    # 同步清掉会话上残留的执行期标记（仅当它正指向该已死运行时），否则会话级互斥
+    # 仍会把该运行当作「执行中」，新运行照样被拦
+    try:
+        entry = live_service.get_browser_session_entry(
+            mid=run.mid, browser_id=run.browser_id
+        )
+        if entry is not None and entry.workflow_run_id == run.run_id:
+            live_service.end_workflow_run(run.mid, run.browser_id)
+    except BrowserNotStartedException:
+        pass
+    logger.warning(
+        f"[WorkflowRouter] 用户停止清理残留运行: mid={auth.mid}, "
+        f"run={run.run_id}, reaped={bool(reaped)}"
+    )
+    # 收口接口返回的记录内存状态可能未刷新，重新读取以回报真实终态
+    refreshed = await workflow_run_crud_svr.get_by_run_id(run.run_id, auth.mid)
+    return success_response(
+        {
+            "run_id": run.run_id,
+            "status": (
+                refreshed.status if refreshed else WorkflowRunStatusEnum.INTERRUPTED
+            ),
+            "stopping": False,
+            "reaped": bool(reaped),
+        }
+    )
 
 
 @router.post(BrowserControlRouterPath.workflows_runs, summary="查询工作流运行记录")
@@ -724,6 +986,73 @@ async def list_workflow_runs(
 
 
 @router.post(
+    BrowserControlRouterPath.workflows_resources_list,
+    summary="分页查询工作流已处理资源记录",
+)
+async def list_workflow_resources(
+    request: WorkflowResourceRecordListRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[BasePaginationResp[WorkflowResourceRecordItemResponse]]:
+    """查看工作流已处理（去重）数据。
+
+    返回记录主键 `id` 与业务主键 `resource_id`，以及状态、处理次数、所属运行等；
+    `status` 不传则返回全部（含 failed），前端默认建议只看 success/skipped。
+    """
+    model = await workflow_crud_svr.get_by_workflow_id(request.workflow_id)
+    if not model or str(model.mid) != str(auth.mid):
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
+
+    status_filter: ResourceProcessStatus | None = None
+    if request.status:
+        try:
+            status_filter = ResourceProcessStatus(request.status)
+        except ValueError:
+            return error_response(
+                400, f"无效的处理状态: {request.status}（success/skipped/failed）"
+            )
+
+    resp = await ResourceRecordService.list_records(
+        auth.mid,
+        request.workflow_id,
+        BasePaginationReq(page=request.page, per_page=request.per_page),
+        browser_id=request.browser_id,
+        resource_type=request.resource_type,
+        status=status_filter,
+        resource_id=request.resource_id,
+        run_id=request.run_id,
+        process_count_min=request.process_count_min,
+        process_count_max=request.process_count_max,
+        processed_from=request.processed_from,
+        processed_to=request.processed_to,
+    )
+    items = [
+        WorkflowResourceRecordItemResponse(
+            id=int(row.id or 0),
+            workflow_id=row.workflow_id,
+            browser_id=row.browser_id,
+            resource_type=row.resource_type,
+            resource_id=str(row.resource_id),
+            status=str(row.status),
+            process_count=row.process_count,
+            fail_reason=row.fail_reason,
+            run_id=row.run_id,
+            extra=row.extra,
+            first_processed_at=row.first_processed_at,
+            last_processed_at=row.last_processed_at,
+        )
+        for row in resp.items
+    ]
+    return success_response(
+        BasePaginationResp[WorkflowResourceRecordItemResponse](
+            page=resp.page,
+            per_page=resp.per_page,
+            total=resp.total,
+            items=items,
+        )
+    )
+
+
+@router.post(
     BrowserControlRouterPath.workflows_runs_get, summary="获取工作流运行记录详情"
 )
 async def get_workflow_run(
@@ -744,4 +1073,98 @@ async def get_workflow_run(
         return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
     return success_response(
         WorkflowRunLogDetailResponse(**(await workflow_run_crud_svr.to_dict(model)))
+    )
+
+
+@router.get(
+    BrowserControlRouterPath.workflows_runs_events,
+    response_class=StreamingResponse,
+    # 必须显式声明 SSE 内容类型：openapi.json 才能如实描述契约，
+    # hey-api 依据 mediaType === "text/event-stream" 才会生成 client.sse.* 方法。
+    responses={
+        200: {
+            "description": "工作流运行进度 SSE 事件流（text/event-stream 长连接）",
+            "content": {"text/event-stream": {}},
+        }
+    },
+)
+async def workflow_run_events(
+    run_id: str,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+):
+    """订阅某次工作流运行的进度事件流（Server-Sent Events）。
+
+    同一条连接承载两类事件：
+      - `workflow_run_progress`：全量进度快照（首帧 + 步骤/循环边界更新）；
+      - `workflow_run_log`：步骤级明细（开始/完成/失败、循环轮次、运行结束），
+        供前端「运行消息」栏逐条展示，建连时会补发最近 200 条。
+
+    终态（success/failed/interrupted/cancelled）帧下发后服务端关闭连接。
+
+    Args:
+        run_id: 运行ID（query 参数）
+    """
+    run = await workflow_run_crud_svr.get_by_run_id(run_id, auth.mid)
+    if not run:
+        return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
+
+    workflow = await workflow_crud_svr.get_by_workflow_id(run.workflow_id)
+    initial = WorkflowRunProgressData.from_run_record(
+        run, workflow.name if workflow else ""
+    )
+    reporter = get_run_reporter(run_id)
+    return StreamingResponse(
+        iter_workflow_run_events(
+            initial,
+            heartbeat_interval=settings.workflow_run_sse_heartbeat_interval,
+            backlog=reporter.history() if reporter else None,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # 若前面挂 nginx，必须关闭响应缓冲，否则推送会被攒批
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post(
+    BrowserControlRouterPath.workflows_runs_resume,
+    summary="继续运行被中断的工作流（断点恢复）",
+)
+async def resume_workflow_run(
+    request: WorkflowRunResumeRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[dict]:
+    """手动继续一条被服务中断的运行（不受工作流自动恢复开关约束）。
+
+    恢复为**至少一次**语义：从检查点之后继续执行，当前步骤重跑；循环内已处理资源由
+    处理记录去重跳过。同一浏览器已有运行时不打断，返回业务错误引导稍后重试。
+    """
+    run = await workflow_run_crud_svr.get_by_run_id(request.run_id, auth.mid)
+    if not run:
+        return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
+    if run.status != WorkflowRunStatusEnum.INTERRUPTED:
+        return error_response(
+            ResponseCode.BUSINESS_ERROR, "仅已中断的运行可以继续，当前状态不支持恢复"
+        )
+    if not run.resumable:
+        return error_response(
+            ResponseCode.BUSINESS_ERROR,
+            "该运行不可恢复（无已完成步骤 / 已被恢复过 / 已超过恢复次数上限）",
+        )
+
+    new_run_id = await resume_run_record(run, require_auto_switch=False)
+    if not new_run_id:
+        return error_response(
+            ResponseCode.BUSINESS_ERROR,
+            "恢复失败：目标浏览器当前可能有运行中的任务，或工作流已停用 / 恢复次数超限",
+        )
+    return success_response(
+        {
+            "run_id": new_run_id,
+            "resume_of": run.run_id,
+            "status": WorkflowRunStatusEnum.RUNNING.value,
+        }
     )
