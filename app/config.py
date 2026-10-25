@@ -267,8 +267,10 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     workflow_stale_run_grace_seconds: int = 600  # 宽限期（秒），覆盖 create_running→拉起浏览器窗口
     workflow_stale_run_reap_interval: int = 300  # 自动收口扫描间隔（秒）
 
-    # ── 停止宽限期（两阶段停止：先协作式取消，超时后强制终止运行 task）──
-    workflow_stop_grace_seconds: int = 30  # 请求停止后等待协作式收口的宽限期（秒）
+    # ── 停止宽限期兜底（见 docs/工作流停止计划书.md §3.1）──
+    # 现在停止接口会「置标记 + 立刻 task.cancel()」，正常路径不再依赖宽限期；
+    # 这两个参数只兜底「仅置标记、未直接 cancel」的调用（周期扫描发现超时后强制终止）。
+    workflow_stop_grace_seconds: int = 30  # 仅置标记后等待协作式收口的宽限期（秒）
     workflow_stop_scan_interval: int = 10  # 宽限期强制终止扫描间隔（秒）
 
     # ── Fork 上游自动同步（详见 docs/fork-上游同步计划书.md §4.4）──
@@ -283,6 +285,12 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 需要给慢网络/大响应兜底时才设成具体字符数。
     workflow_run_log_detail_max_length: int = 0
 
+    # ── 容错失败熔断（on_error=continue 的容忍上限）──
+    # 一次运行里「被 on_error=continue 跳过」的失败步骤数达到该阈值时，即使顶层步骤
+    # 全部成功，也把运行结论降级为 failed：避免「跑了 200 条、失败 190 条、结论成功」
+    # 这种假成功。0 = 关闭该熔断（只保留运行告警与计数）。
+    workflow_tolerated_fail_failed_threshold: int = 10
+
     # ── 重启断点恢复（同一计划书 §10.6）──
     workflow_resume_on_startup: bool = True  # 总开关：启动时执行自动恢复扫描
     workflow_resume_max_count: int = 3  # 同一条运行最多连续恢复次数（防重启死循环）
@@ -291,7 +299,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # ── 运行结束后浏览器资源回收 ──
     # 工作流跑完后，若该浏览器没有其它工作流在运行、且未被用户占用（调试/观看），
     # 及时关闭会话释放内存。置 False 完全关闭该回收，退回旧的闲置回收兜底。
-    workflow_release_browser_after_run: bool = True
+    # 运行结束是否回收浏览器：默认 False = 只关闭本次运行打开的页面，
+    # 浏览器交给空闲生命周期回收（见 docs/多页面并行执行计划书.md §3）
+    workflow_release_browser_after_run: bool = False
 
 
     # ── 剩余时长月度清零（每月 1 号 00:05 把上月所有账户余额清零）──
@@ -393,6 +403,8 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     browser_stream_degrade_frame_max_height: int = 360
 
     # Alembic 数据库迁移配置
+    # 同浏览器工作流排队：等待执行权的最长时间（秒），超时判失败（见排队计划书）
+    workflow_queue_timeout_seconds: int = 1800
     alembic_auto_migrate: bool = True  # 是否在应用启动时自动执行数据库迁移
     alembic_upgrade_target: str = "heads"  # 迁移目标版本，默认为最新版本
 

@@ -73,8 +73,13 @@ def _patch_chatopenai_text(mock_message):
 
 
 def _patch_chatopenai_structured(mock_result):
-    """patch ChatOpenAI.with_structured_output → ainvoke 返回结构化结果"""
-    mock_chat = AsyncMock()
+    """patch ChatOpenAI.with_structured_output → ainvoke 返回结构化结果
+
+    注意 mock_chat 必须是 MagicMock：真正的 `with_structured_output()` 是**同步**方法，
+    返回一个可 await 的 runnable。用 AsyncMock 的话调用它会得到 coroutine，
+    后续 `coroutine.ainvoke(...)` 必然 AttributeError（测试失效而非实现错误）。
+    """
+    mock_chat = MagicMock()
     mock_structured = AsyncMock()
     if isinstance(mock_result, Exception):
         mock_structured.ainvoke.side_effect = mock_result

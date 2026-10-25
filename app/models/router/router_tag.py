@@ -20,6 +20,7 @@ class RouterTag(StrEnumAutoDoc):
     session_control = "浏览器会话控制"
     execution_engine = "执行引擎"  # 提供浏览器操作的执行
     action_log_management = "操作日志管理"  # 浏览器操作日志采集配置与查询
+    mcp_debug = "MCP 调试"  # 供 fastapi-mcp 自动生成 MCP 工具的动作调试接口
     # === 系统管理 ===
     admin_management = "管理员管理"  # 超级管理员功能
 

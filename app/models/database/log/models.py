@@ -5,8 +5,10 @@ Database 模块 - 浏览器操作日志模型
     ActionLogRecord — 采集到的浏览器操作执行日志（可在数据库中查询）
 
 日志采集「是否开启 / 采集哪些字段」由操作自身的基础配置决定：
-    - 自定义操作（CompositeActionModel）带 log_enabled / log_record_* 等字段
+    - 自定义操作（CompositeActionModel）带 log_enabled / log_debug / log_record_* 等字段
+      （log_debug=True 为调试模式：强制全量采集，见 action_logger._normalize_debug）
     - 内置操作无独立配置，回落到服务端 settings.action_log_default_enabled
+    - 工作流运行还会受 UserWorkflow.log_enabled / log_debug 压制（本次运行总闸）
 """
 
 from bili_common.models import StrEnumAutoDoc

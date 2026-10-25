@@ -119,6 +119,13 @@ browser_control_execution_router = RouterInfo(
     description="执行引擎 - 提供浏览器操作的执行",
 )
 
+browser_control_mcp_debug_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.mcp_debug,
+    router_prefix=RouterPrefix.BROWSER_CONTROL,
+    description="MCP 调试 - 动作静态校验 / 试跑 / 日志定位 / 落库回读（供 fastapi-mcp 暴露）",
+)
+
 browser_control_action_log_router = RouterInfo(
     version_tag=DEFAULT_VERSION,
     router_tag=RouterTag.action_log_management,
@@ -156,6 +163,7 @@ BROWSER_RUNTIME_ROUTERS: List[RouterInfo] = [
     browser_control_webrtc_router,  # WebRTC 视频流
     browser_control_session_router,
     browser_control_action_log_router,  # 操作日志管理
+    browser_control_mcp_debug_router,  # MCP 调试（工具自动生成，默认 prod 关闭）
 ]
 
 # 系统管理相关路由

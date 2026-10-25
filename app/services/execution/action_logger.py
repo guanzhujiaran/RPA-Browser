@@ -7,9 +7,12 @@
        优先级从高到低：
            1) 执行参数中显式携带的 log 选项（BaseActionParams.log）
            2) 父操作透传下来的已解析配置（复合/循环/分支子步骤继承）
-           3) 工作流开关（UserWorkflow.log_enabled，仅工作流执行时传入）
-           4) 动作开关（CompositeActionModel.log_enabled）
-           5) 项目兜底（settings.action_log_default_enabled）
+           3) 工作流级调试模式（UserWorkflow.log_debug，优先于工作流开关）
+           4) 工作流开关（UserWorkflow.log_enabled，仅工作流执行时传入）
+           5) 动作开关（CompositeActionModel.log_enabled / log_debug）
+           6) 项目兜底（settings.action_log_default_enabled）
+       任一级带 debug=True（用户级调试模式）时归一化为全量采集
+       （入参/结果/变量全记、成功也记、payload 不截断，见 _normalize_debug）。
     2. save_action_log：将一次 action 执行的上下文 + 结果落库到 ActionLogRecord
 
 设计原则：
@@ -76,8 +79,10 @@ _MQ_COOLDOWN_UNTIL: float = 0.0
 async def _resolve_db_log_option(action_id: str) -> Optional[ActionLogOption]:
     """从 CompositeActionModel 的 log_* 字段解析自定义操作的采集配置（三态）。
 
-    返回 None 表示「未设置」（模型缺失 / log_enabled 为 NULL），由调用方继续向
-    下一级（项目兜底）解析；返回 option 时其 enabled 为显式布尔值。
+    返回 None 表示「未设置」（模型缺失 / log_enabled 为 NULL 且未开 debug），
+    由调用方继续向下一级（项目兜底）解析；返回 option 时其 enabled 为显式
+    布尔值。注意 ``log_debug=True`` 独立生效：调试模式隐含「开启」，
+    即使 ``log_enabled`` 未设置也走动作级配置（归一化见 _normalize_debug）。
     """
     cached = _DB_CACHE.get(action_id)
     if cached and cached[0] > time.monotonic():
@@ -86,9 +91,14 @@ async def _resolve_db_log_option(action_id: str) -> Optional[ActionLogOption]:
     option: Optional[ActionLogOption] = None
     try:
         model = await action_crud_svr.get_by_action_id(action_id)
-        if model is not None and getattr(model, "log_enabled", None) is not None:
+        if model is not None and (
+            getattr(model, "log_enabled", None) is not None
+            or bool(getattr(model, "log_debug", False))
+        ):
+            debug = bool(model.log_debug)
             option = ActionLogOption(
-                enabled=bool(model.log_enabled),
+                enabled=bool(model.log_enabled) or debug,
+                debug=debug,
                 record_params=model.log_record_params,
                 record_result=model.log_record_result,
                 record_variables=model.log_record_variables,
@@ -125,26 +135,35 @@ def invalidate_cache(mid: int | str | None = None) -> None:
     _DB_CACHE.clear()
 
 
-async def resolve_log_option(
+def _normalize_debug(option: Optional[ActionLogOption]) -> Optional[ActionLogOption]:
+    """debug 模式归一化（用户级调试开关，见调度外壳计划书 §9.8）。
+
+    `debug=True` 时强制全量采集：入参 / 结果 / 变量全记、成功也记、
+    payload 不截断（`max_payload_length=0`）；保留期与普通日志一致，
+    不做单独管理。幂等：已归一化的配置再走一次不变。
+    """
+    if option is None or not option.debug:
+        return option
+    return option.model_copy(
+        update={
+            "enabled": True,
+            "record_params": True,
+            "record_result": True,
+            "record_variables": True,
+            "only_on_error": False,
+            "max_payload_length": 0,
+        }
+    )
+
+
+async def _resolve_log_option_inner(
     mid: int | str,
     action_id: str,
     replaced_params: Dict | None = None,
     ctx_log_config: Optional[ActionLogOption] = None,
     workflow_log_enabled: bool | None = None,
+    workflow_log_debug: bool | None = None,
 ) -> Optional[ActionLogOption]:
-    """解析生效的日志采集配置（优先级从高到低，开关均为三态）。
-
-    任一级显式取值（True/False）即终止解析；None（未设置）继续向下一级。
-
-    1. 执行参数中显式携带的 log 选项（BaseActionParams.log）；
-    2. 父操作透传的已解析配置（复合/循环/分支控制流的子步骤继承）；
-    3. 工作流开关 `workflow_log_enabled`（仅工作流执行时由 engine 传入）：
-       本次运行的总闸，显式开/关都压制动作级与项目级；字段级配置仍取自动作自身；
-    4. 动作开关（CompositeActionModel.log_enabled，三态）；
-    5. 项目兜底（settings.action_log_default_enabled，内置操作也回落至此）。
-
-    返回 None 表示「本次不采集」（含解析失败降级）。
-    """
     # 1. 执行参数中显式携带的 log 选项（BaseActionParams.log）
     if isinstance(replaced_params, dict):
         raw = replaced_params.get("log")
@@ -158,19 +177,62 @@ async def resolve_log_option(
     if ctx_log_config is not None:
         return ctx_log_config
 
-    # 3. 工作流级开关（本次运行的总闸；显式开/关压制动作级与项目级）
+    # 3. 工作流级调试模式（用户在工作流上开启的 log_debug）：
+    #    优先于工作流开关——debug 隐含「开启」，强制全量采集，
+    #    压制动作级与项目级（见 _normalize_debug）
+    if workflow_log_debug:
+        return _FALLBACK_CONFIG.model_copy(update={"enabled": True, "debug": True})
+
+    # 4. 工作流级开关（本次运行的总闸；显式开/关压制动作级与项目级）
     if workflow_log_enabled is not None:
         return _with_enabled(
             await _resolve_action_option(action_id), bool(workflow_log_enabled)
         )
 
-    # 4. 动作级开关（三态；None=未设置时继续向项目兜底解析）
+    # 5. 动作级开关（三态；None=未设置时继续向项目兜底解析）
     action_option = await _resolve_action_option(action_id)
     if action_option is not None:
         return action_option
 
-    # 5. 内置操作 / 均未设置 → 项目兜底
+    # 6. 内置操作 / 均未设置 → 项目兜底
     return _FALLBACK_CONFIG
+
+
+async def resolve_log_option(
+    mid: int | str,
+    action_id: str,
+    replaced_params: Dict | None = None,
+    ctx_log_config: Optional[ActionLogOption] = None,
+    workflow_log_enabled: bool | None = None,
+    workflow_log_debug: bool | None = None,
+) -> Optional[ActionLogOption]:
+    """解析生效的日志采集配置（优先级从高到低，开关均为三态）。
+
+    任一级显式取值（True/False）即终止解析；None（未设置）继续向下一级。
+
+    1. 执行参数中显式携带的 log 选项（BaseActionParams.log）；
+    2. 父操作透传的已解析配置（复合/循环/分支控制流的子步骤继承）；
+    3. 工作流级调试模式 `workflow_log_debug`（用户在工作流上开启）：
+       优先于工作流开关，debug 隐含「开启」并强制全量采集；
+    4. 工作流开关 `workflow_log_enabled`（仅工作流执行时由 engine 传入）：
+       本次运行的总闸，显式开/关都压制动作级与项目级；字段级配置仍取自动作自身；
+    5. 动作开关（CompositeActionModel.log_enabled / log_debug，三态）；
+    6. 项目兜底（settings.action_log_default_enabled，内置操作也回落至此）。
+
+    任一级带 `debug=True`（用户级调试模式）时，最终配置归一化为全量采集
+    （入参/结果/变量全记、成功也记、payload 不截断，见 `_normalize_debug`）。
+
+    返回 None 表示「本次不采集」（含解析失败降级）。
+    """
+    option = await _resolve_log_option_inner(
+        mid,
+        action_id,
+        replaced_params,
+        ctx_log_config,
+        workflow_log_enabled,
+        workflow_log_debug,
+    )
+    return _normalize_debug(option)
 
 
 @dataclass
@@ -201,13 +263,19 @@ async def save_action_log(
     result: Any,
     *,
     status: ActionLogStatusEnum | None = None,
+    force: bool = False,
 ) -> None:
     """根据生效的 log 选项，将一次 action 执行结果落库。
+
+    Args:
+        force: 强制执行留痕（即使动作 / 工作流关了日志）。用于**失败**场景——
+            失败必须可回溯，否则 `on_error=continue` 把失败降级成「成功」后，
+            关着日志的运行为「为什么没干活」留下零线索。
 
     内部吞掉所有异常，绝不影响业务执行。
     """
     try:
-        await _do_save(ctx, result, status=status)
+        await _do_save(ctx, result, status=status, force=force)
     except Exception:
         # 兜底：如果上面抛了异常，尝试写入一条"保存失败"的错误记录
         try:
@@ -223,13 +291,18 @@ async def _do_save(
     result: Any,
     *,
     status: ActionLogStatusEnum | None = None,
+    force: bool = False,
 ) -> None:
     success = bool(getattr(result, "success", False))
     option = await resolve_log_option(
         ctx.mid, ctx.action_id, ctx.params, ctx.log_config
     )
     if option is None or not option.enabled:
-        return
+        if not force:
+            return
+        # 失败强制留痕：日志开关只应该影响「成功」的记录量，不能连失败一起吞掉。
+        # 记什么字段仍沿用原配置（option 为空时用项目兜底），只把 enabled 打开。
+        option = _with_enabled(option, True)
     if option.only_on_error and success:
         return
 

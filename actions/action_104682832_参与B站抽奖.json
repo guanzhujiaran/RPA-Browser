@@ -1,0 +1,1950 @@
+{
+  "mid": 140682000,
+  "original_mid": 140682000,
+  "is_enabled": 1,
+  "is_public": 1,
+  "likes_count": 0,
+  "reports_count": 0,
+  "is_verified": 0,
+  "forks_count": 0,
+  "created_at": "2026-10-11T23:17:24",
+  "updated_at": "2026-10-19T01:31:38",
+  "id": 2,
+  "action_id": 104682832,
+  "name": "参与B站抽奖",
+  "version": "1.1.0",
+  "action_type": "COMPOSITE",
+  "parameters_schema": [],
+  "steps": [
+    {
+      "params": {
+        "message": "开始参与B站抽奖"
+      },
+      "action_id": "print",
+      "action_type": "print"
+    },
+    {
+      "retry": 1,
+      "params": {
+        "url": "https://www.bilibili.com",
+        "timeout": 30000,
+        "wait_until": "domcontentloaded"
+      },
+      "action_id": "navigate",
+      "action_type": "navigate"
+    },
+    {
+      "params": {
+        "count": 35,
+        "loopBranch": [
+          {
+            "params": {
+              "state": "visible",
+              "timeout": 5000,
+              "selector": ".header-avatar-wrap"
+            },
+            "action_id": "wait",
+            "action_type": "wait",
+            "output_vars": [
+              "is_login"
+            ]
+          },
+          {
+            "params": {
+              "timeout": 1000
+            },
+            "action_id": "wait",
+            "action_type": "wait"
+          }
+        ],
+        "name": "等待扫码登录",
+        "loop_source": "fixed_count",
+        "break_condition": {
+          "logic": "AND",
+          "condition": {
+            "field": "is_login",
+            "condition_value": true,
+            "condition_value_type": "BOOLEAN"
+          }
+        }
+      },
+      "action_id": "loop",
+      "action_type": "loop",
+      "on_error": "continue"
+    },
+    {
+      "retry": 1,
+      "params": {
+        "url": "https://space.bilibili.com/",
+        "timeout": 30000,
+        "wait_until": "domcontentloaded"
+      },
+      "action_id": "navigate",
+      "action_type": "navigate",
+      "on_error": "continue"
+    },
+    {
+      "params": {
+        "state": "visible",
+        "timeout": 8000,
+        "selector": ".upinfo-detail__top .nickname"
+      },
+      "action_id": "wait",
+      "action_type": "wait",
+      "output_vars": [
+        "nick_ready"
+      ]
+    },
+    {
+      "params": {
+        "condition": {
+          "logic": "AND",
+          "condition": {
+            "field": "nick_ready",
+            "condition_value": true,
+            "condition_value_type": "BOOLEAN"
+          }
+        },
+        "TrueBranch": [
+          {
+            "retry": 1,
+            "params": {
+              "timeout": 5000,
+              "selector": ".upinfo-detail__top .nickname",
+              "fail_on_empty": true
+            },
+            "action_id": "get_text",
+            "action_type": "get_text",
+            "output_vars": [
+              "self_nickname"
+            ],
+            "on_error": "continue"
+          }
+        ],
+        "FalseBranch": [
+          {
+            "params": {
+              "message": "未获取到账号昵称（空间页昵称元素未渲染）→ 第三方评论抽奖将整批跳过：没有昵称就无法校验评论是否真的生效，继续跑会把没发出去的评论误记为已参与"
+            },
+            "action_id": "print",
+            "action_type": "print"
+          }
+        ]
+      },
+      "action_id": "if_else",
+      "action_type": "if_else"
+    },
+    {
+      "params": {
+        "message": "当前账号昵称={{self_nickname}}"
+      },
+      "action_id": "print",
+      "action_type": "print"
+    },
+    {
+      "retry": 1,
+      "params": {
+        "dedupe": true,
+        "id_field": "reserve_sid",
+        "list_path": "items",
+        "method_name": "get_reserve_lottery",
+        "resource_type": "bili_lottery_reserve",
+        "get_reserve_lottery_params": {
+          "status": "unfinished",
+          "page_num": 1,
+          "page_size": 1000
+        }
+      },
+      "action_id": "fetch_external_data",
+      "action_type": "fetch_external_data",
+      "output_vars": [
+        "reserve_code",
+        "reserve_data"
+      ]
+    },
+    {
+      "retry": 1,
+      "params": {
+        "dedupe": true,
+        "id_field": "dynId",
+        "list_path": "items",
+        "method_name": "get_official_lottery",
+        "resource_type": "bili_lottery_official",
+        "get_official_lottery_params": {
+          "status": "unfinished",
+          "page_num": 1,
+          "page_size": 1000
+        }
+      },
+      "action_id": "fetch_external_data",
+      "action_type": "fetch_external_data",
+      "output_vars": [
+        "official_code",
+        "official_data"
+      ]
+    },
+    {
+      "retry": 1,
+      "params": {
+        "dedupe": true,
+        "id_field": "dynId",
+        "list_path": "items",
+        "method_name": "get_others_lot_dyn_list",
+        "resource_type": "bili_lottery_others",
+        "get_others_lot_dyn_list_params": {
+          "is_lot": true,
+          "created_at_preset": "30d",
+          "pub_time_preset": "7d",
+          "page_num": 1,
+          "page_size": 1000
+        }
+      },
+      "action_id": "fetch_external_data",
+      "action_type": "fetch_external_data",
+      "output_vars": [
+        "others_code",
+        "others_data"
+      ]
+    },
+    {
+      "params": {
+        "items_var": "reserve_data.items"
+      },
+      "action_id": "shuffle_list",
+      "action_type": "shuffle_list"
+    },
+    {
+      "params": {
+        "field": "dynId",
+        "order": "desc",
+        "numeric": true,
+        "items_var": "official_data.items"
+      },
+      "action_id": "sort_list",
+      "action_type": "sort_list"
+    },
+    {
+      "params": {
+        "field": "dynId",
+        "order": "desc",
+        "numeric": true,
+        "items_var": "others_data.items"
+      },
+      "action_id": "sort_list",
+      "action_type": "sort_list"
+    },
+    {
+      "action_id": "print",
+      "action_type": "print",
+      "params": {
+        "message": "取数完成，参与前变量池：",
+        "dump_variables": true,
+        "dump_max_items": 3,
+        "dump_max_length": 1500,
+        "log": {
+          "enabled": true,
+          "record_params": true,
+          "record_result": true,
+          "max_payload_length": 20000
+        }
+      }
+    },
+    {
+      "params": {
+        "loopBranch": [
+          {
+            "params": {
+              "message": "【预约抽奖】sid={{rs_item.reserve_sid}} | url={{rs_item.reserve_url}}",
+              "log": {
+                "enabled": true,
+                "record_params": false,
+                "record_result": true,
+                "record_variables": false,
+                "only_on_error": false,
+                "max_payload_length": 4000
+              }
+            },
+            "action_id": "print",
+            "action_type": "print",
+            "input_vars": {
+              "skip_reason": "",
+              "action_reserve": ""
+            }
+          },
+          {
+            "retry": 1,
+            "params": {
+              "reserve_sid": "{{rs_item.reserve_sid}}",
+              "reserve_url": "{{rs_item.reserve_url}}"
+            },
+            "action_id": "bili_reserve",
+            "action_type": "bili_reserve",
+            "output_vars": [
+              "rs_value",
+              "rs_joined",
+              "rs_already",
+              "rs_found"
+            ]
+          },
+          {
+            "params": {
+              "condition": {
+                "logic": "AND",
+                "condition": {
+                  "field": "rs_joined",
+                  "condition_value": true,
+                  "condition_value_type": "BOOLEAN"
+                }
+              },
+              "TrueBranch": [
+                {
+                  "params": {
+                    "success": true,
+                    "resource_id": "{{rs_item.reserve_sid}}",
+                    "resource_type": "bili_lottery_reserve"
+                  },
+                  "action_id": "mark_resource_result",
+                  "action_type": "mark_resource_result",
+                  "input_vars": {
+                    "action_reserve": "已预约"
+                  }
+                }
+              ],
+              "FalseBranch": [
+                {
+                  "params": {
+                    "success": false,
+                    "fail_reason": "预约未成功",
+                    "resource_id": "{{rs_item.reserve_sid}}",
+                    "resource_type": "bili_lottery_reserve"
+                  },
+                  "action_id": "mark_resource_result",
+                  "action_type": "mark_resource_result",
+                  "input_vars": {
+                    "skip_reason": "预约未成功(joined=false)"
+                  }
+                }
+              ]
+            },
+            "action_id": "if_else",
+            "action_type": "if_else"
+          },
+          {
+            "params": {
+              "message": "【预约抽奖】本轮结果 sid={{rs_item.reserve_sid}} url={{rs_item.reserve_url}}\n跳过原因={{skip_reason}}\njoined={{rs_joined}} 已预约过={{rs_already}} 找到元素={{rs_found}}\n动作：预约={{action_reserve}}",
+              "log": {
+                "enabled": true,
+                "record_params": false,
+                "record_result": true,
+                "record_variables": false,
+                "only_on_error": false,
+                "max_payload_length": 4000
+              }
+            },
+            "action_id": "print",
+            "action_type": "print"
+          },
+          {
+            "params": {
+              "timeout": 2000
+            },
+            "action_id": "wait",
+            "action_type": "wait"
+          }
+        ],
+        "name": "预约抽奖 {{rs_item.reserve_sid}}",
+        "loop_source": "variable",
+        "loop_item_var": "rs_item",
+        "loop_items_var": "reserve_data.items"
+      },
+      "action_id": "loop",
+      "action_type": "loop",
+      "on_error": "continue"
+    },
+    {
+      "params": {
+        "loopBranch": [
+          {
+            "params": {
+              "message": "【官方转发抽奖】dynId={{off_item.dynId}} | up={{off_item.sender_uid}} | url=https://www.bilibili.com/opus/{{off_item.dynId}}",
+              "log": {
+                "enabled": true,
+                "record_params": false,
+                "record_result": true,
+                "record_variables": false,
+                "only_on_error": false,
+                "max_payload_length": 4000
+              }
+            },
+            "action_id": "print",
+            "action_type": "print",
+            "input_vars": {
+              "skip_reason": "",
+              "action_forward": "",
+              "action_like": "",
+              "action_follow": "",
+              "already_liked": "",
+              "need_like": "",
+              "already_followed": "",
+              "up_name": "",
+              "dyn_content": ""
+            }
+          },
+          {
+            "retry": 1,
+            "params": {
+              "url": "https://www.bilibili.com/opus/{{off_item.dynId}}",
+              "timeout": 30000,
+              "wait_until": "domcontentloaded"
+            },
+            "action_id": "navigate",
+            "action_type": "navigate"
+          },
+          {
+            "params": {
+              "state": "visible",
+              "timeout": 5000,
+              "selector": ".side-toolbar__action.like"
+            },
+            "action_id": "wait",
+            "action_type": "wait",
+            "output_vars": [
+              "page_ok"
+            ]
+          },
+          {
+            "params": {
+              "condition": {
+                "logic": "AND",
+                "condition": {
+                  "field": "page_ok",
+                  "condition_value_type": "BOOLEAN",
+                  "condition_value": false
+                }
+              },
+              "TrueBranch": [
+                {
+                  "params": {
+                    "success": false,
+                    "resource_id": "{{off_item.dynId}}",
+                    "resource_type": "bili_lottery_official",
+                    "status": "failed",
+                    "fail_reason": "页面未就绪(page_ok=false)"
+                  },
+                  "action_id": "mark_resource_result",
+                  "action_type": "mark_resource_result",
+                  "input_vars": {
+                    "skip_reason": "页面未就绪(page_ok=false)"
+                  }
+                }
+              ],
+              "FalseBranch": [
+                {
+                  "retry": 1,
+                  "params": {
+                    "url": "https://space.bilibili.com/{{off_item.sender_uid}}/dynamic",
+                    "timeout": 30000,
+                    "wait_until": "domcontentloaded"
+                  },
+                  "action_id": "navigate",
+                  "action_type": "navigate"
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 8000,
+                    "selector": ".space-head-follow .space-follow-btn"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 3000,
+                    "selector": ".space-follow-btn.gray"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "already_followed"
+                  ]
+                },
+                {
+                  "params": {
+                    "condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "already_followed",
+                        "condition_value": false,
+                        "condition_value_type": "BOOLEAN"
+                      }
+                    },
+                    "TrueBranch": [
+                      {
+                        "retry": 1,
+                        "params": {
+                          "timeout": 5000,
+                          "selector": ".space-head-follow .space-follow-btn"
+                        },
+                        "action_id": "click",
+                        "action_type": "click",
+                        "input_vars": {
+                          "action_follow": "已关注"
+                        }
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else"
+                },
+                {
+                  "params": {
+                    "url": "https://www.bilibili.com/opus/{{off_item.dynId}}",
+                    "timeout": 30000,
+                    "wait_until": "domcontentloaded"
+                  },
+                  "action_id": "navigate",
+                  "action_type": "navigate"
+                },
+                {
+                  "params": {
+                    "selector": ".side-toolbar__action.forward",
+                    "state": "visible",
+                    "timeout": 8000
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 10000,
+                    "selector": ".side-toolbar__action.forward"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "timeout": 5000,
+                    "selector": ".side-toolbar__action.forward"
+                  },
+                  "action_id": "click",
+                  "action_type": "click"
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 8000,
+                    "selector": ".bili-dyn-share-publishing__action"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "timeout": 5000,
+                    "selector": ".bili-dyn-share-publishing__action"
+                  },
+                  "action_id": "click",
+                  "action_type": "click",
+                  "input_vars": {
+                    "action_forward": "已转发"
+                  }
+                },
+                {
+                  "params": {
+                    "state": "hidden",
+                    "timeout": 8000,
+                    "selector": ".bili-dyn-share__wrap"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "share_closed"
+                  ]
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 3000,
+                    "selector": ".side-toolbar__action.like:not(.is-active)"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "need_like"
+                  ]
+                },
+                {
+                  "params": {
+                    "condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "need_like",
+                        "condition_value": true,
+                        "condition_value_type": "BOOLEAN"
+                      }
+                    },
+                    "TrueBranch": [
+                      {
+                        "retry": 1,
+                        "params": {
+                          "timeout": 5000,
+                          "selector": ".side-toolbar__action.like"
+                        },
+                        "action_id": "click",
+                        "action_type": "click",
+                        "input_vars": {
+                          "action_like": "已点赞"
+                        }
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else"
+                },
+                {
+                  "params": {
+                    "expression": "share_closed == true",
+                    "TrueBranch": [
+                      {
+                        "params": {
+                          "success": true,
+                          "resource_id": "{{off_item.dynId}}",
+                          "resource_type": "bili_lottery_official"
+                        },
+                        "action_id": "mark_resource_result",
+                        "action_type": "mark_resource_result"
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "success": false,
+                          "resource_id": "{{off_item.dynId}}",
+                          "resource_type": "bili_lottery_official",
+                          "status": "failed",
+                          "fail_reason": "转发弹窗未关闭，转发可能未生效"
+                        },
+                        "action_id": "mark_resource_result",
+                        "action_type": "mark_resource_result",
+                        "input_vars": {
+                          "skip_reason": "转发未确认"
+                        }
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else"
+                }
+              ]
+            },
+            "action_id": "if_else",
+            "action_type": "if_else"
+          },
+          {
+            "params": {
+              "message": "【官方转发抽奖】本轮结果 dynId={{off_item.dynId}} up={{off_item.sender_uid}} url=https://www.bilibili.com/opus/{{off_item.dynId}}\n跳过原因={{skip_reason}}\n页面就绪={{page_ok}} 已点赞={{already_liked}} 点赞={{need_like}} 已关注={{already_followed}}\n动作：转发={{action_forward}} 点赞={{action_like}} 关注={{action_follow}}",
+              "log": {
+                "enabled": true,
+                "record_params": false,
+                "record_result": true,
+                "record_variables": false,
+                "only_on_error": false,
+                "max_payload_length": 4000
+              }
+            },
+            "action_id": "print",
+            "action_type": "print"
+          },
+          {
+            "params": {
+              "timeout": 3000
+            },
+            "action_id": "wait",
+            "action_type": "wait"
+          }
+        ],
+        "name": "官方转发抽奖 {{off_item.dynId}}",
+        "loop_source": "variable",
+        "loop_item_var": "off_item",
+        "loop_items_var": "official_data.items"
+      },
+      "action_id": "loop",
+      "action_type": "loop",
+      "on_error": "continue"
+    },
+    {
+      "params": {
+        "loopBranch": [
+          {
+            "params": {
+              "message": "【第三方评论抽奖】dynId={{oth_item.dynId}} | up={{oth_item.up_uid}} | url={{oth_item.dynamicUrl}}",
+              "log": {
+                "enabled": true,
+                "record_params": false,
+                "record_result": true,
+                "record_variables": false,
+                "only_on_error": false,
+                "max_payload_length": 4000
+              }
+            },
+            "action_id": "print",
+            "action_type": "print",
+            "input_vars": {
+              "latest_comment_users": [],
+              "latest_comment_users_text": "",
+              "dyn_comment_list": [],
+              "dyn_comments": "",
+              "comments_ready": false,
+              "captcha_shown": false,
+              "skip_reason": "",
+              "action_forward": "",
+              "action_like": "",
+              "action_follow": "",
+              "already_liked": "",
+              "need_like": "",
+              "already_followed": "",
+              "comment_text": "",
+              "editor_text": "",
+              "llm_reply_model": "",
+              "llm_reply_role": "",
+              "up_name": "",
+              "dyn_content": ""
+            }
+          },
+          {
+            "retry": 1,
+            "params": {
+              "url": "{{oth_item.dynamicUrl}}",
+              "timeout": 30000,
+              "wait_until": "domcontentloaded"
+            },
+            "action_id": "navigate",
+            "action_type": "navigate"
+          },
+          {
+            "params": {
+              "state": "visible",
+              "timeout": 5000,
+              "selector": ".side-toolbar__action.like"
+            },
+            "action_id": "wait",
+            "action_type": "wait",
+            "output_vars": [
+              "page_ok"
+            ]
+          },
+          {
+            "params": {
+              "condition": {
+                "logic": "AND",
+                "condition": {
+                  "field": "page_ok",
+                  "condition_value_type": "BOOLEAN",
+                  "condition_value": false
+                }
+              },
+              "TrueBranch": [
+                {
+                  "params": {
+                    "success": false,
+                    "resource_id": "{{oth_item.dynId}}",
+                    "resource_type": "bili_lottery_others",
+                    "status": "failed",
+                    "fail_reason": "页面未就绪(page_ok=false)"
+                  },
+                  "action_id": "mark_resource_result",
+                  "action_type": "mark_resource_result",
+                  "input_vars": {
+                    "skip_reason": "页面未就绪(page_ok=false)"
+                  }
+                }
+              ],
+              "FalseBranch": [
+                {
+                  "retry": 1,
+                  "params": {
+                    "url": "https://space.bilibili.com/{{oth_item.up_uid}}/dynamic",
+                    "timeout": 30000,
+                    "wait_until": "domcontentloaded"
+                  },
+                  "action_id": "navigate",
+                  "action_type": "navigate"
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 8000,
+                    "selector": ".space-head-follow .space-follow-btn"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 3000,
+                    "selector": ".space-follow-btn.gray"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "already_followed"
+                  ]
+                },
+                {
+                  "params": {
+                    "condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "already_followed",
+                        "condition_value": false,
+                        "condition_value_type": "BOOLEAN"
+                      }
+                    },
+                    "TrueBranch": [
+                      {
+                        "retry": 1,
+                        "params": {
+                          "timeout": 5000,
+                          "selector": ".space-head-follow .space-follow-btn"
+                        },
+                        "action_id": "click",
+                        "action_type": "click",
+                        "input_vars": {
+                          "action_follow": "已关注"
+                        }
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else"
+                },
+                {
+                  "params": {
+                    "url": "{{oth_item.dynamicUrl}}",
+                    "timeout": 30000,
+                    "wait_until": "domcontentloaded"
+                  },
+                  "action_id": "navigate",
+                  "action_type": "navigate"
+                },
+                {
+                  "params": {
+                    "selector": ".side-toolbar__action.forward",
+                    "state": "visible",
+                    "timeout": 8000
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "timeout": 5000,
+                    "selector": ".bili-dyn-title__text:visible, .opus-module-author__name:visible"
+                  },
+                  "action_id": "get_text",
+                  "action_type": "get_text",
+                  "output_vars": [
+                    "up_name"
+                  ]
+                },
+                {
+                  "params": {
+                    "message": "【第三方评论抽奖】UP昵称={{up_name}}"
+                  },
+                  "action_id": "print",
+                  "action_type": "print"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "selector": ".opus-module-content, .dyn-card-opus, .bili-dyn-card-video"
+                  },
+                  "action_id": "get_text",
+                  "action_type": "get_text",
+                  "output_vars": [
+                    "dyn_content"
+                  ]
+                },
+                {
+                  "params": {
+                    "message": "【第三方评论抽奖】动态正文={{dyn_content}}",
+                    "log": {
+                      "enabled": true,
+                      "record_params": false,
+                      "record_result": true,
+                      "record_variables": false,
+                      "only_on_error": false,
+                      "max_payload_length": 20000
+                    }
+                  },
+                  "action_id": "print",
+                  "action_type": "print"
+                },
+                {
+                  "params": {
+                    "x": 0,
+                    "y": 900,
+                    "steps": 3,
+                    "interval_ms": 250,
+                    "timeout": 5000
+                  },
+                  "action_id": "scroll",
+                  "action_type": "scroll",
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "selector": "bili-comments",
+                    "state": "visible",
+                    "timeout": 5000
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "selector": "bili-comments bili-comment-thread-renderer",
+                    "state": "visible",
+                    "timeout": 8000
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "comments_ready"
+                  ],
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "timeout": 1200
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "selector": "bili-comment-renderer#comment #content > bili-rich-text #contents",
+                    "item_selector": "bili-comments bili-comment-thread-renderer",
+                    "exclude_selector": "bili-comment-renderer#comment #top",
+                    "exclude_text_selector": "bili-comment-renderer#comment #header > bili-comment-user-info #user-name",
+                    "exclude_text": "{{up_name}}",
+                    "separator": "\n"
+                  },
+                  "action_id": "get_text",
+                  "action_type": "get_text",
+                  "output_vars": [
+                    "dyn_comments",
+                    "dyn_comment_list"
+                  ],
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "comment_mode",
+                        "condition_value": "llm",
+                        "condition_value_type": "STRING"
+                      }
+                    },
+                    "TrueBranch": [
+                      {
+                        "retry": 1,
+                        "params": {
+                          "model": "{{llm_model}}",
+                          "prompt": "【我的昵称】{{self_nickname}}\n【UP主昵称】{{up_name}}\n【动态正文】\n{{dyn_content}}\n【热门评论（仅供风格参考，禁止照抄）】\n{{dyn_comments}}\n\n请直接输出一条 10~40 字的单行中文短评。",
+                          "api_key": "{{llm_api_key}}",
+                          "timeout": 120000,
+                          "server_url": "{{llm_server_url}}",
+                          "system_prompt": "{{llm_system_prompt}}",
+                          "fallbacks_json": "{{llm_fallbacks}}"
+                        },
+                        "action_id": "llm",
+                        "action_type": "llm",
+                        "output_vars": [
+                          "comment_text",
+                          "llm_reply_role",
+                          "llm_reply_model"
+                        ],
+                        "on_error": "continue",
+                        "on_error_branch": [
+                          {
+                            "params": {
+                              "message": "【第三方评论抽奖】LLM 生成评论失败，回退抄评论：dynId={{oth_item.dynId}} 模型={{llm_model}} 服务地址={{llm_server_url}} 错误={{last_error}}",
+                              "log": {
+                                "enabled": true,
+                                "record_params": false,
+                                "record_result": true,
+                                "record_variables": false,
+                                "only_on_error": false,
+                                "max_payload_length": 4000
+                              }
+                            },
+                            "action_id": "print",
+                            "action_type": "print"
+                          },
+                          {
+                            "params": {
+                              "expression": "'Error code: 401' in last_error or 'invalid api key' in last_error",
+                              "TrueBranch": [
+                                {
+                                  "params": {
+                                    "level": 3,
+                                    "title": "LLM Key 失效，请更换",
+                                    "content": "工作流「参与B站抽奖」调用 LLM 返回 401，Key 已失效或被禁用。\n模型：{{llm_model}}\n服务地址：{{llm_server_url}}\n错误：{{last_error}}\n影响：评论已自动回退为抄评论 / 兜底短评，抽奖参与未中断。",
+                                    "channel": "both",
+                                    "dedupe_key": "llm_key_invalid",
+                                    "once_per_day": true
+                                  },
+                                  "action_id": "notify",
+                                  "action_type": "notify",
+                                  "on_error": "continue"
+                                }
+                              ],
+                              "FalseBranch": [
+                                {
+                                  "params": {
+                                    "expression": "'free-models-per-day' in last_error",
+                                    "TrueBranch": [
+                                      {
+                                        "params": {
+                                          "level": 2,
+                                          "title": "LLM 免费额度已用尽",
+                                          "content": "工作流「参与B站抽奖」调用 LLM 触发 openrouter 免费额度上限（free-models-per-day）。\n模型：{{llm_model}}\n错误：{{last_error}}\n建议：更换有额度的模型，或为账号充值（+10 credits → 1000 次/天）。\n影响：评论已自动回退为抄评论 / 兜底短评，抽奖参与未中断。",
+                                          "channel": "both",
+                                          "dedupe_key": "llm_quota_exhausted",
+                                          "once_per_day": true
+                                        },
+                                        "action_id": "notify",
+                                        "action_type": "notify",
+                                        "on_error": "continue"
+                                      }
+                                    ],
+                                    "FalseBranch": [
+                                      {
+                                        "params": {
+                                          "expression": "'Error code: 429' in last_error",
+                                          "TrueBranch": [
+                                            {
+                                              "params": {
+                                                "level": 1,
+                                                "title": "LLM 被限流，已降级",
+                                                "content": "工作流「参与B站抽奖」调用 LLM 被限流（429）。\n模型：{{llm_model}}\n错误：{{last_error}}\n影响：本条动态已回退抄评论 / 兜底短评。",
+                                                "channel": "both",
+                                                "dedupe_key": "llm_rate_limited",
+                                                "once_per_day": true
+                                              },
+                                              "action_id": "notify",
+                                              "action_type": "notify",
+                                              "on_error": "continue"
+                                            }
+                                          ],
+                                          "FalseBranch": [
+                                            {
+                                              "params": {
+                                                "level": 2,
+                                                "title": "LLM 调用失败（非限流）",
+                                                "content": "工作流「参与B站抽奖」调用 LLM 失败，且不属于 Key 失效 / 额度耗尽 / 限流。\n模型：{{llm_model}}\n错误：{{last_error}}\n影响：本条动态已回退抄评论 / 兜底短评。",
+                                                "channel": "both",
+                                                "dedupe_key": "llm_call_failed",
+                                                "once_per_day": true
+                                              },
+                                              "action_id": "notify",
+                                              "action_type": "notify",
+                                              "on_error": "continue"
+                                            }
+                                          ]
+                                        },
+                                        "action_id": "if_else",
+                                        "action_type": "if_else",
+                                        "on_error": "continue"
+                                      }
+                                    ]
+                                  },
+                                  "action_id": "if_else",
+                                  "action_type": "if_else",
+                                  "on_error": "continue"
+                                }
+                              ]
+                            },
+                            "action_id": "if_else",
+                            "action_type": "if_else",
+                            "on_error": "continue"
+                          }
+                        ]
+                      },
+                      {
+                        "params": {
+                          "expression": "comment_text == '' and llm_reply_model != ''",
+                          "TrueBranch": [
+                            {
+                              "params": {
+                                "message": "【第三方评论抽奖】LLM 调用成功但内容为空（模型={{llm_reply_model}}），回退抄评论：dynId={{oth_item.dynId}}",
+                                "log": {
+                                  "enabled": true,
+                                  "record_params": false,
+                                  "record_result": true,
+                                  "record_variables": false,
+                                  "only_on_error": false,
+                                  "max_payload_length": 4000
+                                }
+                              },
+                              "action_id": "print",
+                              "action_type": "print"
+                            }
+                          ],
+                          "FalseBranch": []
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else",
+                        "on_error": "continue"
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "items_var": "dyn_comment_list"
+                        },
+                        "action_id": "random_pick",
+                        "action_type": "random_pick",
+                        "output_vars": [
+                          "comment_text"
+                        ],
+                        "on_error": "continue",
+                        "on_error_branch": [
+                          {
+                            "params": {
+                              "message": "【第三方评论抽奖】抄评论失败，本轮无评论内容：dynId={{oth_item.dynId}} 错误={{last_error}}",
+                              "log": {
+                                "enabled": true,
+                                "record_params": false,
+                                "record_result": true,
+                                "record_variables": false,
+                                "only_on_error": false,
+                                "max_payload_length": 4000
+                              }
+                            },
+                            "action_id": "print",
+                            "action_type": "print"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else",
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "expression": "comment_text != ''",
+                    "TrueBranch": [],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "items_var": "dyn_comment_list"
+                        },
+                        "action_id": "random_pick",
+                        "action_type": "random_pick",
+                        "output_vars": [
+                          "comment_text"
+                        ],
+                        "on_error": "continue",
+                        "on_error_branch": [
+                          {
+                            "params": {
+                              "message": "【第三方评论抽奖】评论内容仍为空（LLM 未产出且抄评论失败）：dynId={{oth_item.dynId}} 错误={{last_error}}",
+                              "log": {
+                                "enabled": true,
+                                "record_params": false,
+                                "record_result": true,
+                                "record_variables": false,
+                                "only_on_error": false,
+                                "max_payload_length": 4000
+                              }
+                            },
+                            "action_id": "print",
+                            "action_type": "print"
+                          }
+                        ]
+                      },
+                      {
+                        "params": {
+                          "expression": "comment_text == ''",
+                          "TrueBranch": [
+                            {
+                              "params": {
+                                "items": [
+                                  "蹲一个好运，希望这次能中！",
+                                  "来了来了，这个福利必须参与一下～",
+                                  "抽我抽我，欧气快来！",
+                                  "心动了，蹲个好运～",
+                                  "参与一下，祝大家好运！"
+                                ]
+                              },
+                              "action_id": "random_pick",
+                              "action_type": "random_pick",
+                              "output_vars": [
+                                "comment_text"
+                              ],
+                              "on_error": "continue"
+                            },
+                            {
+                              "params": {
+                                "message": "【第三方评论抽奖】使用兜底短评：dynId={{oth_item.dynId}} 评论内容={{comment_text}}",
+                                "log": {
+                                  "enabled": true,
+                                  "record_params": false,
+                                  "record_result": true,
+                                  "record_variables": false,
+                                  "only_on_error": false,
+                                  "max_payload_length": 4000
+                                }
+                              },
+                              "action_id": "print",
+                              "action_type": "print"
+                            }
+                          ],
+                          "FalseBranch": []
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else",
+                        "on_error": "continue"
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else",
+                  "on_error": "continue"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "timeout": 5000,
+                    "selector": "bili-comments #commentbox .brt-editor"
+                  },
+                  "action_id": "click",
+                  "action_type": "click"
+                },
+                {
+                  "params": {
+                    "message": "【第三方评论抽奖】评论内容={{comment_text}}",
+                    "log": {
+                      "enabled": true,
+                      "record_params": false,
+                      "record_result": true,
+                      "record_variables": false,
+                      "only_on_error": false,
+                      "max_payload_length": 4000
+                    }
+                  },
+                  "action_id": "print",
+                  "action_type": "print"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "value": "{{comment_text}}",
+                    "timeout": 5000,
+                    "selector": "bili-comments #commentbox .brt-editor"
+                  },
+                  "action_id": "input",
+                  "action_type": "input"
+                },
+                {
+                  "params": {
+                    "timeout": 800
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "params": {
+                    "selector": "bili-comments #commentbox .brt-editor",
+                    "timeout": 5000,
+                    "fail_on_empty": false
+                  },
+                  "action_id": "get_text",
+                  "action_type": "get_text",
+                  "output_vars": [
+                    "editor_text",
+                    "editor_text_list"
+                  ],
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "expression": "editor_text != '' and (comment_text in editor_text or editor_text in comment_text)",
+                    "TrueBranch": [],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "message": "【第三方评论抽奖】评论输入框内容与预期不一致，重填：dynId={{oth_item.dynId}} 期望={{comment_text}} 实际={{editor_text}}",
+                          "log": {
+                            "enabled": true,
+                            "record_params": false,
+                            "record_result": true,
+                            "record_variables": false,
+                            "only_on_error": false,
+                            "max_payload_length": 4000
+                          }
+                        },
+                        "action_id": "print",
+                        "action_type": "print"
+                      },
+                      {
+                        "retry": 1,
+                        "params": {
+                          "timeout": 5000,
+                          "selector": "bili-comments #commentbox .brt-editor"
+                        },
+                        "action_id": "click",
+                        "action_type": "click",
+                        "on_error": "continue"
+                      },
+                      {
+                        "retry": 1,
+                        "params": {
+                          "value": "{{comment_text}}",
+                          "timeout": 5000,
+                          "selector": "bili-comments #commentbox .brt-editor"
+                        },
+                        "action_id": "input",
+                        "action_type": "input",
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
+                          "timeout": 800
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait"
+                      },
+                      {
+                        "params": {
+                          "selector": "bili-comments #commentbox .brt-editor",
+                          "timeout": 5000,
+                          "fail_on_empty": false
+                        },
+                        "action_id": "get_text",
+                        "action_type": "get_text",
+                        "output_vars": [
+                          "editor_text",
+                          "editor_text_list"
+                        ],
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
+                          "expression": "editor_text != '' and (comment_text in editor_text or editor_text in comment_text)",
+                          "TrueBranch": [],
+                          "FalseBranch": [
+                            {
+                              "params": {
+                                "message": "【第三方评论抽奖】重填后评论输入框仍不一致，继续发布并由可见性校验兜底：dynId={{oth_item.dynId}} 期望={{comment_text}} 实际={{editor_text}}",
+                                "log": {
+                                  "enabled": true,
+                                  "record_params": false,
+                                  "record_result": true,
+                                  "record_variables": false,
+                                  "only_on_error": false,
+                                  "max_payload_length": 4000
+                                }
+                              },
+                              "action_id": "print",
+                              "action_type": "print"
+                            }
+                          ]
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else",
+                        "on_error": "continue"
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else",
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "state": "visible",
+                    "timeout": 8000,
+                    "selector": "bili-comments #commentbox #pub button"
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "retry": 1,
+                  "params": {
+                    "timeout": 5000,
+                    "selector": "bili-comments #commentbox #pub button"
+                  },
+                  "action_id": "click",
+                  "action_type": "click"
+                },
+                {
+                  "params": {
+                    "timeout": 3000
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "params": {
+                    "selector": "bili-comment-thread-renderer",
+                    "state": "visible",
+                    "timeout": 8000
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "comment_ready"
+                  ],
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "selector": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)",
+                    "item_selector": "bili-comment-thread-renderer",
+                    "timeout": 5000,
+                    "fail_on_empty": false
+                  },
+                  "action_id": "get_text",
+                  "action_type": "get_text",
+                  "output_vars": [
+                    "latest_comment_users_text",
+                    "latest_comment_users"
+                  ],
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "message": "【第三方评论抽奖】第 1 次校验评论可见性：dynId={{oth_item.dynId}} 我的昵称={{self_nickname}} 评论区作者={{latest_comment_users_text}}",
+                    "log": {
+                      "enabled": true,
+                      "record_params": false,
+                      "record_result": true,
+                      "record_variables": false,
+                      "only_on_error": false,
+                      "max_payload_length": 4000
+                    }
+                  },
+                  "action_id": "print",
+                  "action_type": "print"
+                },
+                {
+                  "params": {
+                    "expression": "self_nickname != '' and self_nickname in latest_comment_users_text",
+                    "TrueBranch": [],
+                    "FalseBranch": [
+                      {
+                        "retry": 1,
+                        "params": {
+                          "url": "{{oth_item.dynamicUrl}}",
+                          "timeout": 30000,
+                          "wait_until": "domcontentloaded"
+                        },
+                        "action_id": "navigate",
+                        "action_type": "navigate"
+                      },
+                      {
+                        "params": {
+                          "selector": ".side-toolbar__action.forward",
+                          "state": "visible",
+                          "timeout": 15000
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
+                          "selector": "bili-comments bili-comment-thread-renderer",
+                          "state": "visible",
+                          "timeout": 15000
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
+                          "timeout": 3000
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait"
+                      },
+                      {
+                        "params": {
+                          "selector": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)",
+                          "item_selector": "bili-comment-thread-renderer",
+                          "timeout": 5000,
+                          "fail_on_empty": false
+                        },
+                        "action_id": "get_text",
+                        "action_type": "get_text",
+                        "output_vars": [
+                          "latest_comment_users_text",
+                          "latest_comment_users"
+                        ],
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
+                          "message": "【第三方评论抽奖】第 2 次校验评论可见性（已刷新页面）：dynId={{oth_item.dynId}} 我的昵称={{self_nickname}} 评论区作者={{latest_comment_users_text}}",
+                          "log": {
+                            "enabled": true,
+                            "record_params": false,
+                            "record_result": true,
+                            "record_variables": false,
+                            "only_on_error": false,
+                            "max_payload_length": 4000
+                          }
+                        },
+                        "action_id": "print",
+                        "action_type": "print"
+                      },
+                      {
+                        "params": {
+                          "expression": "self_nickname != '' and self_nickname in latest_comment_users_text",
+                          "TrueBranch": [],
+                          "FalseBranch": [
+                            {
+                              "retry": 1,
+                              "params": {
+                                "url": "{{oth_item.dynamicUrl}}",
+                                "timeout": 30000,
+                                "wait_until": "domcontentloaded"
+                              },
+                              "action_id": "navigate",
+                              "action_type": "navigate"
+                            },
+                            {
+                              "params": {
+                                "selector": ".side-toolbar__action.forward",
+                                "state": "visible",
+                                "timeout": 15000
+                              },
+                              "action_id": "wait",
+                              "action_type": "wait",
+                              "on_error": "continue"
+                            },
+                            {
+                              "params": {
+                                "selector": "bili-comments bili-comment-thread-renderer",
+                                "state": "visible",
+                                "timeout": 15000
+                              },
+                              "action_id": "wait",
+                              "action_type": "wait",
+                              "on_error": "continue"
+                            },
+                            {
+                              "params": {
+                                "timeout": 5000
+                              },
+                              "action_id": "wait",
+                              "action_type": "wait"
+                            },
+                            {
+                              "params": {
+                                "selector": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)",
+                                "item_selector": "bili-comment-thread-renderer",
+                                "timeout": 5000,
+                                "fail_on_empty": false
+                              },
+                              "action_id": "get_text",
+                              "action_type": "get_text",
+                              "output_vars": [
+                                "latest_comment_users_text",
+                                "latest_comment_users"
+                              ],
+                              "on_error": "continue"
+                            },
+                            {
+                              "params": {
+                                "message": "【第三方评论抽奖】第 3 次校验评论可见性（已刷新页面）：dynId={{oth_item.dynId}} 我的昵称={{self_nickname}} 评论区作者={{latest_comment_users_text}}",
+                                "log": {
+                                  "enabled": true,
+                                  "record_params": false,
+                                  "record_result": true,
+                                  "record_variables": false,
+                                  "only_on_error": false,
+                                  "max_payload_length": 4000
+                                }
+                              },
+                              "action_id": "print",
+                              "action_type": "print"
+                            }
+                          ]
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else",
+                        "on_error": "continue"
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else",
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "expression": "self_nickname != '' and self_nickname in latest_comment_users_text",
+                    "TrueBranch": [
+                      {
+                        "params": {
+                          "state": "visible",
+                          "timeout": 10000,
+                          "selector": ".side-toolbar__action.forward"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait"
+                      },
+                      {
+                        "retry": 1,
+                        "params": {
+                          "timeout": 5000,
+                          "selector": ".side-toolbar__action.forward"
+                        },
+                        "action_id": "click",
+                        "action_type": "click"
+                      },
+                      {
+                        "params": {
+                          "state": "visible",
+                          "timeout": 8000,
+                          "selector": ".bili-dyn-share-publishing__action"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait"
+                      },
+                      {
+                        "retry": 1,
+                        "params": {
+                          "timeout": 5000,
+                          "selector": ".bili-dyn-share-publishing__action"
+                        },
+                        "action_id": "click",
+                        "action_type": "click",
+                        "input_vars": {
+                          "action_forward": "已转发"
+                        }
+                      },
+                      {
+                        "params": {
+                          "state": "hidden",
+                          "timeout": 8000,
+                          "selector": ".bili-dyn-share__wrap"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "output_vars": [
+                          "share_closed"
+                        ]
+                      },
+                      {
+                        "params": {
+                          "state": "visible",
+                          "timeout": 3000,
+                          "selector": ".side-toolbar__action.like:not(.is-active)"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "output_vars": [
+                          "need_like"
+                        ]
+                      },
+                      {
+                        "params": {
+                          "condition": {
+                            "logic": "AND",
+                            "condition": {
+                              "field": "need_like",
+                              "condition_value": true,
+                              "condition_value_type": "BOOLEAN"
+                            }
+                          },
+                          "TrueBranch": [
+                            {
+                              "retry": 1,
+                              "params": {
+                                "timeout": 5000,
+                                "selector": ".side-toolbar__action.like"
+                              },
+                              "action_id": "click",
+                              "action_type": "click",
+                              "input_vars": {
+                                "action_like": "已点赞"
+                              }
+                            }
+                          ]
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else"
+                      },
+                      {
+                        "params": {
+                          "expression": "share_closed == true",
+                          "TrueBranch": [
+                            {
+                              "params": {
+                                "success": true,
+                                "resource_id": "{{oth_item.dynId}}",
+                                "resource_type": "bili_lottery_others"
+                              },
+                              "action_id": "mark_resource_result",
+                              "action_type": "mark_resource_result"
+                            }
+                          ],
+                          "FalseBranch": [
+                            {
+                              "params": {
+                                "success": false,
+                                "resource_id": "{{oth_item.dynId}}",
+                                "resource_type": "bili_lottery_others",
+                                "status": "failed",
+                                "fail_reason": "转发弹窗未关闭，转发可能未生效"
+                              },
+                              "action_id": "mark_resource_result",
+                              "action_type": "mark_resource_result",
+                              "input_vars": {
+                                "skip_reason": "转发未确认"
+                              }
+                            }
+                          ]
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else"
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "selector": ".bili-captcha, .geetest_holder, .geetest_panel, iframe[src*=\"geetest\"], iframe[src*=\"captcha\"]",
+                          "state": "visible",
+                          "timeout": 2000
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "output_vars": [
+                          "captcha_shown"
+                        ],
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
+                          "message": "【第三方评论抽奖】评论未生效：评论区作者={{latest_comment_users_text}}、我的昵称={{self_nickname}}、出现验证码={{captcha_shown}} → 跳过点赞与标记（下一轮重试）",
+                          "log": {
+                            "enabled": true,
+                            "record_params": false,
+                            "record_result": true,
+                            "record_variables": false,
+                            "only_on_error": false,
+                            "max_payload_length": 4000
+                          }
+                        },
+                        "action_id": "print",
+                        "action_type": "print",
+                        "input_vars": {
+                          "skip_reason": "评论未生效(见验证码标记)"
+                        }
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else",
+                  "on_error": "continue"
+                }
+              ]
+            },
+            "action_id": "if_else",
+            "action_type": "if_else",
+            "on_error": "continue"
+          },
+          {
+            "params": {
+              "expression": "skip_reason == '' and action_like != '已点赞'",
+              "TrueBranch": [
+                {
+                  "params": {
+                    "message": "【第三方评论抽奖】本轮未完成参与（中途异常，下一轮重试）",
+                    "log": {
+                      "enabled": true,
+                      "record_params": false,
+                      "record_result": true,
+                      "record_variables": false,
+                      "only_on_error": false,
+                      "max_payload_length": 4000
+                    }
+                  },
+                  "action_id": "print",
+                  "action_type": "print",
+                  "input_vars": {
+                    "skip_reason": "本轮未完成参与(中途异常)"
+                  }
+                }
+              ],
+              "FalseBranch": []
+            },
+            "action_id": "if_else",
+            "action_type": "if_else"
+          },
+          {
+            "params": {
+              "message": "【第三方评论抽奖】本轮结果 dynId={{oth_item.dynId}} up={{oth_item.up_uid}}\n跳过原因={{skip_reason}}\n页面就绪={{page_ok}} 已点赞={{already_liked}} 点赞={{need_like}} 已关注={{already_followed}}\n动作：转发={{action_forward}} 点赞={{action_like}} 关注={{action_follow}}\n评论={{comment_text}}\n评论作者={{latest_comment_users_text}} 验证码={{captcha_shown}}\nUP={{up_name}}\n正文={{dyn_content}}",
+              "log": {
+                "enabled": true,
+                "record_params": false,
+                "record_result": true,
+                "record_variables": false,
+                "only_on_error": false,
+                "max_payload_length": 4000
+              }
+            },
+            "action_id": "print",
+            "action_type": "print"
+          },
+          {
+            "params": {
+              "timeout": 3000
+            },
+            "action_id": "wait",
+            "action_type": "wait"
+          }
+        ],
+        "name": "第三方评论抽奖 {{oth_item.dynId}}",
+        "loop_source": "variable",
+        "loop_item_var": "oth_item",
+        "loop_items_var": "others_data.items",
+        "break_condition": {
+          "logic": "AND",
+          "condition": {
+            "field": "self_nickname",
+            "condition_value": "",
+            "condition_value_type": "STRING"
+          }
+        }
+      },
+      "action_id": "loop",
+      "action_type": "loop",
+      "on_error": "continue"
+    },
+    {
+      "params": {
+        "message": "抽奖参与流程结束"
+      },
+      "action_id": "print",
+      "action_type": "print"
+    }
+  ],
+  "is_composite": 0,
+  "description": "判断登录→取预约/官方/第三方抽奖数据→预约随机打乱、转发类按动态主键(dynId)从大到小→预约/转发/点赞/关注，纯DOM操作，记录已参与动态防重复，每轮循环结束均有固定等待，抄评论取评论区已加载的全部评论并剔除UP主评论与置顶评论后随机选一条，LLM评论生成时提供我的昵称/UP主昵称/动态正文/热门评论上下文（需在工作流中运行以启用去重）",
+  "icon_series": 0,
+  "icon_id": 0,
+  "input_vars": [
+    {
+      "name": "comment_mode",
+      "type": "string",
+      "default": "llm",
+      "required": false,
+      "description": "评论生成方式：llm=大模型生成 / copy=复用已有评论"
+    },
+    {
+      "name": "llm_server_url",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "LLM API 服务器地址"
+    },
+    {
+      "name": "llm_api_key",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "LLM API 密钥"
+    },
+    {
+      "name": "llm_model",
+      "type": "string",
+      "default": "",
+      "required": false,
+      "description": "LLM 模型名称"
+    },
+    {
+      "name": "llm_system_prompt",
+      "type": "string",
+      "default": "你是B站普通用户，正在参与UP主抽奖动态的评论互动，需要写一条真实、自然的短评。\n\n硬性规则：\n1. 只输出评论正文，不要任何解释、前缀、标题、引号或空行；\n2. 单行输出，不要换行，首尾不要空格，长度 10~40 个汉字；\n3. 不要在开头写自己的昵称，也不要出现「昵称：」这类前缀；\n4. 禁止输出任何审核、安全、模型、AI、提示词相关的字样（例如「User Safety」「safe」「内容合规」），也不要复述这些规则；\n5. 不要 @ 任何人，不要放链接、二维码、联系方式；\n6. 不要照抄热门评论，也不要与热门评论高度相似；\n7. 围绕动态正文或奖品自然表达期待、祝福、参与感；正文自带话题要求时再自然带上话题词，不要堆砌标签和 emoji。",
+      "required": false,
+      "description": "LLM 系统提示词"
+    },
+    {
+      "name": "llm_fallbacks",
+      "type": "array",
+      "default": [],
+      "required": false,
+      "description": "备用模型池（JSON 数组，主模型失败时按顺序回退）：[{\"model\":\"deepseek-chat\",\"server_url\":\"https://api.deepseek.com/v1\",\"api_key\":\"sk-...\"}]，留空=只用主模型",
+      "items_schema": {
+        "description": "LLM 备用模型配置（主模型失败时按顺序回退，各自独立额度池）",
+        "properties": {
+          "model": {
+            "description": "模型名称",
+            "maxLength": 200,
+            "title": "Model",
+            "type": "string"
+          },
+          "server_url": {
+            "description": "API 服务器地址",
+            "format": "uri",
+            "maxLength": 2048,
+            "title": "Server Url",
+            "type": "string"
+          },
+          "api_key": {
+            "description": "API 密钥",
+            "maxLength": 500,
+            "title": "Api Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "server_url",
+          "api_key"
+        ],
+        "type": "object"
+      }
+    }
+  ],
+  "output_vars": [],
+  "forked_from_id": null,
+  "timeout": 600000,
+  "retry_on_error": 0,
+  "retry_times": 0,
+  "retry_delay": 1.0,
+  "log_enabled": 0,
+  "log_debug": null,
+  "log_record_params": 1,
+  "log_record_result": 1,
+  "log_record_variables": 0,
+  "log_only_on_error": 0,
+  "log_max_payload_length": 4000,
+  "log_retention_days": 30,
+  "tags": [
+    "bilibili",
+    "lottery"
+  ]
+}

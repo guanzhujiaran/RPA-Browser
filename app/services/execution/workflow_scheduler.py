@@ -143,6 +143,38 @@ async def sync_workflow_job(workflow: UserWorkflow) -> bool:
     return True
 
 
+async def disable_workflow_schedule(workflow: UserWorkflow) -> bool:
+    """关闭工作流的定期执行（停用 + 移除调度任务）。
+
+    用于「停止工作流」：用户点停止后，除立刻中断本次运行外，还要让随后的 cron
+    触发不再拉起新运行（见 ``docs/工作流停止计划书.md`` §3.2）。
+
+    为什么改 ``is_enabled`` 而不是只 ``remove_job``：调度任务在服务启动
+    （``register_all_workflow_jobs``）与任意工作流 ``update`` 时都会按 ``is_enabled``
+    重新注册，只删 job 会在重启 / 保存后复活。
+
+    Returns:
+        True 表示本次确实关闭了定时执行；False 表示该工作流本来就没有定时执行。
+    """
+    if not workflow.is_enabled or workflow.trigger_type != "cron":
+        return False
+    if not extract_cron(workflow):
+        return False
+
+    updated = await workflow_crud_svr.update(id=workflow.id, is_enabled=False)
+    if updated is None:
+        logger.warning(
+            f"[WorkflowScheduler] 停用工作流失败，定时任务保持原状: {workflow.workflow_id}"
+        )
+        return False
+
+    await sync_workflow_job(updated)
+    logger.info(
+        f"[WorkflowScheduler] 用户停止工作流，已关闭定期执行: {workflow.workflow_id}"
+    )
+    return True
+
+
 async def register_all_workflow_jobs() -> int:
     """启动时按库重建全部工作流定时任务
 
@@ -181,7 +213,7 @@ async def run_workflow_job(workflow_id: str) -> None:
             return
 
         # 异步启动：立即返回 run_id，执行在后台 task 中进行，不阻塞调度线程
-        run_id = launch_workflow_run(
+        run_id = await launch_workflow_run(
             workflow, trigger_source=WorkflowRunTriggerEnum.SCHEDULE
         )
         logger.info(f"[WorkflowScheduler] 已启动定时运行: run={run_id}")
@@ -208,6 +240,7 @@ __all__ = [
     "is_schedulable",
     "remove_workflow_job",
     "sync_workflow_job",
+    "disable_workflow_schedule",
     "register_all_workflow_jobs",
     "run_workflow_job",
 ]

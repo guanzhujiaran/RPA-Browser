@@ -111,6 +111,62 @@ class WorkflowRunProgressData(SQLModel):
         )
 
 
+class LoopRunSummary(SQLModel):
+    """一次循环执行完的聚合统计（每个循环实例一条，按结束顺序）。
+
+    存在的理由：`success_count / failed_count` 只数**顶层步骤**（一个循环整体
+    算 1 步），批量循环跑 200 轮、体内动作成败在运行结论里完全看不见；熔断文案
+    与结束通知需要这个维度的上下文（见 docs/通知动作与运行告警计划书.md §D4）。
+    """
+
+    name: str = Field(default="", description="循环显示名")
+    depth: int = Field(default=1, description="嵌套层级（1=最外层）")
+    rounds: int = Field(default=0, description="实际执行轮次（提前退出时小于计划）")
+    rounds_planned: int = Field(
+        default=0, description="计划总轮次；0=不可知（condition 循环）"
+    )
+    body_success: int = Field(default=0, description="体内动作成功数（不含更深层循环）")
+    body_failed: int = Field(default=0, description="体内动作失败数（不含更深层循环）")
+
+
+def render_loop_summaries(summaries: list[LoopRunSummary]) -> str:
+    """把循环聚合渲染为一段可读文案（无数据返回空串）。
+
+    同名循环的多次实例化（嵌套循环里内层每轮都重跑）合并为一条、轮次求和；
+    只有单次实例化才显示「执行 N/M 轮」，多次只显示「执行 N 轮」——合并后
+    「N/M」没有意义（M 是单次实例的分母），不伪造分母。
+    """
+    if not summaries:
+        return ""
+    grouped: dict[str, LoopRunSummary] = {}
+    counts: dict[str, int] = {}
+    for s in summaries:
+        acc = grouped.get(s.name)
+        if acc is None:
+            acc = LoopRunSummary(name=s.name, depth=s.depth)
+            grouped[s.name] = acc
+            counts[s.name] = 0
+        acc.rounds += s.rounds
+        acc.body_success += s.body_success
+        acc.body_failed += s.body_failed
+        counts[s.name] += 1
+        if counts[s.name] == 1:
+            acc.rounds_planned = s.rounds_planned
+    parts: list[str] = []
+    for name, acc in grouped.items():
+        label = name or "循环"
+        if counts[name] == 1 and acc.rounds_planned > 0:
+            rounds = f"执行 {acc.rounds}/{acc.rounds_planned} 轮"
+        else:
+            rounds = f"执行 {acc.rounds} 轮"
+        if acc.body_success or acc.body_failed:
+            body = f"、体内 成功 {acc.body_success}/失败 {acc.body_failed}"
+        else:
+            body = ""
+        parts.append(f"循环「{label}」{rounds}{body}")
+    return "；".join(parts)
+
+
 class WorkflowRunLogEvent(SQLModel):
     """运行消息（步骤级明细）
 
@@ -158,6 +214,8 @@ class WorkflowRunLogEvent(SQLModel):
 __all__ = [
     "WORKFLOW_RUN_SSE_EVENT_NAME",
     "WORKFLOW_RUN_LOG_SSE_EVENT_NAME",
+    "LoopRunSummary",
     "WorkflowRunProgressData",
     "WorkflowRunLogEvent",
+    "render_loop_summaries",
 ]

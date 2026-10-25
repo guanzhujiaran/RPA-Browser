@@ -134,8 +134,8 @@ def _release_session_mark(
         entry = live_service.get_browser_session_entry(mid=mid, browser_id=browser_id)
     except BrowserNotStartedException:
         return
-    if entry is not None and entry.workflow_run_id == run_id:
-        live_service.end_workflow_run(mid, browser_id)
+    if entry is not None and run_id in entry.active_workflow_runs:
+        live_service.end_workflow_run(mid, browser_id, run_id)
 
 
 async def _reap_dead_run(

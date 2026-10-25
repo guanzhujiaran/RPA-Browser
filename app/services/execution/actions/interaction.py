@@ -220,6 +220,37 @@ class ScrollAction(BaseAction[ScrollParams]):
         timeout = validated_params.timeout
 
         try:
+            # ── 滚轮模式：x / y 任一提供 → 原生滚轮相对滚动 ──
+            # 为什么不用 window.scrollBy：mouse.wheel 是浏览器原生输入事件，
+            # 会正常触发 IntersectionObserver / scroll 监听（懒加载、无限滚动），
+            # 且不依赖任何站点选择器，属于与业务无关的通用能力。
+            if validated_params.x is not None or validated_params.y is not None:
+                dx_total = int(validated_params.x or 0)
+                dy_total = int(validated_params.y or 0)
+                steps = max(1, int(validated_params.steps))
+                interval = max(0, int(validated_params.interval_ms)) / 1000.0
+                # 除法余数补到最后一步，保证累计位移精确等于 y（整数像素）
+                dx_base, dx_rem = divmod(dx_total, steps)
+                dy_base, dy_rem = divmod(dy_total, steps)
+                for i in range(steps):
+                    dx = dx_base + (dx_rem if i == steps - 1 else 0)
+                    dy = dy_base + (dy_rem if i == steps - 1 else 0)
+                    if dx or dy:
+                        await self.page.mouse.wheel(dx, dy)
+                    if i < steps - 1 and interval:
+                        await asyncio.sleep(interval)
+                logger.info(
+                    f"[ScrollAction] mouse.wheel 分 {steps} 步滚动: "
+                    f"x={dx_total}, y={dy_total}, interval={validated_params.interval_ms}ms"
+                )
+                return ActionResult(
+                    success=True,
+                    data=ScrollResult(scrolled=True),
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+
             # 构建 scroll_into_view_if_needed 参数字典
             scroll_kwargs = {}
 

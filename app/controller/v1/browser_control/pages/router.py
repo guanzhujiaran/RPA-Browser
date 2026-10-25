@@ -13,6 +13,7 @@ from bili_common.models.response import (
 )
 from bili_common.models.response_code import ResponseCode
 from app.services.RPA_browser.session.live_service import LiveService
+from app.services.RPA_browser.session.page_registry import page_registry
 from app.utils.depends.security_depends import verify_browser_ownership
 from app.utils.depends.vip_depends import is_vip_user
 from ..base import new_webrtc_router
@@ -176,16 +177,30 @@ async def close_page(
             is_vip=is_vip_user(browser_info.auth_info),
         )
 
-        # 关闭页面
-        result = await RPAOperationService.close_page_by_index(session, page_index)
-
-        if result.success:
-            return success_response(data=result.data)
-        else:
+        # 工作流占用检查：别名页（工作流 open_page 创建）不允许手动关闭
+        pages = session.browser_session.all_pages
+        if not isinstance(page_index, int) or not (0 <= page_index < len(pages)):
             return error_response(
                 code=ResponseCode.PAGE_CLOSED,
-                msg=result.error,
+                msg=f"页面索引 {page_index} 超出范围",
             )
+        alias = page_registry.find_alias((mid, int(browser_id)), pages[page_index])
+        if alias:
+            return error_response(
+                code=ResponseCode.PAGE_CLOSED,
+                msg=f"页面 {alias!r} 正在被工作流使用，不能手动关闭",
+            )
+        if len(pages) <= 1:
+            return error_response(
+                code=ResponseCode.PAGE_CLOSED, msg="无法关闭最后一个页面"
+            )
+
+        target = pages[page_index]
+        if not target.is_closed():
+            await target.close()
+        return success_response(
+            data={"page_index": page_index, "message": "页面关闭成功"}
+        )
     except Exception as e:
         loguru.logger.error(f"关闭页面失败: {e}")
         return error_response(

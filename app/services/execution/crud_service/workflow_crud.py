@@ -18,6 +18,24 @@ from app.utils.snow_flake_gen import generate_workflow_id
 from app.models.execution.action_params import normalize_composite_action_id
 
 
+def merge_variables_patch(
+    current: Dict | None, patch: Dict | None
+) -> Dict:
+    """把增量补丁合并到现有变量上（纯函数，见 docs/工作流变量增量更新计划书.md）
+
+    - 只覆盖 patch 里给出的键；
+    - 值为 ``None`` 表示删除该键；
+    - patch 为空时返回 current 的浅拷贝（不共享引用）。
+    """
+    merged: Dict = dict(current or {})
+    for key, value in (patch or {}).items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return merged
+
+
 class WorkflowCrudService:
     """工作流 CRUD 服务"""
 
@@ -34,6 +52,7 @@ class WorkflowCrudService:
         notify_on_start: bool = False,
         notify_on_end: bool = True,
         log_enabled: bool = False,
+        log_debug: bool | None = None,
         resume_on_restart: bool = False,
         auto_sync_upstream: bool = False,
         browser_ids: list[int] | None = None,
@@ -68,6 +87,7 @@ class WorkflowCrudService:
                 notify_on_start=notify_on_start,
                 notify_on_end=notify_on_end,
                 log_enabled=log_enabled,
+                log_debug=log_debug,
                 resume_on_restart=resume_on_restart,
                 auto_sync_upstream=auto_sync_upstream,
                 browser_ids=browser_ids,
@@ -185,11 +205,13 @@ class WorkflowCrudService:
         notify_on_start: bool | None = None,
         notify_on_end: bool | None = None,
         log_enabled: bool | None = None,
+        log_debug: bool | None = None,
         auto_sync_upstream: bool | None = None,
         resume_on_restart: bool | None = None,
         browser_ids: list[int] | None = None,
         concurrent_exec: bool | None = None,
         variables: Dict | None = None,
+        variables_patch: Dict | None = None,
     ) -> UserWorkflow | None:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
@@ -237,6 +259,8 @@ class WorkflowCrudService:
                 model.notify_on_end = notify_on_end
             if log_enabled is not None:
                 model.log_enabled = log_enabled
+            if log_debug is not None:
+                model.log_debug = log_debug
             if resume_on_restart is not None:
                 model.resume_on_restart = resume_on_restart
             if auto_sync_upstream is not None:
@@ -250,6 +274,11 @@ class WorkflowCrudService:
                 # 整体替换（前端按动作契约渲染全量值），不做增量合并，
                 # 否则被删掉的变量会一直残留
                 model.variables = variables
+            elif variables_patch:
+                # 增量更新：只改给出的键（null=删除），避免请求体不完整时清空全部变量
+                model.variables = merge_variables_patch(
+                    model.variables, variables_patch
+                )
 
             model.updated_at = datetime.now()
             await session.commit()
@@ -323,6 +352,7 @@ class WorkflowCrudService:
                 notify_on_start=original.notify_on_start,
                 notify_on_end=original.notify_on_end,
                 log_enabled=original.log_enabled,
+                log_debug=original.log_debug,
                 resume_on_restart=original.resume_on_restart,
                 # 副本仍属同一用户：变量值一并复制，避免重新填一遍
                 variables=dict(original.variables or {}),
@@ -379,6 +409,7 @@ class WorkflowCrudService:
             original_notify_on_start = original.notify_on_start
             original_notify_on_end = original.notify_on_end
             original_log_enabled = original.log_enabled
+            original_log_debug = original.log_debug
             original_updated_at = original.updated_at
 
         # ── 递归 Fork Action 依赖树 ──
@@ -440,6 +471,7 @@ class WorkflowCrudService:
                 notify_on_start=original_notify_on_start,
                 notify_on_end=original_notify_on_end,
                 log_enabled=original_log_enabled,
+                log_debug=original_log_debug,
                 resume_on_restart=bool(original.resume_on_restart),
                 # 变量值是原作者的配置（可能含 token 等敏感值），Fork 给他人不继承，
                 # 由 Fork 方按动作契约自行填写（定义仍从动作读时获取）。

@@ -232,17 +232,31 @@ class LiveService:
         需与 ``end_workflow_run`` 配对。不复用 ``pin`` 是因为单步调试自身也会 pin，
         无法区分「工作流在执行」与「用户自己在调试」。
 
+        同一浏览器上可有多个工作流**并行**执行，故用集合累加（见
+        ``docs/多页面并行执行计划书.md`` §3）。
+
         Returns:
             bool: 会话存在并标记成功返回 True
         """
         entry = self._browser_sessions.get(self._get_session_key(mid, browser_id))
         if entry is None:
             return False
-        entry.workflow_run_id = run_id
+        entry.active_workflow_runs.add(run_id)
         return True
 
-    def end_workflow_run(self, mid: int | str, browser_id: int | str) -> bool:
+    def end_workflow_run(
+        self, mid: int | str, browser_id: int | str, run_id: str = ""
+    ) -> bool:
         """解除工作流执行期标记（与 ``begin_workflow_run`` 配对）。
+
+        同一浏览器允许**多个工作流并行**，会话上的执行标记是 ``active_workflow_runs``
+        集合（``workflow_run_id`` 只是「任取一个」的只读兼容视图），因此这里只能按
+        ``run_id`` 精确摘除本次运行，不能整体清空——否则会把同会话上其它并行运行的
+        标记一起抹掉，让它们的执行期互斥失效。
+
+        Args:
+            run_id: 要解除的运行 ID；留空表示清理该会话上的全部执行标记
+                （仅用于兜底 / 会话回收场景）。
 
         Returns:
             bool: 会话存在并解除成功返回 True
@@ -250,7 +264,10 @@ class LiveService:
         entry = self._browser_sessions.get(self._get_session_key(mid, browser_id))
         if entry is None:
             return False
-        entry.workflow_run_id = None
+        if run_id:
+            entry.active_workflow_runs.discard(str(run_id))
+        else:
+            entry.active_workflow_runs.clear()
         return True
 
     async def _check_session_cleanup(self):

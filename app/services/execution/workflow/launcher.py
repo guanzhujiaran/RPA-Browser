@@ -4,8 +4,11 @@
 
 - :func:`launch_workflow_run`：Docker ``docker run`` 语义——立即返回 run_id，
   执行在后台 ``asyncio.Task`` 中进行，支持多浏览器（并发 / 串行）；
-- :func:`_on_run_task_done` / :func:`_finalize_run_if_needed`：task 收尾与幂等补收口；
-- :func:`resume_run_record` / :func:`resume_interrupted_runs`：重启断点恢复。
+- :func:`_on_run_task_done` / :func:`finalize_run_after_task`：task 收尾与统一补收口
+  （「停止工作流」复用同一套收尾，不另写清理逻辑）；
+- :func:`resume_run_record` / :func:`resume_interrupted_runs`：重启断点恢复；
+- :func:`requeue_pending_runs`：重启后把 ``status=QUEUED`` 的运行重新入队
+  （见 docs/同浏览器工作流排队计划书.md）。
 
 恢复语义为**至少一次**：从 ``checkpoint_step`` 之后继续，当前步骤重跑；
 循环内已处理资源由 WorkflowResourceRecord（success/skipped）跳过。
@@ -19,12 +22,15 @@ from functools import partial
 from loguru import logger
 
 from app.config import settings
+from app.models.common.exceptions.base_exception import BrowserNotStartedException
 from app.models.database.workflow.models import (
     UserWorkflow,
     WorkflowRunRecord,
     WorkflowRunStatusEnum,
     WorkflowRunTriggerEnum,
 )
+from app.services.RPA_browser.session.live_service import live_service
+from app.services.execution.cancellation import cancellation_registry
 from app.services.execution.crud_service import (
     workflow_crud_svr,
     workflow_run_crud_svr,
@@ -33,7 +39,7 @@ from app.services.execution.run_tasks import workflow_run_tasks
 from app.services.execution.workflow.run_workflow import run_workflow
 
 
-def launch_workflow_run(
+async def launch_workflow_run(
     workflow: UserWorkflow,
     *,
     trigger_source: WorkflowRunTriggerEnum = WorkflowRunTriggerEnum.MANUAL,
@@ -83,17 +89,33 @@ def launch_workflow_run(
             [int(workflow.browser_id)] if workflow.browser_id else []
         )
 
-    # 单浏览器：沿用原有语义
+    # 单浏览器：落 QUEUED 记录（排队凭证 + 立即入队）后交给后台执行
     if len(targets) <= 1:
-        task = _spawn(run_id, targets[0] if targets else None)
+        target = targets[0] if targets else None
+        await workflow_run_crud_svr.create_queued(
+            workflow_id=int(workflow.workflow_id),
+            mid=int(workflow.mid),
+            browser_id=target,
+            trigger_source=trigger_source,
+            run_id=run_id,
+        )
+        _spawn(run_id, target)
         logger.info(
-            f"[WorkflowRunner] 已启动后台运行: workflow={workflow.workflow_id}, "
-            f"trigger={trigger_source}, run={run_id}"
+            f"[WorkflowRunner] 已受理并进入队列: workflow={workflow.workflow_id}, "
+            f"trigger={trigger_source}, browser={target}, run={run_id}"
         )
         return run_id
 
     # ── 多浏览器：每个浏览器一次独立运行；并发开关决定是否同时跑 ──
     run_ids = [run_id] + [workflow_run_crud_svr.new_run_id() for _ in targets[1:]]
+    for rid, bid in zip(run_ids, targets):
+        await workflow_run_crud_svr.create_queued(
+            workflow_id=int(workflow.workflow_id),
+            mid=int(workflow.mid),
+            browser_id=bid,
+            trigger_source=trigger_source,
+            run_id=rid,
+        )
     logger.info(
         f"[WorkflowRunner] 多浏览器运行: workflow={workflow.workflow_id}, "
         f"browsers={targets}, 并发={bool(workflow.concurrent_exec)}"
@@ -107,6 +129,14 @@ def launch_workflow_run(
     async def run_sequentially() -> None:
         """按浏览器列表顺序逐个执行：前一个浏览器运行结束再启动下一个。"""
         for rid, bid in zip(run_ids, targets):
+            # 停止工作流会把后续排队记录直接置 CANCELLED：这里必须跳过，
+            # 否则 _open_run 会为「已取消」的记录重新建 RUNNING 记录，停止等于无效
+            record = await workflow_run_crud_svr.get_by_run_id(rid)
+            if record is not None and record.status == WorkflowRunStatusEnum.CANCELLED:
+                logger.info(
+                    f"[WorkflowRunner] 跳过已取消的浏览器运行: run={rid}, browser={bid}"
+                )
+                continue
             sub_task = _spawn(rid, bid)
             try:
                 await sub_task
@@ -122,40 +152,88 @@ def launch_workflow_run(
 
 
 def _on_run_task_done(run_id: str, task: asyncio.Task) -> None:
-    """运行 task 结束回调：清理句柄 + 兜底幂等收口
+    """运行 task 结束回调：把收尾交给统一的 :func:`finalize_run_after_task`
 
-    ``done_callback`` 内不能 await，故这里同步清理句柄，并把「幂等收口」丢回事件
-    循环执行：正常路径下 ``run_workflow`` 已写终态，收口为空操作；异常路径（task 在
-    写终态前被取消）则补收口为 INTERRUPTED，避免运行记录永久停留在 RUNNING。
+    执行权必须在这里释放（而不是 ``run_workflow`` 内部的 finally）：后者在写终态
+    **之前**触发，此时 DB 里本次运行仍是 RUNNING，下一位排队者的并发检查会把它
+    当成「同浏览器已有工作流在执行」而失败。
+
+    ``done_callback`` 内不能 await，故这里只把收尾丢回事件循环。异常路径（task 在
+    写终态前被取消）由收尾函数补收口为 INTERRUPTED，避免运行记录永久停留在 RUNNING。
+
+    注意：task 抛出的异常如果不在这里取出来记日志，会被 asyncio 静默吞掉——
+    表现为「运行结束但记录还停在 RUNNING，随后被兜底收口成中断」，而终端里
+    没有任何异常信息可查。因此这里必须显式 log ``task.exception()``。
     """
-    workflow_run_tasks.clear(run_id)
+    if not task.cancelled():
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                f"[WorkflowRunner] 运行任务异常退出: run={run_id}, "
+                f"{type(exc).__name__}: {exc}"
+            )
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # 事件循环已关闭（进程关停）：无循环可用，交由启动恢复 (interrupt_stale_running) 兜底
+        # 事件循环已关闭（进程关停）：无循环可用，只清句柄，交由启动恢复 (interrupt_stale_running) 兜底
+        workflow_run_tasks.clear(run_id)
         return
-    loop.create_task(_finalize_run_if_needed(run_id))
+    loop.create_task(finalize_run_after_task(run_id))
 
 
-async def _finalize_run_if_needed(run_id: str) -> None:
-    """幂等收口：task 结束后若记录仍为 RUNNING，补收口为 INTERRUPTED
+async def finalize_run_after_task(run_id: str) -> bool:
+    """一次运行结束后的**统一收尾**（正常结束 / 被停止 / task 早已消失）。
 
-    正常情况下运行体已调用 ``finish()`` 写入终态，此处查到的状态非 RUNNING，直接
-    返回（幂等，不覆盖已终结状态）。
+    为什么收敛成一个函数：task 的 done_callback 与「停止工作流」（本实例已无存活
+    task 的僵尸记录、同工作流的其它运行）需要对同一条记录做同一套清理，停止路径
+    不应另写一份（见 ``docs/工作流停止计划书.md`` §3.4）。
+
+    幂等：正常路径下 ``run_workflow`` 已写终态，除清理句柄外均为空操作。
+
+    做四件事：
+    1. 清理运行 task 句柄，避免注册表残留；
+    2. 记录仍为 RUNNING（task 在写终态前被取消 / 协程丢失）→ 补收口为 INTERRUPTED；
+    3. 清掉会话上残留的执行期标记（仅当仍指向该运行），否则该浏览器无法再启动工作流；
+    4. 清掉取消标记，避免键残留。
+
+    Returns:
+        True 表示确实补收口了一条仍停留在 RUNNING 的记录。
     """
+    workflow_run_tasks.clear(run_id)
+    reaped = False
+    record: WorkflowRunRecord | None = None
     try:
         record = await workflow_run_crud_svr.get_by_run_id(run_id)
-        if record is None or record.status != WorkflowRunStatusEnum.RUNNING:
-            return
-        await workflow_run_crud_svr.interrupt_stale_running(
-            reason="运行任务已结束但未正常收口，自动收口为中断",
-            run_ids=[run_id],
-        )
-        logger.warning(
-            f"[WorkflowRunner] 运行任务结束但未收口，已补收口为中断: run={run_id}"
-        )
+        if record is not None and record.status == WorkflowRunStatusEnum.RUNNING:
+            reaped = bool(
+                await workflow_run_crud_svr.interrupt_stale_running(
+                    reason="运行任务已结束但未正常收口，自动收口为中断",
+                    run_ids=[run_id],
+                )
+            )
+            logger.warning(
+                f"[WorkflowRunner] 运行任务结束但未收口，已补收口为中断: run={run_id}"
+            )
     except Exception as exc:  # noqa: BLE001 - 兜底收口失败不打断事件循环
         logger.warning(f"[WorkflowRunner] 补收口运行失败: run={run_id}, {exc}")
+
+    # 会话执行期标记：run_workflow.finally 正常会解除；task 被强制取消 / 跨进程残留时兜底
+    if record is not None:
+        try:
+            entry = live_service.get_browser_session_entry(
+                mid=record.mid, browser_id=record.browser_id
+            )
+            if entry is not None and run_id in entry.active_workflow_runs:
+                live_service.end_workflow_run(record.mid, record.browser_id, run_id)
+        except BrowserNotStartedException:
+            pass
+        except Exception as exc:  # noqa: BLE001 - 清理失败不影响收口
+            logger.warning(
+                f"[WorkflowRunner] 清理会话执行标记失败: run={run_id}, {exc}"
+            )
+
+    cancellation_registry.clear(run_id)
+    return reaped
 
 
 # ───────────────────────── 重启断点恢复 ─────────────────────────
@@ -208,7 +286,7 @@ async def resume_run_record(
 
     # 先消费恢复标记：同一条中断只恢复一次，避免启动扫描与手动点击并发重复拉起
     await workflow_run_crud_svr.mark_resume_consumed(run.run_id)
-    new_run_id = launch_workflow_run(
+    new_run_id = await launch_workflow_run(
         workflow,
         trigger_source=run.trigger_source,
         browser_id=target_browser_id,
@@ -261,3 +339,97 @@ async def resume_interrupted_runs() -> list[str]:
     else:
         logger.info("[WorkflowRunner] 无可自动恢复的中断运行")
     return resumed
+
+
+# ───────────────────────── 重启后重新排队 ─────────────────────────
+
+
+def _spawn_existing_run(
+    workflow: UserWorkflow,
+    *,
+    run_id: str,
+    browser_id: int,
+    trigger_source: WorkflowRunTriggerEnum,
+) -> asyncio.Task:
+    """为「已存在的排队记录」重新拉起执行 task（重启重排专用）。"""
+    task = asyncio.create_task(
+        run_workflow(
+            workflow,
+            trigger_source=trigger_source,
+            browser_id=browser_id,
+            # MCP/HTTP 类动作需要 mid 头；重启后没有原始请求头，用工作流所属 mid 兜底
+            auth_headers={"x-bili-mid": str(workflow.mid)},
+            run_id=run_id,
+        ),
+        name=f"workflow-run:{run_id}",
+    )
+    workflow_run_tasks.register(run_id, task)
+    task.add_done_callback(partial(_on_run_task_done, run_id))
+    return task
+
+
+async def requeue_pending_runs() -> list[str]:
+    """启动重排：把重启前处于 ``QUEUED`` 的运行按提交顺序重新入队。
+
+    语义边界（见 ``docs/同浏览器工作流排队计划书.md`` §4）：
+
+    - ``QUEUED``：重新排队，保持原顺序（本函数负责）；
+    - ``RUNNING``：已由 ``interrupt_stale_running()`` 收口为 ``INTERRUPTED``，
+      仅 ``resume_on_restart=True`` 的工作流走断点续跑，**不自动重排**（避免
+      无去重记录的工作流重复产生副作用）。
+
+    必须在 ``interrupt_stale_running()`` 之后调用，且不阻塞启动：单条失败只告警。
+    """
+    try:
+        rows = await workflow_run_crud_svr.list_queued()
+    except Exception as exc:  # noqa: BLE001 - 扫描失败不阻塞启动
+        logger.warning(f"[WorkflowRunner] 扫描排队运行失败: {exc}")
+        return []
+
+    if not rows:
+        logger.info("[WorkflowRunner] 无待重排的排队运行")
+        return []
+
+    requeued: list[str] = []
+    for run in rows:
+        try:
+            workflow = await workflow_crud_svr.get_by_workflow_id(run.workflow_id)
+            if workflow is None or not workflow.is_enabled:
+                await workflow_run_crud_svr.finish_queued(
+                    run.run_id,
+                    status=WorkflowRunStatusEnum.FAILED,
+                    error_message="工作流不存在或已禁用，排队任务已取消",
+                )
+                continue
+
+            target_browser_id = int(run.browser_id or workflow.browser_id or 0)
+            if not target_browser_id:
+                await workflow_run_crud_svr.finish_queued(
+                    run.run_id,
+                    status=WorkflowRunStatusEnum.FAILED,
+                    error_message="未指定执行浏览器，排队任务已取消",
+                )
+                continue
+
+            trigger_source = (
+                run.trigger_source
+                if isinstance(run.trigger_source, WorkflowRunTriggerEnum)
+                else WorkflowRunTriggerEnum(run.trigger_source)
+            )
+            _spawn_existing_run(
+                workflow,
+                run_id=run.run_id,
+                browser_id=target_browser_id,
+                trigger_source=trigger_source,
+            )
+            requeued.append(run.run_id)
+        except Exception as exc:  # noqa: BLE001 - 单条失败不影响其它
+            logger.warning(
+                f"[WorkflowRunner] 重排失败: run={run.run_id}, error={exc}"
+            )
+
+    if requeued:
+        logger.warning(
+            f"[WorkflowRunner] 已重排 {len(requeued)} 条排队运行: {requeued[:20]}"
+        )
+    return requeued

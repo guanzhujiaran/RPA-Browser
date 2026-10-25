@@ -61,6 +61,10 @@ def _declared_variables(params_model: type[SQLModel] | None, attr: str) -> list[
     ]
 
 
+#: 动作参数模型 → (input_variables, output_variables) 契约缓存（见 compute_* 注释）
+_CONTRACT_CACHE: dict[Any, tuple[list[VariableSpec], list[VariableSpec]]] = {}
+
+
 def _scan_schema_template_variables(json_schema: dict | None) -> list[VariableSpec]:
     """扫描参数 JSON Schema 的 string 字段取值（const/default），提取 {{var}} 模板变量。
 
@@ -103,14 +107,30 @@ def compute_action_variable_contract(
     合并规则：显式类级声明（BaseActionParams 子类 ClassVar）优先，
     `{{...}}` 模板扫描结果补充（同名去重，声明优先），产出变量只认显式声明
     （执行结果由运行时决定，无法静态扫描推断）。
+
+    性能：契约只由参数模型的**类定义**决定，因此按 `params_model` 缓存。
+    `model_json_schema()` 开销很大（pydantic 构建整棵 schema，`FetchExternalDataParams`
+    这类带大量子模型的尤其慢），而动作详情接口要为**每个步骤**算一次契约——
+    不缓存时 18 个步骤（含嵌套分支几十个子步骤）会累计到 2s+（实测 2.37s）。
     """
-    if json_schema is None and params_model is not None and hasattr(params_model, "model_json_schema"):
+    # 只缓存「由 params_model 推导」的情形；调用方显式传 json_schema 时无法保证等价
+    cacheable = json_schema is None and params_model is not None
+    if cacheable:
+        cached = _CONTRACT_CACHE.get(params_model)
+        if cached is not None:
+            # 返回副本：调用方可能对列表做过滤/合并，不共享可变容器
+            return list(cached[0]), list(cached[1])
+
+    if cacheable and hasattr(params_model, "model_json_schema"):
         with contextlib.suppress(Exception):
-            json_schema = params_model.model_json_schema()
+            json_schema = params_model.model_json_schema()  # type: ignore[union-attr]
     inputs: dict[str, VariableSpec] = {
         v.name: v for v in _declared_variables(params_model, "input_variables")
     }
     for spec in _scan_schema_template_variables(json_schema):
         inputs.setdefault(spec.name, spec)
     outputs = _declared_variables(params_model, "output_variables")
-    return list(inputs.values()), outputs
+    result = (list(inputs.values()), outputs)
+    if cacheable:
+        _CONTRACT_CACHE[params_model] = result  # type: ignore[index]
+    return list(result[0]), list(result[1])

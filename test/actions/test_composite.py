@@ -234,7 +234,9 @@ class TestCompositeActionWorkflow:
             "<input id='name' type='text'>"
             "<input id='age' type='text'>"
             "<input id='city' type='text'>"
-            "<button id='submit_form'>Submit</button>"
+            # type=button：点击后不提交表单跳转，否则页面导航会清掉 set_content 的 DOM，
+            # 后面的 input_value 校验全部超时（submit 按钮默认提交并导航）
+            "<button id='submit_form' type='button'>Submit</button>"
             "</form>"
             "</body></html>"
         )
@@ -365,7 +367,9 @@ class TestCompositeActionWorkflow:
             "<form>"
             "<input id='username' type='text' placeholder='Username'>"
             "<input id='password' type='password' placeholder='Password'>"
-            "<button id='login_btn'>Login</button>"
+            # type=button：理由同多输入框用例——提交表单会导航并清掉 DOM，
+            # 末尾的 input_value 校验会全部超时
+            "<button id='login_btn' type='button'>Login</button>"
             "</form>"
             "<div id='dashboard' style='display: none;'>Welcome to Dashboard</div>"
             "</body></html>"

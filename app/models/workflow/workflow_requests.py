@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pydantic import Field
 from sqlmodel import SQLModel
+from typing import Any
 from app.models.workflow.step_models import WorkflowStepRequest
 
 
@@ -46,6 +47,13 @@ class WorkflowCreateRequest(SQLModel):
     log_enabled: bool | None = Field(
         default=None,
         description="执行时是否记录步骤级操作日志（不传=未设置，听从动作/项目开关；可在运行记录中下钻，仅保留最近7天）",
+    )
+    log_debug: bool | None = Field(
+        default=None,
+        description=(
+            "调试模式（不传=未设置）：开启后本次运行强制全量采集——入参/结果/"
+            "变量全记、成功也记、payload 不截断；与 log_enabled 独立，debug 隐含开启"
+        ),
     )
     resume_on_restart: bool = Field(
         default=False,
@@ -93,6 +101,10 @@ class WorkflowUpdateRequest(SQLModel):
     log_enabled: bool | None = Field(
         default=None, description="执行时是否记录步骤级操作日志（不传表示不修改）"
     )
+    log_debug: bool | None = Field(
+        default=None,
+        description="调试模式：强制全量采集（不传表示不修改）",
+    )
     resume_on_restart: bool | None = Field(
         default=None,
         description="服务重启后是否自动恢复本次被中断的运行（不传表示不修改）",
@@ -110,7 +122,15 @@ class WorkflowUpdateRequest(SQLModel):
         description="多浏览器时是否并发执行（不传表示不修改）",
     )
     variables: dict | None = Field(
-        default=None, description="输入变量值 {name: value}（不传表示不修改）"
+        default=None,
+        description="输入变量值 {name: value}（整体替换；不传表示不修改；与 variables_patch 互斥）",
+    )
+    variables_patch: dict | None = Field(
+        default=None,
+        description=(
+            "输入变量增量更新 {name: value}：只覆盖给出的键，值为 null 表示删除该键；"
+            "与 variables 互斥（见 docs/工作流变量增量更新计划书.md）"
+        ),
     )
 
 
@@ -241,5 +261,63 @@ class WorkflowResourceRecordListRequest(BasePaginationReq):
     )
     processed_to: datetime | None = Field(
         default=None, description="最近处理时间截止（含）"
+    )
+
+
+class WorkflowResourceRecordCreateRequest(SQLModel):
+    """手工新增/更新一条「已处理资源」记录请求
+
+    用途：修正去重数据（例如某条动态实际没参与却被误记，先删掉；或确认已线下参与，
+    需要提前把它加入去重集合）。写入走 upsert（唯一键 = 工作流 + 浏览器 + 类型 + 业务主键），
+    已存在时更新状态并累加 `process_count`。
+    """
+
+    workflow_id: int = Field(description="工作流ID")
+    resource_type: str = Field(
+        max_length=64, description="资源类型命名空间（需与取数去重的 resource_type 一致）"
+    )
+    resource_id: str = Field(
+        max_length=128, description="资源业务主键（如动态 dynId、预约 sid）"
+    )
+    browser_id: int | None = Field(
+        default=None,
+        description="执行浏览器ID；不传=使用工作流配置的浏览器（去重按浏览器隔离）",
+    )
+    status: str | None = Field(
+        default=None,
+        description="处理状态: success/skipped/failed；不传=success（success/skipped 参与去重）",
+    )
+    fail_reason: str | None = Field(
+        default=None, max_length=500, description="备注/跳过原因（success 时不保存）"
+    )
+    extra: dict[str, Any] | None = Field(
+        default=None, description="附加快照信息（可选，存入记录的 extra 字段）"
+    )
+
+
+class WorkflowResourceRecordDeleteRequest(SQLModel):
+    """删除「已处理资源」记录请求（支持单条 / 勾选批量 / 按运行清理）
+
+    安全约束：除 `workflow_id` 外必须至少给一个条件，服务端会拒绝无条件全量删除；
+    `dry_run=true` 只返回将删除的条数，供前端二次确认。
+    """
+
+    workflow_id: int = Field(description="工作流ID")
+    ids: list[int] | None = Field(
+        default=None, description="记录主键列表（列表页勾选后删除）"
+    )
+    browser_id: int | None = Field(default=None, description="按浏览器过滤")
+    resource_type: str | None = Field(default=None, description="按资源类型过滤")
+    status: str | None = Field(
+        default=None, description="按状态过滤: success/skipped/failed"
+    )
+    resource_id: str | None = Field(
+        default=None, description="按业务主键精确匹配（非模糊）"
+    )
+    run_id: str | None = Field(
+        default=None, description="按所属运行ID过滤（清理某一轮运行写入的记录）"
+    )
+    dry_run: bool = Field(
+        default=False, description="true=只统计将删除的条数，不实际删除"
     )
 

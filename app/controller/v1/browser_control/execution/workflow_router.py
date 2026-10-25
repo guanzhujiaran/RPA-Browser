@@ -25,7 +25,6 @@ from app.services.RPA_browser.session.live_service import live_service
 from app.models.common.exceptions.base_exception import (
     BaseException as CustomBaseException,
     BrowserWorkflowRunningException,
-    BrowserNotStartedException,
 )
 from app.services.execution.crud_service import (
     workflow_crud_svr,
@@ -38,10 +37,14 @@ from app.services.execution.workflow_scheduler import (
     remove_workflow_job,
     compute_next_run,
 )
-from app.services.execution.workflow_runner import launch_workflow_run
+from app.services.execution.workflow_runner import (
+    finalize_run_after_task,
+    launch_workflow_run,
+)
 from app.services.execution.cancellation import cancellation_registry
 from app.services.execution.run_tasks import workflow_run_tasks
 from app.models.database.workflow.models import (
+    WorkflowRunRecord,
     WorkflowRunTriggerEnum,
     WorkflowRunStatusEnum,
 )
@@ -64,6 +67,10 @@ from app.models.workflow.models import (
     WorkflowRunLogListRequest,
     WorkflowRunLogItemResponse,
     WorkflowRunLogDetailResponse,
+    WorkflowRunStopResponse,
+    WorkflowResourceRecordCreateRequest,
+    WorkflowResourceRecordDeleteRequest,
+    WorkflowResourceRecordDeleteResponse,
     WorkflowResourceRecordListRequest,
     WorkflowResourceRecordItemResponse,
     UpstreamSyncFlag,
@@ -159,6 +166,11 @@ async def _resolve_page(mid: int, browser_id: int, page_index: int | None = None
 router = new_workflow_router()
 
 
+def _queue_position(run) -> int:
+    """排队位置（多工作流并行后恒为 0，保留字段兼容前端）。"""
+    return 0
+
+
 # ============ 工作流管理（Workflow） ============
 
 
@@ -200,6 +212,7 @@ async def create_workflow(
         notify_on_start=request.notify_on_start,
         notify_on_end=request.notify_on_end,
         log_enabled=request.log_enabled,
+        log_debug=request.log_debug,
         resume_on_restart=request.resume_on_restart,
         browser_ids=request.browser_ids,
         concurrent_exec=request.concurrent_exec,
@@ -267,6 +280,7 @@ async def export_workflow(
             notify_on_start=model.notify_on_start,
             notify_on_end=model.notify_on_end,
             log_enabled=model.log_enabled,
+            log_debug=model.log_debug,
             resume_on_restart=model.resume_on_restart,
             variables=model.variables or {},
         )
@@ -339,6 +353,7 @@ async def list_workflows(
                 notify_on_start=model.notify_on_start,
                 notify_on_end=model.notify_on_end,
                 log_enabled=model.log_enabled,
+            log_debug=model.log_debug,
                 resume_on_restart=model.resume_on_restart,
                 created_at=model.created_at,
                 updated_at=model.updated_at,
@@ -401,6 +416,7 @@ async def get_workflow_detail(
             notify_on_start=model.notify_on_start,
             notify_on_end=model.notify_on_end,
             log_enabled=model.log_enabled,
+            log_debug=model.log_debug,
             variables=model.variables or {},
             created_at=model.created_at,
             updated_at=model.updated_at,
@@ -443,6 +459,13 @@ async def update_workflow(
     if trigger_error:
         return error_response(ResponseCode.INVALID_PARAM, trigger_error)
 
+    # 变量语义互斥：整体替换 与 增量更新 不能同时传（见 docs/工作流变量增量更新计划书.md）
+    if request.variables is not None and request.variables_patch:
+        return error_response(
+            ResponseCode.INVALID_PARAM,
+            "variables 与 variables_patch 不能同时传（前者整体替换，后者增量更新）",
+        )
+
     # 引用的动作必须存在（工作流不改写动作内容）
     if request.custom_action_id:
         action_model = await action_crud_svr.get_by_action_id(request.custom_action_id)
@@ -465,11 +488,13 @@ async def update_workflow(
         notify_on_start=request.notify_on_start,
         notify_on_end=request.notify_on_end,
         log_enabled=request.log_enabled,
+        log_debug=request.log_debug,
         resume_on_restart=request.resume_on_restart,
         auto_sync_upstream=request.auto_sync_upstream,
         browser_ids=request.browser_ids,
         concurrent_exec=request.concurrent_exec,
         variables=request.variables,
+        variables_patch=request.variables_patch,
     )
 
     if not model or str(model.mid) != str(auth.mid):
@@ -507,6 +532,7 @@ async def update_workflow(
             notify_on_start=model.notify_on_start,
             notify_on_end=model.notify_on_end,
             log_enabled=model.log_enabled,
+            log_debug=model.log_debug,
             variables=model.variables or {},
             created_at=model.created_at,
             updated_at=model.updated_at,
@@ -754,6 +780,7 @@ async def get_workflow_forks(
             forks_count=f.forks_count,
             forked_from_id=f.forked_from_id,
             log_enabled=f.log_enabled,
+            log_debug=f.log_debug,
             created_at=f.created_at,
             updated_at=f.updated_at,
             **_upstream_sync_kwargs(f, sync_flags.get(f.id)),
@@ -862,7 +889,7 @@ async def run_saved_workflow(
     await assert_approved("workflow", model.workflow_id, "execute")
 
     # 立即返回：后台 task 执行，run_id 已预生成，与最终落库记录一致
-    run_id = launch_workflow_run(
+    run_id = await launch_workflow_run(
         model,
         trigger_source=WorkflowRunTriggerEnum.MANUAL,
         browser_id=browser_id,
@@ -873,28 +900,83 @@ async def run_saved_workflow(
             "run_id": run_id,
             "workflow_id": model.workflow_id,
             "browser_id": browser_id,
+            # 多工作流并行（见 docs/多页面并行执行计划书.md §3）：受理即执行，
+            # 不再排队；queue_position 保留字段但恒为 0
             "status": WorkflowRunStatusEnum.RUNNING.value,
+            "queue_position": 0,
         }
     )
+
+
+async def _stop_workflow_siblings(
+    run: WorkflowRunRecord, mid: str
+) -> tuple[bool, list[str]]:
+    """停止同工作流的其它进行中运行，并关闭该工作流的定期执行。
+
+    见 ``docs/工作流停止计划书.md``：用户点「停止」针对的是「这个工作流」，不只是
+    当前这一条运行记录 —— 多选浏览器 / 并发 / 定时触发都可能同时存在多条运行，
+    只停一条其余仍会继续跑，表现为「停止没生效」；同时还要让随后的 cron 触发不再
+    拉起新运行（否则表现成「停了自己又跑起来」）。
+
+    Returns:
+        (是否关闭了定期执行, 被一并停止的其它 run_id 列表)。
+        记录归属不匹配时不动作，只处理调用方指定的那一条运行。
+    """
+    workflow = await workflow_crud_svr.get_by_workflow_id(run.workflow_id)
+    if not workflow or str(workflow.mid) != str(mid):
+        return False, []
+
+    stopped: list[str] = []
+    siblings = await workflow_run_crud_svr.list_active_of_workflow(
+        run.workflow_id, mid, exclude_run_id=run.run_id
+    )
+    for sibling in siblings:
+        if sibling.status == WorkflowRunStatusEnum.QUEUED:
+            if await workflow_run_crud_svr.finish_queued(
+                sibling.run_id,
+                status=WorkflowRunStatusEnum.CANCELLED,
+                error_message="用户停止工作流：取消排队",
+            ):
+                stopped.append(sibling.run_id)
+            continue
+        if workflow_run_tasks.is_alive(sibling.run_id):
+            # 与主运行一致：先置标记（收口时改写为 cancelled），再立刻强制中断
+            cancellation_registry.request_cancel(sibling.run_id)
+            workflow_run_tasks.cancel(sibling.run_id)
+            stopped.append(sibling.run_id)
+            continue
+        # 僵尸记录（本实例无存活 task）→ 清理为中断
+        if await workflow_run_crud_svr.interrupt_stale_running(
+            reason="用户停止工作流：运行实例已不存在，已清理残留运行记录",
+            run_ids=[sibling.run_id],
+        ):
+            stopped.append(sibling.run_id)
+
+    schedule_stopped = await disable_workflow_schedule(workflow)
+    return schedule_stopped, stopped
 
 
 @router.post(BrowserControlRouterPath.workflows_runs_stop, summary="停止正在运行的工作流")
 async def stop_workflow_run(
     request: WorkflowRunStopRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[dict]:
-    """手动停止一次工作流运行（幂等，两阶段）
+) -> StandardResponse[WorkflowRunStopResponse]:
+    """手动停止一次工作流运行（幂等，立刻停止 + 关闭定期执行）
 
-    借鉴 Docker ``stop``：先请求协作式停止（SIGTERM），宽限期内让执行器在步骤边界
-    自然收口；超时后由周期任务 ``enforce_stop_grace`` 强制终止运行 task（SIGKILL）。
+    停止语义：
+      1. **立刻停止**：置取消标记后**直接** ``task.cancel()`` 中断执行协程，
+         不再等步骤边界、也不等 30s 宽限期（见 ``docs/工作流停止计划书.md`` §3.1）；
+      2. **定期执行也停止**：关闭该工作流的定时任务（``is_enabled=False`` +
+         移除 APScheduler job），否则下一个 cron 触发点会再拉起一次运行；
+      3. 同工作流仍在排队的其它运行一并取消。
     对**已结束**的运行本接口幂等返回其最终状态，不报错。
 
-    分三种情形：
+    分四种情形：
+      0. 仍在排队（QUEUED）→ 直接出队并标取消；
       1. 运行已结束（非 RUNNING）→ 幂等返回最终状态；
-      2. 本实例确有存活运行 task → 下发停止请求，执行引擎在下一个步骤边界终止后续
-         步骤，运行记录收口为 ``cancelled``；
+      2. 本实例确有存活运行 task → 立刻强制中断，运行记录收口为 ``cancelled``；
       3. 记录仍为 RUNNING 但本实例无存活 task（进程重启 / 协程被取消的僵尸记录）→
-         直接清理为 ``interrupted``，并清掉会话上残留的执行期标记，立即解除拦截。
+         直接清理为 ``interrupted``，并清掉会话上残留的执行期标记。
 
     存活真值取自本实例运行 task 注册表（``workflow_run_tasks``）——**不**以会话标记
     ``entry.workflow_run_id`` 为存活依据：该标记正常由 ``end_workflow_run`` 解除，
@@ -904,55 +986,95 @@ async def stop_workflow_run(
     if not run:
         return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
 
+    # 情形 0：仍在排队 → 直接出队并标取消（不占用执行权）
+    if run.status == WorkflowRunStatusEnum.QUEUED:
+        # 多工作流并行后无运行队列：QUEUED 只是「受理→执行」的极短过渡态
+        removed = False
+        await workflow_run_crud_svr.finish_queued(
+            run.run_id,
+            status=WorkflowRunStatusEnum.CANCELLED,
+            error_message="用户取消排队",
+        )
+        schedule_stopped, cancelled_runs = await _stop_workflow_siblings(
+            run, auth.mid
+        )
+        logger.info(
+            f"[WorkflowRouter] 用户取消排队: mid={auth.mid}, run={run.run_id}, "
+            f"removed_from_queue={removed}, 关闭定期执行={schedule_stopped}"
+        )
+        return success_response(
+            WorkflowRunStopResponse(
+                run_id=run.run_id,
+                status=WorkflowRunStatusEnum.CANCELLED.value,
+                queue_cancelled=True,
+                schedule_stopped=schedule_stopped,
+                cancelled_runs=cancelled_runs,
+            )
+        )
+
     # 情形 1：已结束 → 幂等返回最终状态（重复点击停止不应报错）
     if run.status != WorkflowRunStatusEnum.RUNNING:
+        # 用户明确点了「停止工作流」：即使本次运行已结束，也一并关掉定期执行，
+        # 否则下一次 cron 触发仍会把工作流重新拉起来
+        schedule_stopped, cancelled_runs = await _stop_workflow_siblings(
+            run, auth.mid
+        )
         return success_response(
-            {
-                "run_id": run.run_id,
-                "status": run.status,
-                "stopping": False,
-                "already_finished": True,
-            }
+            WorkflowRunStopResponse(
+                run_id=run.run_id,
+                status=run.status.value,
+                already_finished=True,
+                schedule_stopped=schedule_stopped,
+                cancelled_runs=cancelled_runs,
+            )
         )
 
-    # 情形 2：本实例有存活运行 task → 请求协作式停止（宽限期后由周期任务强制终止）
+    # 情形 2：本实例有存活运行 task → 立刻强制中断（不等步骤边界 / 宽限期）
     if workflow_run_tasks.is_alive(run.run_id):
+        # 顺序不能反：先置取消标记，收口时据此把终态改写为 cancelled；
+        # 再直接 cancel() 打断当前 await，实现「点了就停」
         cancellation_registry.request_cancel(run.run_id)
+        forced = workflow_run_tasks.cancel(run.run_id)
+        schedule_stopped, cancelled_runs = await _stop_workflow_siblings(
+            run, auth.mid
+        )
         logger.info(
-            f"[WorkflowRouter] 用户请求停止运行: mid={auth.mid}, run={run.run_id}"
+            f"[WorkflowRouter] 用户请求停止运行（立刻中断）: mid={auth.mid}, "
+            f"run={run.run_id}, forced={forced}, 关闭定期执行={schedule_stopped}"
         )
-        return success_response({"run_id": run.run_id, "stopping": True})
+        return success_response(
+            WorkflowRunStopResponse(
+                run_id=run.run_id,
+                status=run.status.value,
+                stopping=True,
+                forced=forced,
+                schedule_stopped=schedule_stopped,
+                cancelled_runs=cancelled_runs,
+            )
+        )
 
-    # 情形 3：僵尸记录（本实例已无存活 task）→ 直接清理残留，无需等运行自然结束
-    reaped = await workflow_run_crud_svr.interrupt_stale_running(
-        reason="用户停止：运行实例已不存在，已清理残留运行记录",
-        run_ids=[run.run_id],
-    )
-    # 同步清掉会话上残留的执行期标记（仅当它正指向该已死运行时），否则会话级互斥
-    # 仍会把该运行当作「执行中」，新运行照样被拦
-    try:
-        entry = live_service.get_browser_session_entry(
-            mid=run.mid, browser_id=run.browser_id
-        )
-        if entry is not None and entry.workflow_run_id == run.run_id:
-            live_service.end_workflow_run(run.mid, run.browser_id)
-    except BrowserNotStartedException:
-        pass
+    # 情形 3：僵尸记录（本实例已无存活 task）→ 复用「任务结束收尾」统一清理：
+    # 清 task 句柄 / RUNNING→INTERRUPTED / 清会话执行期标记 / 清取消标记，
+    # 不再在停止路径里另写一份清理逻辑
+    reaped = await finalize_run_after_task(run.run_id)
     logger.warning(
         f"[WorkflowRouter] 用户停止清理残留运行: mid={auth.mid}, "
         f"run={run.run_id}, reaped={bool(reaped)}"
     )
+    schedule_stopped, cancelled_runs = await _stop_workflow_siblings(run, auth.mid)
     # 收口接口返回的记录内存状态可能未刷新，重新读取以回报真实终态
     refreshed = await workflow_run_crud_svr.get_by_run_id(run.run_id, auth.mid)
+    final_status = (
+        refreshed.status if refreshed else WorkflowRunStatusEnum.INTERRUPTED
+    )
     return success_response(
-        {
-            "run_id": run.run_id,
-            "status": (
-                refreshed.status if refreshed else WorkflowRunStatusEnum.INTERRUPTED
-            ),
-            "stopping": False,
-            "reaped": bool(reaped),
-        }
+        WorkflowRunStopResponse(
+            run_id=run.run_id,
+            status=final_status.value,
+            reaped=bool(reaped),
+            schedule_stopped=schedule_stopped,
+            cancelled_runs=cancelled_runs,
+        )
     )
 
 
@@ -972,7 +1094,10 @@ async def list_workflow_runs(
         request.workflow_id, skip=skip, limit=request.per_page
     )
     items = [
-        WorkflowRunLogItemResponse(**(await workflow_run_crud_svr.to_dict(row)))
+        WorkflowRunLogItemResponse(
+            **(await workflow_run_crud_svr.to_dict(row)),
+            queue_position=_queue_position(row),
+        )
         for row in rows
     ]
     return success_response(
@@ -1052,6 +1177,149 @@ async def list_workflow_resources(
     )
 
 
+def _parse_resource_status(raw: str | None) -> ResourceProcessStatus | None:
+    """解析资源处理状态字符串（None/空 = 不过滤）；非法值抛 ValueError。"""
+    if not raw:
+        return None
+    return ResourceProcessStatus(str(raw).strip().lower())
+
+
+def _resource_item_response(
+    row,
+) -> WorkflowResourceRecordItemResponse:
+    """把 WorkflowResourceRecord 转成接口响应项（唯一映射点）。"""
+    return WorkflowResourceRecordItemResponse(
+        id=int(row.id or 0),
+        workflow_id=row.workflow_id,
+        browser_id=row.browser_id,
+        resource_type=row.resource_type,
+        resource_id=str(row.resource_id),
+        status=str(row.status),
+        process_count=row.process_count,
+        fail_reason=row.fail_reason,
+        run_id=row.run_id,
+        extra=row.extra,
+        first_processed_at=row.first_processed_at,
+        last_processed_at=row.last_processed_at,
+    )
+
+
+@router.post(
+    BrowserControlRouterPath.workflows_resources_create,
+    summary="手工新增/更新已处理资源记录",
+)
+async def create_workflow_resource(
+    request: WorkflowResourceRecordCreateRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[WorkflowResourceRecordItemResponse]:
+    """新增一条「已处理资源」记录（已存在则更新状态并累加处理次数）。
+
+    用于修正去重数据：确认线下已参与、需要提前加入去重集合，或把误记的项改成
+    `failed`（failed 不参与去重，下一轮会被重新捞起）。
+    """
+    model = await workflow_crud_svr.get_by_workflow_id(request.workflow_id)
+    if not model or str(model.mid) != str(auth.mid):
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
+
+    try:
+        status = _parse_resource_status(request.status) or ResourceProcessStatus.SUCCESS
+    except ValueError:
+        return error_response(
+            400, f"无效的处理状态: {request.status}（success/skipped/failed）"
+        )
+
+    browser_id = (
+        int(request.browser_id)
+        if request.browser_id is not None
+        else int(model.browser_id or 0)
+    )
+    resource_id = request.resource_id.strip()
+    if not resource_id:
+        return error_response(400, "resource_id 不能为空")
+
+    await ResourceRecordService.upsert_result(
+        auth.mid,
+        request.workflow_id,
+        browser_id,
+        request.resource_type,
+        resource_id,
+        status == ResourceProcessStatus.SUCCESS,
+        status=status,
+        fail_reason=request.fail_reason,
+        extra=request.extra,
+    )
+    row = await ResourceRecordService.get_record(
+        auth.mid,
+        request.workflow_id,
+        browser_id,
+        request.resource_type,
+        resource_id,
+    )
+    if row is None:
+        return error_response(500, "写入后未能读回记录，请重试")
+    logger.info(
+        f"[WorkflowRouter] 手工写入资源记录: workflow={request.workflow_id}, "
+        f"browser={browser_id}, type={request.resource_type}, "
+        f"id={resource_id}, status={status}"
+    )
+    return success_response(_resource_item_response(row))
+
+
+@router.post(
+    BrowserControlRouterPath.workflows_resources_delete,
+    summary="删除已处理资源记录",
+)
+async def delete_workflow_resources(
+    request: WorkflowResourceRecordDeleteRequest,
+    auth: AuthInfo = Depends(get_auth_info_from_header),
+) -> StandardResponse[WorkflowResourceRecordDeleteResponse]:
+    """删除「已处理资源」记录（下次取数会被重新捞起）。
+
+    支持三种用法：
+      - 列表页勾选：传 `ids`；
+      - 单条/条件清理：传 `resource_type` + `resource_id`（精确）等；
+      - 清理某一轮运行的误记：传 `run_id`。
+
+    `dry_run=true` 只返回将删除的条数，供前端二次确认。
+    """
+    model = await workflow_crud_svr.get_by_workflow_id(request.workflow_id)
+    if not model or str(model.mid) != str(auth.mid):
+        return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
+
+    try:
+        status = _parse_resource_status(request.status)
+    except ValueError:
+        return error_response(
+            400, f"无效的处理状态: {request.status}（success/skipped/failed）"
+        )
+
+    try:
+        deleted = await ResourceRecordService.delete_records(
+            auth.mid,
+            request.workflow_id,
+            ids=request.ids,
+            browser_id=request.browser_id,
+            resource_type=request.resource_type,
+            status=status,
+            resource_id=request.resource_id,
+            run_id=request.run_id,
+            dry_run=request.dry_run,
+        )
+    except ValueError as exc:
+        return error_response(400, str(exc))
+
+    logger.info(
+        f"[WorkflowRouter] 删除资源记录: workflow={request.workflow_id}, "
+        f"ids={request.ids}, type={request.resource_type}, status={status}, "
+        f"run={request.run_id}, dry_run={request.dry_run}, count={deleted}"
+    )
+    return success_response(
+        WorkflowResourceRecordDeleteResponse(
+            deleted=deleted, dry_run=request.dry_run
+        )
+    )
+
+
 @router.post(
     BrowserControlRouterPath.workflows_runs_get, summary="获取工作流运行记录详情"
 )
@@ -1072,7 +1340,10 @@ async def get_workflow_run(
     if not model:
         return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
     return success_response(
-        WorkflowRunLogDetailResponse(**(await workflow_run_crud_svr.to_dict(model)))
+        WorkflowRunLogDetailResponse(
+            **(await workflow_run_crud_svr.to_dict(model)),
+            queue_position=_queue_position(model),
+        )
     )
 
 

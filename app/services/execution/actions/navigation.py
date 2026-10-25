@@ -423,18 +423,18 @@ class NewPageAction(BaseAction[NewPageParams]):
             max_pages = settings.browser_max_pages_per_context
 
             if current_pages >= max_pages:
-                logger.warning(
-                    f"⚠️ 页面数量达到限制 ({current_pages}/{max_pages})，将关闭最旧的页面"
+                # 不再自动关闭最旧页面：可能正好关掉工作流正在用的页，导致任务随机失败。
+                # 需要多页面时用 open_page（满则等待）并在用完后 close_page。
+                return ActionResult(
+                    success=False,
+                    error=(
+                        f"页面数已达上限 {max_pages}（当前 {current_pages}）；"
+                        "请先用 close_page 关闭不用的页面，或改用 open_page（满时自动等待）"
+                    ),
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
                 )
-                for page in browser_context.pages:
-                    if not page.is_closed():
-                        try:
-                            await page.close()
-                            logger.info(f"🗑️ 已关闭旧页面: {page.url}")
-                            break
-                        except Exception as e:
-                            logger.error(f"关闭旧页面失败: {e}")
-                await asyncio.sleep(0.5)
 
             # 创建新页面
             new_page = await browser_context.new_page()

@@ -334,6 +334,7 @@ class ActionCrudService:
         retry_times: int = 0,
         retry_delay: float = 1.0,
         log_enabled: bool | None = None,
+        log_debug: bool | None = None,
         log_record_params: bool = True,
         log_record_result: bool = True,
         log_record_variables: bool = False,
@@ -391,6 +392,7 @@ class ActionCrudService:
                 output_vars=output_vars or [],
                 is_public=is_public,
                 log_enabled=log_enabled,
+                log_debug=log_debug,
                 log_record_params=log_record_params,
                 log_record_result=log_record_result,
                 log_record_variables=log_record_variables,
@@ -619,6 +621,8 @@ class ActionCrudService:
                 model.icon_id = icon_id
             if log_enabled is not None:
                 model.log_enabled = log_enabled
+            if log_debug is not None:
+                model.log_debug = log_debug
             if log_record_params is not None:
                 model.log_record_params = log_record_params
             if log_record_result is not None:
@@ -888,6 +892,7 @@ class ActionCrudService:
                     auto_sync_upstream=auto_sync_upstream if is_top_level else False,
                     local_steps_modified=False,
                     log_enabled=original.log_enabled,
+                    log_debug=original.log_debug,
                     log_record_params=original.log_record_params,
                     log_record_result=original.log_record_result,
                     log_record_variables=original.log_record_variables,
@@ -1080,6 +1085,7 @@ class ActionCrudService:
                 fork_model.retry_times = upstream.retry_times
                 fork_model.retry_delay = upstream.retry_delay
                 fork_model.log_enabled = upstream.log_enabled
+                fork_model.log_debug = upstream.log_debug
                 fork_model.log_record_params = upstream.log_record_params
                 fork_model.log_record_result = upstream.log_record_result
                 fork_model.log_record_variables = upstream.log_record_variables
@@ -1217,6 +1223,7 @@ class ActionCrudService:
                     auto_sync_upstream=False,
                     local_steps_modified=False,
                     log_enabled=upstream_child.log_enabled,
+                    log_debug=upstream_child.log_debug,
                     log_record_params=upstream_child.log_record_params,
                     log_record_result=upstream_child.log_record_result,
                     log_record_variables=upstream_child.log_record_variables,

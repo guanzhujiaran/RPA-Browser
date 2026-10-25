@@ -48,6 +48,7 @@ class WorkflowDetailResponse(UpstreamSyncFields):
     notify_on_start: bool = False
     notify_on_end: bool = True
     log_enabled: bool | None = None
+    log_debug: bool | None = None
     resume_on_restart: bool = False
     browser_ids: list[int] | None = Field(
         default=None, description="执行目标浏览器ID列表；为空=单浏览器"
@@ -87,6 +88,7 @@ class WorkflowListItemResponse(UpstreamSyncFields):
     notify_on_start: bool = False
     notify_on_end: bool = True
     log_enabled: bool | None = None
+    log_debug: bool | None = None
     resume_on_restart: bool = False
     browser_ids: list[int] | None = Field(
         default=None, description="执行目标浏览器ID列表；为空=单浏览器"
@@ -130,6 +132,8 @@ class WorkflowRunLogItemResponse(SQLModel):
     loop_body_total: int = 0
     loop_body_step_name: str = ""
     progress_updated_at: OptionalUnixTime = None
+    #: 排队位置（1 基）；0 = 未排队（执行中或已结束）。见 docs/同浏览器工作流排队计划书.md
+    queue_position: int = 0
     # 断点恢复
     resumable: bool = False
     resume_of: str | None = None
@@ -139,6 +143,28 @@ class WorkflowRunLogItemResponse(SQLModel):
 
 class WorkflowRunLogDetailResponse(WorkflowRunLogItemResponse):
     """工作流运行记录详情（携带 execution_id 供下钻步骤日志）"""
+
+
+class WorkflowRunStopResponse(SQLModel):
+    """停止工作流运行响应（立刻停止 + 同步停止定期执行）。
+
+    见 ``docs/工作流停止计划书.md``：停止不再等步骤边界 / 宽限期，而是直接
+    ``task.cancel()`` 中断；同时关闭该工作流的定期执行（cron 任务被移除）。
+    """
+
+    run_id: str = Field(description="运行ID")
+    status: str = Field(description="该运行当前 / 最终状态")
+    stopping: bool = Field(default=False, description="是否已下发停止")
+    forced: bool = Field(default=False, description="是否直接强制中断执行 task")
+    already_finished: bool = Field(default=False, description="该运行此前已结束")
+    queue_cancelled: bool = Field(default=False, description="该运行当时在排队，已被取消")
+    reaped: bool = Field(default=False, description="僵尸运行记录已被清理")
+    schedule_stopped: bool = Field(
+        default=False, description="本次是否关闭了该工作流的定期执行"
+    )
+    cancelled_runs: list[str] = Field(
+        default_factory=list, description="一并停止的同工作流其它运行ID"
+    )
 
 
 class WorkflowCreateResponse(SQLModel):
@@ -217,4 +243,14 @@ class WorkflowResourceRecordItemResponse(SQLModel):
     extra: dict[str, Any] | None = None
     first_processed_at: datetime | None = None
     last_processed_at: datetime | None = None
+
+
+class WorkflowResourceRecordDeleteResponse(SQLModel):
+    """删除已处理资源记录的结果
+
+    `deleted` 在 `dry_run=true` 时表示「将会删除」的条数。
+    """
+
+    deleted: int = 0
+    dry_run: bool = False
 

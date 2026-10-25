@@ -35,6 +35,7 @@ class ExecutionStatus(StrEnumAutoDoc):
     """执行状态"""
 
     PENDING = "pending"
+    QUEUED = "queued"  # 已受理，排队等待同浏览器前序运行结束（见 docs/同浏览器工作流排队计划书.md）
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
@@ -45,6 +46,7 @@ class ExecutionStatus(StrEnumAutoDoc):
 class WorkflowRunStatusEnum(StrEnumAutoDoc):
     """工作流运行状态"""
 
+    QUEUED = "queued"  # 已受理，排队等待同浏览器前序运行结束（见 docs/同浏览器工作流排队计划书.md）
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
@@ -181,6 +183,13 @@ class CompositeActionModel(CommunityResourceBase, table=True):
         default=None,
         description="是否采集该操作的执行日志（None=未设置，听从工作流/项目开关）",
     )
+    log_debug: bool | None = Field(
+        default=None,
+        description=(
+            "调试模式（None=未设置；True=强制全量采集：入参/结果/变量全记、"
+            "成功也记、payload 不截断，见调度外壳计划书 §9.8）"
+        ),
+    )
     log_record_params: bool = Field(
         default=True, description="是否记录变量替换后的入参"
     )
@@ -274,6 +283,14 @@ class UserWorkflow(CommunityResourceBase, table=True):
     # === 执行日志开关（三态：None=未设置听从工作流/项目开关，True/False=显式开/关） ===
     log_enabled: bool | None = Field(
         default=None, description="工作流执行时是否记录步骤级操作日志"
+    )
+    # === 执行日志调试模式（三态：None=未设置；True=强制全量采集，见调度外壳计划书 §9.8） ===
+    log_debug: bool | None = Field(
+        default=None,
+        description=(
+            "调试模式：开启后本次运行强制全量采集（入参/结果/变量全记、"
+            "成功也记、payload 不截断），与 log_enabled 独立——debug 隐含开启"
+        ),
     )
     # === 重启恢复开关（默认关闭：恢复是「至少一次」语义，可能重复外部副作用） ===
     resume_on_restart: bool = Field(

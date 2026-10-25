@@ -67,10 +67,15 @@ class BuiltinActionDesc(StrEnumAutoDoc):
     SORT_LIST = "按指定字段对列表变量排序"
     BILI_RESERVE = "参与 B 站空间预约抽奖"
     PICK_LINE = "按行切分文本后随机取一条"
+    NOTIFY = "发送站内 / 外部通知（支持按天去重）"
+
+    OPEN_PAGE = "按别名打开页面（页面满时等待空位，不会关闭其它页面）"
+    CLOSE_PAGE = "关闭指定别名的页面并释放容量"
 
     IF_ELSE = "根据条件执行 true/false 分支"
     LOOP = "循环执行"
     COMPOSITE = "执行复合操作"
+    PARALLEL = "多个分支并行执行（每个分支可绑定独立页面）"
 
 
 class BuiltinActionName(StrEnumAutoDoc):
@@ -98,6 +103,10 @@ class BuiltinActionName(StrEnumAutoDoc):
     SORT_LIST = "列表排序"
     BILI_RESERVE = "预约抽奖"
     PICK_LINE = "按行取值"
+    NOTIFY = "发送通知"
+    OPEN_PAGE = "打开页面"
+    CLOSE_PAGE = "关闭页面"
+    PARALLEL = "并行分支"
 
 
 class BuiltinActionIconId(IntEnumAutoDoc):
@@ -136,6 +145,7 @@ class BuiltinActionIconId(IntEnumAutoDoc):
     SORT_LIST = 35  # 冲田总司〔Alter〕
     BILI_RESERVE = 50  # 贞德·Alter·Santa·Lily
     PICK_LINE = 53  # 阿尔托莉雅·潘德拉贡〔圣诞Alter〕
+    NOTIFY = 90  # 未占用编号，缺资源时前端回落内置图标
     LOOP = 23  # 莫德雷德（红装马尾）
     COMPOSITE = 115  # 谜之偶像X〔Alter〕（霓虹绿 + 眼镜）
     IF_ELSE = 84  # 贞德〔Alter〕（白发黑红）
@@ -170,10 +180,15 @@ class BuiltinActionType(StrEnumAutoDoc):
     SORT_LIST = "sort_list"
     BILI_RESERVE = "bili_reserve"
     PICK_LINE = "pick_line"
+    NOTIFY = "notify"
+
+    OPEN_PAGE = "open_page"
+    CLOSE_PAGE = "close_page"
 
     LOOP = "loop"
     COMPOSITE = "composite"  # 复合操作 需要拆分开开单独执行
     IF_ELSE = "if_else"
+    PARALLEL = "parallel"  # 多页面并行分支
 
     @property
     def nameDisplay(self) -> str:

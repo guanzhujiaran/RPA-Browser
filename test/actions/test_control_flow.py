@@ -47,7 +47,9 @@ class TestLoopAction:
                 loopBranch=[
                     create_workflow_step(
                         action_id="click",
-                        params={"selector": ".item:nth-child({{state.loop.index}})"},
+                        # 循环变量是扁平契约：loop_index（0 基）/ loop_item，
+                        # 见 LoopAction 的 loop_item_var / loop_index_var
+                        params={"selector": ".item >> nth={{loop_index}}"},
                     ),
                 ],
             ),
@@ -73,13 +75,15 @@ class TestLoopAction:
             page=self.page,
             variables={"test": True},
             params=LoopParams(
-                items=["a", "b"],
+                # 字面量列表走 json_list 来源（旧 items 字段已移除，见 LoopParams）
+                loop_source="json_list",
+                loop_items_json=["a", "b"],
                 loopBranch=[
                     create_workflow_step(
                         action_id="input",
                         params={
-                            "selector": "#input_{{state.loop.current_item}}",
-                            "value": "value_{{state.loop.current_item}}",
+                            "selector": "#input_{{loop_item}}",
+                            "value": "value_{{loop_item}}",
                         },
                     ),
                 ],
@@ -88,6 +92,10 @@ class TestLoopAction:
 
         result = await action.execute()
         assert result.success
+        # 两轮都真正跑了，且输入框里落的是解析后的值（防变量替换失效的假阳性）
+        assert result.data.iterations == 2
+        assert await self.page.input_value("#input_a") == "value_a"
+        assert await self.page.input_value("#input_b") == "value_b"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_loop_missing_params(self):

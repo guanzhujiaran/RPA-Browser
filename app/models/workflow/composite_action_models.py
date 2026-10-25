@@ -32,6 +32,13 @@ class InputVarDefinition(SQLModel):
     default: Any | None = Field(default=None, description="默认值")
     required: bool = Field(default=False, description="是否必填")
     description: str = Field(default="", description="变量描述")
+    items_schema: dict | None = Field(
+        default=None,
+        description=(
+            "数组类型变量的元素结构（JSON Schema，自包含、不含 $ref）："
+            "前端据此渲染结构化编辑器；为空时退化为 JSON 文本域"
+        ),
+    )
 
 
 class CompositeActionCreateRequest(SQLModel):
@@ -64,6 +71,10 @@ class CompositeActionCreateRequest(SQLModel):
     retry_delay: float = Field(default=1.0, description="重试延迟(秒)")
     log_enabled: bool | None = Field(
         default=None, description="是否采集该操作的执行日志（不传=未设置，听从工作流/项目开关）"
+    )
+    log_debug: bool | None = Field(
+        default=None,
+        description="调试模式（不传=未设置）：True=强制全量采集（入参/结果/变量全记、成功也记、不截断）",
     )
     log_record_params: bool = Field(
         default=True, description="是否记录变量替换后的入参"
@@ -107,6 +118,10 @@ class CompositeActionUpdateRequest(SQLModel):
     retry_delay: float | None = Field(default=None, description="重试延迟(秒)")
     log_enabled: bool | None = Field(
         default=None, description="是否采集该操作的执行日志"
+    )
+    log_debug: bool | None = Field(
+        default=None,
+        description="调试模式：True=强制全量采集（入参/结果/变量全记、成功也记、不截断）",
     )
     log_record_params: bool | None = Field(
         default=None, description="是否记录变量替换后的入参"
@@ -207,6 +222,7 @@ class CompositeActionDetailResponse(UpstreamSyncFields):
     retry_times: int
     retry_delay: float
     log_enabled: bool | None = None
+    log_debug: bool | None = None
     log_record_params: bool = True
     log_record_result: bool = True
     log_record_variables: bool = False
@@ -237,6 +253,7 @@ class CompositeActionListItemResponse(UpstreamSyncFields):
     is_enabled: bool
     is_public: bool = False
     log_enabled: bool | None = None
+    log_debug: bool | None = None
     likes_count: int = 0
     reports_count: int = 0
     is_verified: bool = False

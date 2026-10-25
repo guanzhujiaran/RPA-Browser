@@ -30,6 +30,7 @@ from app.services.execution.scope import Scope, TemplateResolveError
 from botright.playwright_mock.page import Page
 import time
 import asyncio
+import traceback
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -70,6 +71,7 @@ from app.services.execution.actions.base import (
 )
 from app.services.execution.action_registry import action_registry
 from app.services.RPA_browser.session.live_service import live_service
+from app.services.RPA_browser.session.page_registry import page_registry
 from app.models.execution.request_params import (
     ExecutionRequest,
     ActionExecutionRequest,
@@ -107,6 +109,7 @@ class ExecutionEngine:
         parent_execution_id: str | None = None,
         log_source: ActionLogSourceEnum = ActionLogSourceEnum.ACTION,
         workflow_log_enabled: bool | None = None,
+        workflow_log_debug: bool | None = None,
     ) -> ActionResult:
         """执行单个操作。
 
@@ -115,12 +118,19 @@ class ExecutionEngine:
         Args:
             workflow_log_enabled: 工作流级日志开关（三态）；None 表示未经工作流
                 调度，按动作自身配置 / 项目兜底解析（既有默认行为）。
+            workflow_log_debug: 工作流级调试模式（用户在工作流上开启的
+                ``UserWorkflow.log_debug``）；True 时优先于开关，强制全量采集。
         """
         if page is None:
             raise ValueError("必须提供 page 参数")
 
         # 自动化运行期间占用会话（pin），禁止闲置降级/关闭；结束时刷新活跃再解除
         live_service.pin(req.mid, browser_id)
+        exec_id = (
+            execution_id
+            or getattr(req, "execution_id", "")
+            or new_execution_id()
+        )
         try:
             # 构建 Scope（兼容旧 req.variables dict）
             scope = Scope(req.variables)
@@ -136,16 +146,17 @@ class ExecutionEngine:
                 page=page,
                 mid=req.mid,
                 auth_headers=getattr(req, "auth_headers", {}) or {},
-                execution_id=execution_id
-                or getattr(req, "execution_id", "")
-                or new_execution_id(),
+                execution_id=exec_id,
                 parent_execution_id=parent_execution_id,
                 log_source=log_source,
                 workflow_log_enabled=workflow_log_enabled,
+                workflow_log_debug=workflow_log_debug,
             )
         finally:
             await live_service.touch(req.mid, browser_id, source="action")
             live_service.unpin(req.mid, browser_id)
+            # 单动作 / 调试执行没有 run 级清理，这里兜底关掉本次打开的页面
+            await self._cleanup_run_pages(req.mid, browser_id, exec_id)
 
     async def execute_steps(
         self,
@@ -157,6 +168,7 @@ class ExecutionEngine:
         page: Page,
         depth: int = 0,
         workflow_log_enabled: bool | None = None,
+        workflow_log_debug: bool | None = None,
         progress: "WorkflowRunProgressReporter | None" = None,
         skip_steps: int = 0,
     ) -> List[ActionResult]:
@@ -174,6 +186,10 @@ class ExecutionEngine:
                 ``UserWorkflow.log_enabled``）。``None``=未设置（听从动作级 /
                 项目兜底）；``True/False``=本次运行显式开/关，压制动作级与项目级。
                 单操作执行不传，行为保持不变。
+            workflow_log_debug: 工作流级调试模式（三态：
+                ``UserWorkflow.log_debug``）。``True``=本次运行强制全量采集
+                （入参/结果/变量全记、成功也记、payload 不截断），优先于开关；
+                ``None``=未设置，按既有链路解析。
             progress: 运行进度上报器（仅工作流调度执行注入）；None 时不做任何埋点。
             skip_steps: 断点恢复起点：跳过前 N 个已完成步骤，从第 N 个（0 基）继续执行。
                 被跳过的步骤不再产生副作用，其成功计数已由旧运行继承。
@@ -182,9 +198,9 @@ class ExecutionEngine:
         """
         # 自动化运行期间占用会话（pin），禁止闲置降级/关闭；结束时刷新活跃再解除
         live_service.pin(req.mid, browser_id)
+        exec_id = getattr(req, "execution_id", "") or new_execution_id()
         try:
             req_auth_headers = getattr(req, "auth_headers", {}) or {}
-            exec_id = getattr(req, "execution_id", "") or new_execution_id()
             workflow_id = getattr(req, "workflow_id", None)
 
             scope = Scope(req.variables)
@@ -219,6 +235,7 @@ class ExecutionEngine:
                     workflow_id=workflow_id,
                     log_source=ActionLogSourceEnum.WORKFLOW,
                     workflow_log_enabled=workflow_log_enabled,
+                    workflow_log_debug=workflow_log_debug,
                 )
 
             # top_level=True：只有顶层管道把步骤计入运行进度（嵌套循环体/分支体不重复计数）
@@ -226,6 +243,23 @@ class ExecutionEngine:
         finally:
             await live_service.touch(req.mid, browser_id, source="workflow")
             live_service.unpin(req.mid, browser_id)
+            # 工作流路径通常已由 run_workflow 清理（close_owned 幂等）；
+            # 内联步骤执行（MCP 调试 / 试跑）在这里兜底
+            await self._cleanup_run_pages(req.mid, browser_id, exec_id)
+
+    @staticmethod
+    async def _cleanup_run_pages(
+        mid: int | str, browser_id: str | int, exec_id: str
+    ) -> None:
+        """关闭本次执行按别名打开的页面（失败不影响主流程）。"""
+        try:
+            closed = await page_registry.close_owned(
+                (int(mid), int(browser_id or 0)), exec_id
+            )
+            if closed:
+                logger.info(f"[ExecutionEngine] 执行结束关闭页面: {closed}")
+        except Exception as exc:  # noqa: BLE001 - 清理失败不影响结果
+            logger.warning(f"[ExecutionEngine] 清理执行页面失败: {exc}")
 
     # ═══════════════ 核心执行 ─────────────────────────────────
 
@@ -247,6 +281,7 @@ class ExecutionEngine:
         workflow_id: str | None = None,
         log_source: ActionLogSourceEnum = ActionLogSourceEnum.ACTION,
         workflow_log_enabled: bool | None = None,
+        workflow_log_debug: bool | None = None,
     ) -> ActionResult:
         """执行单个 action 并按用户配置采集操作日志。
 
@@ -256,6 +291,8 @@ class ExecutionEngine:
         Args:
             workflow_log_enabled: 工作流级日志开关（三态）。None 表示未经工作流
                 调度，按动作自身配置 / 项目兜底解析（单操作执行的默认行为）。
+            workflow_log_debug: 工作流级调试模式（三态）。True 时优先于开关，
+                强制全量采集；None 表示未经工作流调度 / 未开启。
         """
         exec_id = execution_id or new_execution_id()
         log_ctx = ActionLogContext(
@@ -289,6 +326,7 @@ class ExecutionEngine:
             workflow_id=workflow_id,
             log_ctx=log_ctx,
             workflow_log_enabled=workflow_log_enabled,
+            workflow_log_debug=workflow_log_debug,
         )
 
         log_ctx.action_name = str(result.action_name or action_id)
@@ -299,7 +337,11 @@ class ExecutionEngine:
             if (not result.success and (result.error or "").strip() == "操作超时")
             else None
         )
-        await save_action_log(log_ctx, result, status=status)
+        # 失败强制留痕：`on_error=continue` 会把失败降级成「步骤成功」，若再被日志开关
+        # 压制，运行记录里就完全查不到「为什么没干活」。成功仍按配置决定是否记录。
+        await save_action_log(
+            log_ctx, result, status=status, force=not result.success
+        )
         return result
 
     async def _run_action_core(
@@ -319,6 +361,7 @@ class ExecutionEngine:
         workflow_id: str | None = None,
         log_ctx: ActionLogContext | None = None,
         workflow_log_enabled: bool | None = None,
+        workflow_log_debug: bool | None = None,
     ) -> ActionResult:
         """执行单个 action 的核心方法。
 
@@ -350,6 +393,8 @@ class ExecutionEngine:
         # 执行期才存在的模板，交由各子步骤执行时按作用域解析），否则会误报缺失。
         raw_params = dict(params)
         inline_steps = raw_params.pop("steps", None)
+        # 并行分支里同样含「仅在子步骤执行期才存在」的模板，不能当本次调用参数解析
+        inline_branches = raw_params.pop("branches", None)
         try:
             merged = scope.resolve_params(raw_params, strict=True)
         except TemplateResolveError as e:
@@ -358,6 +403,8 @@ class ExecutionEngine:
             )
         if inline_steps is not None:
             merged["steps"] = inline_steps
+        if inline_branches is not None:
+            merged["branches"] = inline_branches
         if issubclass(action_class, CompositeActionClass):
             # 校验用户是否有权执行此复合操作（自身或公开）
             ca_model = await action_crud_svr.get_by_action_id(action_id)
@@ -384,9 +431,26 @@ class ExecutionEngine:
         else:
             composite_display_name = None
 
+        # 页面别名：步骤可用 params.page 指定在哪个页面执行（见多页面计划书）
+        resolved_page = page
+        page_alias = merged.get("page")
+        if page_alias:
+            registry_key = (int(mid), int(browser_id or 0))
+            if str(page_alias) == "main" and page_registry.get(registry_key, "main") is None:
+                # 单动作执行 / 调试入口没有走 run_workflow 的绑定逻辑，这里兜底
+                page_registry.bind_main(registry_key, page)
+            resolved_page = page_registry.get(registry_key, str(page_alias))
+            if resolved_page is None:
+                return self._fail(
+                    f"页面 {page_alias!r} 不存在或已关闭（请先 open_page 或检查别名）",
+                    action_id,
+                    start,
+                    replaced_params=merged,
+                )
+
         action: BaseAction = action_class.new_action(
             mid=mid,
-            page=page,
+            page=resolved_page,
             variables=scope.current,  # ← 同一引用，不拷贝
             params=merged,
             output_vars=output_vars,
@@ -394,9 +458,10 @@ class ExecutionEngine:
         # 解析本操作的日志采集配置，供内部子步骤继承（自定义操作按其基础配置，
         # 内置操作按项目兜底；也可由执行参数中的 log 选项显式覆盖）。
         # workflow_log_enabled 为工作流级总闸（三态）：非 None 时压制动作级与项目级。
+        # workflow_log_debug 为工作流级调试模式（用户开关）：优先于总闸，强制全量采集。
         # 完整优先级见 action_logger.resolve_log_option 文档字符串。
         log_cfg: ActionLogOption | None = await resolve_log_option(
-            mid, action_id, merged, None, workflow_log_enabled
+            mid, action_id, merged, None, workflow_log_enabled, workflow_log_debug
         )
         if log_ctx is not None:
             log_ctx.log_config = log_cfg
@@ -440,9 +505,13 @@ class ExecutionEngine:
 
         except Exception as e:
             logger.error(f"操作失败: {action_id} - {e}")
-            return self._fail(
+            result = self._fail(
                 str(e), action_id, start, action.action_name, replaced_params=merged
             )
+            # 完整调用栈随执行结果进入 ActionLogRecord.logs：落库的 error_message
+            # 只带 str(e) 看不出炸点，MCP 按 execution_id 排查需要 traceback。
+            result.logs.append(traceback.format_exc())
+            return result
 
     # ═══════════════ 工具方法 ─────────────────────────────────
 

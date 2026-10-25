@@ -4,6 +4,7 @@ import fastapi_cdn_host
 import uvicorn
 import sys
 from app.routes import setup_routes
+from app.mcp.mount import setup_mcp
 from app.setup import start_background_tasks, stop_background_tasks
 from app.config import settings
 from scripts.initd.main import init_dependencies
@@ -79,7 +80,20 @@ async def lifespan(app: FastAPI):
     # 断点恢复：把「服务重启导致中断」且开启了 resume_on_restart 的运行从
     # checkpoint 之后重新拉起（至少一次语义，循环内资源由处理记录去重）。
     # 放在 RPC 就绪之后：恢复出来的运行会立刻执行步骤，HTTP 类动作依赖 RPC 链路。
-    from app.services.execution.workflow_runner import resume_interrupted_runs
+    from app.services.execution.workflow_runner import (
+        requeue_pending_runs,
+        resume_interrupted_runs,
+    )
+
+    # 重启重排：把重启前排队中（QUEUED）的运行重新入队（见 docs/同浏览器工作流排队计划书.md）
+    try:
+        requeued = await requeue_pending_runs()
+        if requeued:
+            logger.warning(
+                f"⚠️ 已重排 {len(requeued)} 条排队运行: {requeued[:20]}"
+            )
+    except Exception as exc:  # noqa: BLE001 - 重排失败不阻塞启动
+        logger.exception(f"启动重排排队运行失败（不阻塞启动）: {exc}")
 
     try:
         resumed = await resume_interrupted_runs()
@@ -113,6 +127,8 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Browser Automation API", lifespan=lifespan)
     fastapi_cdn_host.patch_docs(app)
     setup_routes(app)
+    # MCP 调试端点（tag=MCP 调试，工具自动生成）；dev 默认开启、prod 默认关闭
+    setup_mcp(app)
 
     return app
 

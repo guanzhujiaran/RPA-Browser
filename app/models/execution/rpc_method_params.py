@@ -20,6 +20,8 @@ from bili_common.models import (
     GetTopicLotteryRpcParams,
     GetAllLotteryRpcParams,
     GetOthersLotDynListRpcParams,
+    OthersLotDynSortEnum,
+    OthersLotDynSortOrderEnum,
 )
 
 __all__ = [
@@ -30,6 +32,8 @@ __all__ = [
     "GetTopicLotteryRpcParams",
     "GetAllLotteryRpcParams",
     "GetOthersLotDynListRpcParams",
+    "OthersLotDynSortEnum",
+    "OthersLotDynSortOrderEnum",
     "RPC_METHOD_PARAMS_MODEL_MAP",
     "RPC_METHOD_PARAMS_FIELD_MAP",
 ]

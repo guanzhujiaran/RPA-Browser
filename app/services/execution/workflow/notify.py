@@ -19,6 +19,7 @@ from typing import Any
 from loguru import logger
 
 from app.models.database.workflow.models import UserWorkflow
+from app.models.runtime.workflow_progress import render_loop_summaries
 from app.services.RPA_browser.browser import BrowserService
 from app.services.message import push_msg
 from app.services.mq.rpc_notify import publish_notify
@@ -53,6 +54,20 @@ def _run_notify_content(
         lines.append(f"耗时：{duration_ms / 1000:.1f} 秒")
     if error_message:
         lines.append(f"失败详情：{error_message}")
+    # 运行告警：被 on_error=continue 容忍的失败（不改变结论，但可能已降级执行）
+    tolerated = int(summary.get("tolerated", 0)) if summary else 0
+    if tolerated > 0:
+        lines.append(f"运行告警：{tolerated} 个步骤失败但已容错继续")
+        # 循环维度：上面的「成功/失败/共 N 步」只数顶层步骤（循环整体算 1 步），
+        # 看不见体内成败，补一行聚合（见 docs/通知动作与运行告警计划书.md §D4）
+        loop_text = render_loop_summaries(
+            (summary or {}).get("loop_summaries") or []
+        )
+        if loop_text:
+            lines.append(f"循环统计：{loop_text}")
+        for sample in (summary or {}).get("tolerated_samples") or []:
+            lines.append(f"  - {sample}")
+        lines.append("提示：这类失败不改变运行结论，但可能已降级执行，请检查相关配置。")
     return "\n".join(lines)
 
 

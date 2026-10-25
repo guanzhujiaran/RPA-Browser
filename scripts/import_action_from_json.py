@@ -4,7 +4,7 @@
 背景 / 目的
 -----------
 复合操作（如「参与B站抽奖」action_id=104682832）的权威定义在代码库的
-JSON 导出文件里（如 `action_104682832_参与B站抽奖.json`）。本地迭代修改后，
+JSON 导出文件里（统一存放于 `actions/`，如 `actions/action_104682832_参与B站抽奖.json`）。本地迭代修改后，
 需要把它同步进数据库才能真正被 RPA 执行（`/actions/execute` 从 DB 读步骤）。
 
 本脚本**不直接连数据库**，而是调用与前端完全一致的 HTTP 接口
@@ -25,9 +25,9 @@ JSON 里携带的数据库冗余字段（mid / id / created_at / likes_count 等
     # 预演：只打印将发送的载荷，不落库
     .venv/bin/python scripts/import_action_from_json.py --dry-run
 
-    # 正式导入 / 更新
+    # 正式导入 / 更新（动作 JSON 统一放在 actions/ 目录）
     .venv/bin/python scripts/import_action_from_json.py \
-        --file action_104682832_参与B站抽奖.json --mid 140682000
+        --file actions/action_104682832_参与B站抽奖.json --mid 140682000
 
     # 强制新建一份（不更新同名操作）
     .venv/bin/python scripts/import_action_from_json.py --new
@@ -50,7 +50,9 @@ from pathlib import Path
 
 import httpx
 
-DEFAULT_FILE = "action_104682832_参与B站抽奖.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ACTIONS_DIR = PROJECT_ROOT / "actions"
+DEFAULT_FILE = str(ACTIONS_DIR / "action_104682832_参与B站抽奖.json")
 DEFAULT_BASE_URL = "http://localhost:28000"
 DEFAULT_MID = 140682000
 API_PREFIX = "/api/v1/rpa/browser/control"
@@ -75,6 +77,7 @@ _PAYLOAD_FIELDS = (
     "retry_times",
     "retry_delay",
     "log_enabled",
+    "log_debug",
     "log_record_params",
     "log_record_result",
     "log_record_variables",
@@ -111,6 +114,7 @@ class ActionPayload:
     retry_times: int = 0
     retry_delay: float = 1.0
     log_enabled: bool | None = None
+    log_debug: bool | None = None
     log_record_params: bool = True
     log_record_result: bool = True
     log_record_variables: bool = False

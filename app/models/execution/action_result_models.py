@@ -100,6 +100,9 @@ class LLMResult(SQLModel):
     usage: dict = Field(default_factory=dict, description="token 使用量")
     # 结构化输出
     is_structured: bool = Field(default=False, description="是否为结构化输出模式")
+    fallback_used: bool = Field(
+        default=False, description="是否因主模型失败而回退到了备用模型"
+    )
     structured_data: dict | None = Field(
         default=None, description="结构化输出数据（response_schema 提供时有效）"
     )
@@ -149,6 +152,14 @@ class PrintResult(SQLModel):
     """打印操作结果"""
 
     message: str = Field(default="", description="打印的内容")
+
+
+class NotifyResult(SQLModel):
+    """通知操作结果"""
+
+    deduped: bool = Field(default=False, description="是否因去重被跳过")
+    inbox_sent: bool = Field(default=False, description="站内系统通知是否投递成功")
+    push_sent: bool = Field(default=False, description="外部推送是否投递成功")
 
 
 class ShuffleListResult(SQLModel):
@@ -232,6 +243,7 @@ AllActionResult = (
     | SortListResult
     | PickLineResult
     | BiliReserveResult
+    | NotifyResult
     | LoopResult
     | IfElseResult
     | CompositeResult
@@ -261,6 +273,7 @@ BUILTIN_ACTION_RESULT_MAP: dict[str, Type[AllActionResult]] = {
     "shuffle_list": ShuffleListResult,
     "sort_list": SortListResult,
     "pick_line": PickLineResult,
+    "notify": NotifyResult,
     "bili_reserve": BiliReserveResult,
     "loop": LoopResult,
     "if_else": IfElseResult,

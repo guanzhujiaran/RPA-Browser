@@ -29,9 +29,13 @@ from app.models.database.workflow.models import (
 from app.models.runtime.workflow_progress import (
     WORKFLOW_RUN_LOG_SSE_EVENT_NAME,
     WORKFLOW_RUN_SSE_EVENT_NAME,
+    LoopRunSummary,
     WorkflowRunLogEvent,
     WorkflowRunProgressData,
 )
+# 敏感字段脱敏与操作日志（action_logger）共用同一套黑名单，避免两处口径不一致。
+# action_logger 不 import 本模块，无循环依赖。
+from app.services.execution.action_logger import _redact_sensitive
 from app.services.RPA_browser.session.session_status_bus import format_sse_frame
 from app.utils.json_utils import (
     dumps_json,
@@ -63,18 +67,48 @@ class LoopLayer:
     max_index: int = 0
 
 
+#: 展示执行参数时要剔除的嵌套子步骤字段：复合 / 循环 / 分支动作的整棵子树
+#: （loopBranch / TrueBranch / steps …）铺开没有意义，还会把消息撑爆
+_NESTED_STEP_PARAM_KEYS: tuple[str, ...] = (
+    "steps",
+    "loopBranch",
+    "TrueBranch",
+    "FalseBranch",
+    "branches",
+)
+
+
+def _display_params(result: object) -> dict | None:
+    """取本次执行的**实际参数**（模板替换后）用于展示；无参数返回 None。
+
+    取 `result.replaced_params`（`engine._run_action_core` 落的是替换后的参数，
+    正是「这一步用什么跑的」），剔除嵌套子步骤字段；复合 / 循环动作通常没有
+    `replaced_params`（其 result 不携带），天然不会泄露子树。
+    """
+    params = getattr(result, "replaced_params", None)
+    if not isinstance(params, dict):
+        return None
+    display = {k: v for k, v in params.items() if k not in _NESTED_STEP_PARAM_KEYS}
+    return display or None
+
+
 def build_step_detail(result: object, *, max_length: int | None = None) -> str | None:
     """把一次动作执行结果渲染成可展示的明细文本（运行消息的 `detail`）。
 
-    内容 = 动作返回数据（`ActionResult.data`，JSON 化）
-    + 执行过程日志（`ActionResult.logs`，如去重统计），让「运行消息」栏不只显示
-    「完成了哪一步」，还能看到「拿到了什么数据」（如 `fetch_external_data` 的响应）。
+    内容 = 执行参数（`replaced_params`，模板替换后的实际入参）
+    + 动作返回数据（`ActionResult.data`，JSON 化）
+    + 执行过程日志（`ActionResult.logs`，如去重统计），让「运行消息」栏既能看到
+    「这一步用什么参数跑的」，也能看到「拿到了什么数据」（如 `fetch_external_data`
+    的响应）。参数缺失 / 无内容时自动省略对应行。
 
     **打印与落库是两件事**：这里产出的 `detail` 只随 SSE 事件转发给前端，
     既不写运行记录表也不进操作日志，不占硬盘，所以默认**不裁剪**
     （`workflow_run_log_detail_max_length=0`）。需要给慢网络兜底时才配上限。
 
-    两者都为空时返回 None（前端不渲染明细行）。
+    敏感字段（`llm_api_key` / `token` 等）按操作日志同一套黑名单脱敏后再进 SSE——
+    虽然不落库，也不该把密钥广播给前端。
+
+    所有行都为空时返回 None（前端不渲染明细行）。
     """
     if result is None:
         return None
@@ -82,6 +116,17 @@ def build_step_detail(result: object, *, max_length: int | None = None) -> str |
         settings.workflow_run_log_detail_max_length if max_length is None else max_length
     )
     lines: list[str] = []
+
+    display_params = _display_params(result)
+    if display_params is not None:
+        lines.append(
+            "参数: "
+            + dumps_json(
+                shrink_json_payload(
+                    _redact_sensitive(jsonify(display_params)), limit
+                )
+            )
+        )
 
     data = getattr(result, "data", None)
     if data is not None:
@@ -272,12 +317,69 @@ class WorkflowRunProgressReporter:
         self._log_seq = 0
         self._log_buffer: deque[WorkflowRunLogEvent] = deque(maxlen=_LOG_BUFFER_SIZE)
         self._step_started_at: float | None = None
+        # ── 运行告警：被 on_error=continue 容忍的失败（= 降级执行）──
+        # 这些失败不改变运行结论，但用户需要知道「哪些能力已经降级」，
+        # 因此单独计数并在运行结束通知里汇总（见 docs/通知动作与运行告警计划书.md）。
+        self._tolerated_count = 0
+        self._tolerated_samples: list[str] = []
+        # ── 循环聚合：每层循环体内动作的成败计数（loop_finished 时固化）──
+        # depth -> [成功数, 失败数]；body_step_* 归「上报时 ≤depth 的最近循环层」，
+        # 分支体（if_else）动作没有自己的层，归外层循环（见计划书 §D4）。
+        self._loop_body_counts: dict[int, list[int]] = {}
+        #: 已结束循环的聚合（每个实例一条）；顶层步骤计数看不见循环体内成败，
+        #: 熔断文案与结束通知需要这个维度（见计划书 §D4）。
+        self._loop_summaries: list[LoopRunSummary] = []
         # 供 SSE 建连时补发最近消息
         workflow_run_reporters[self._data.run_id] = self
 
     def history(self) -> list[WorkflowRunLogEvent]:
         """最近的消息（新连接补发用；上限 `_LOG_BUFFER_SIZE`）。"""
         return list(self._log_buffer)
+
+    # ─── 运行告警统计（被容忍的失败）───────────────────────
+
+    @property
+    def tolerated_count(self) -> int:
+        """被 `on_error=continue` 容忍的失败步骤总数（= 降级次数）。"""
+        return self._tolerated_count
+
+    @property
+    def tolerated_samples(self) -> list[str]:
+        """前几条（去重、截断）容忍失败的错误摘要，供结束通知展示。"""
+        return list(self._tolerated_samples)
+
+    @property
+    def loop_summaries(self) -> list[LoopRunSummary]:
+        """已结束循环的聚合统计（每个实例一条，按结束顺序）。
+
+        供熔断文案与结束通知展示循环维度（轮次 + 体内动作成败）；
+        顶层 `success_count/failed_count` 只数步骤、循环整体算 1 步，
+        看不见体内成败（见 docs/通知动作与运行告警计划书.md §D4）。
+        """
+        return list(self._loop_summaries)
+
+    def record_tolerated(self, result: object, error: str | None = None) -> None:
+        """对外入口：登记一次「被容忍的失败」（供 LoopStep 在标记 tolerated 后补登）。
+
+        为什么需要公开方法：循环级 `on_error=continue` 的 tolerated 标记是在
+        `body_step_finished` 上报**之后**才打上的，上报当刻还看不到该标记，
+        只能由 LoopStep 事后补登，否则结束通知里的容错样本永远为空。
+        """
+        self._record_tolerated(result, error)
+
+    def _record_tolerated(self, result: object, error: str | None) -> None:
+        """记录一次「被容忍的失败」（幂等：同一条结果只记一次）。
+
+        只做统计，不影响进度 / 成败结论：`on_error=continue` 的语义仍是「继续执行」。
+        """
+        if getattr(result, "tolerated", False) is not True:
+            return
+        self._tolerated_count += 1
+        text = (error or getattr(result, "error", None) or "未知错误").strip()
+        text = text[:200]
+        if text and text not in self._tolerated_samples:
+            if len(self._tolerated_samples) < 3:
+                self._tolerated_samples.append(text)
 
     @property
     def data(self) -> WorkflowRunProgressData:
@@ -368,6 +470,18 @@ class WorkflowRunProgressReporter:
         # 用「实际执行到的最大轮次」：break/continue 提前退出时最后一轮小于总数
         finished_index = max(layer.index, layer.max_index)
         finished_total = layer.total
+        # 固化本层聚合（轮次 + 体内动作成败）供熔断文案 / 结束通知使用
+        body = self._loop_body_counts.pop(depth, None)
+        self._loop_summaries.append(
+            LoopRunSummary(
+                name=finished_name,
+                depth=depth,
+                rounds=finished_index,
+                rounds_planned=finished_total,
+                body_success=body[0] if body else 0,
+                body_failed=body[1] if body else 0,
+            )
+        )
         # 只有被跟踪的那层（最外层）结束才把进度维度回落，内层结束不影响进度条
         if depth <= self._loop_depth:
             self._reset_loop()
@@ -402,6 +516,9 @@ class WorkflowRunProgressReporter:
         self._data.loop_body_step_name = ""
         self._loop_depth = 2**31 - 1
         self._loop_layers.clear()
+        # 循环层清空后，未结束循环的体内计数失去归属，一并清掉
+        # （已固化的 _loop_summaries 不动，要在运行级保留）
+        self._loop_body_counts.clear()
 
     async def step_finished(
         self,
@@ -423,6 +540,7 @@ class WorkflowRunProgressReporter:
             self._data.success_count += 1
         else:
             self._data.failed_count += 1
+            self._record_tolerated(result, error)
         self._data.updated_at = datetime.now()
         self._refresh_duration()
 
@@ -514,6 +632,29 @@ class WorkflowRunProgressReporter:
         await self._persist(force=False)
         self._publish()
 
+    def _layer_key_for(self, depth: int) -> int | None:
+        """取 ≤ depth 的最近一层循环的 depth 键（体内动作计数归属用）。
+
+        分支体 / 分支体里的分支体上报时 depth 会比实际循环层更深（用于缩进），
+        它们本身不占用循环层，体内动作计数归外层循环。
+        """
+        if depth in self._loop_layers:
+            return depth
+        for known_depth in sorted(self._loop_layers, reverse=True):
+            if known_depth <= depth:
+                return known_depth
+        return None
+
+    def _layer_for(self, depth: int):
+        """取 ≤ depth 的最近一层循环状态（嵌套分支体没有自己的层）。
+
+        分支体 / 分支体里的分支体上报时 depth 会比实际循环层更深（用于缩进），
+        它们本身不占用进度条，但消息里的「第 N 轮」要沿用外层循环的轮次，
+        否则会显示成「第 0 轮」。
+        """
+        key = self._layer_key_for(depth)
+        return self._loop_layers.get(key) if key is not None else None
+
     async def loop_body_step(
         self, completed: int, total: int, step_name: str = "", depth: int = 1
     ) -> None:
@@ -551,11 +692,13 @@ class WorkflowRunProgressReporter:
         嵌套多少层都发，前端按 `depth` 逐级缩进展示。
         """
         await self.loop_body_step(index, total, step_name, depth=depth)
-        layer = self._loop_layers.get(depth)
+        layer = self._layer_for(depth)
         position = f"{index + 1}/{total}" if total else str(index + 1)
+        # 顶层 if_else 的分支体不在循环里（没有轮次），消息不要硬凑「第 0 轮」
+        prefix = f"第 {layer.index} 轮 · " if layer else ""
         self._emit_log(
             kind="body_step_started",
-            text=f"第 {layer.index if layer else 0} 轮 · 动作 {position}：{step_name}",
+            text=f"{prefix}动作 {position}：{step_name}",
             action_id=step_name,
             action_name=step_name,
             loop_index=layer.index if layer else 0,
@@ -581,16 +724,26 @@ class WorkflowRunProgressReporter:
         `detail`（动作返回内容），由前端按轮次分批收拢、按层级嵌套展示。
         """
         await self.loop_body_step(index, total, step_name, depth=depth)
-        layer = self._loop_layers.get(depth)
+        if not success:
+            self._record_tolerated(result, error)
+        # 体内动作成败按层累计（loop_finished 时固化成 LoopRunSummary）：
+        # 顶层步骤计数看不见循环体内成败，熔断/通知需要这个维度。
+        layer_key = self._layer_key_for(depth)
+        if layer_key is not None:
+            counts = self._loop_body_counts.setdefault(layer_key, [0, 0])
+            counts[0 if success else 1] += 1
+        layer = self._layer_for(depth)
         round_index = layer.index if layer else 0
         round_total = layer.total if layer else 0
         position = f"{index}/{total}" if total else str(index)
         cost = f"，耗时 {duration_ms / 1000:.1f}s" if duration_ms is not None else ""
+        # 顶层 if_else 的分支体不在循环里（没有轮次），消息不要硬凑「第 0 轮」
+        prefix = f"第 {round_index} 轮 · " if layer else ""
         if success:
-            text = f"第 {round_index} 轮 · 动作 {position}：{step_name}{cost}"
+            text = f"{prefix}动作 {position}：{step_name}{cost}"
         else:
             text = (
-                f"第 {round_index} 轮 · 动作 {position} 失败：{step_name}"
+                f"{prefix}动作 {position} 失败：{step_name}"
                 f"{cost}｜{error or '未知错误'}"
             )
         detail = build_step_detail(result)

@@ -384,14 +384,34 @@ class WebRTCEnabledSession(SessionInfo):
             # 等待一下让浏览器完成清理
             await asyncio.sleep(0.5)
 
-    async def create_new_page_with_limit(self) -> Page:
+    async def create_new_page_with_limit(self, session_key=None) -> Page:
         """
-        创建新页面并遵守页面数量限制
-        这是推荐的使用方式，会自动执行页面限制检查
+        创建新页面并遵守页面数量限制（推荐用法）。
 
-        Returns:
-            Page: 新创建的页面对象
+        语义（见 docs/多页面并行执行计划书.md）：
+        - 页面数达到上限时**优先回收未被工作流引用的页面**（无别名的页）；
+        - 没有可回收页时**等待空位**，绝不关闭工作流正在使用的别名页；
+        - 传入 ``session_key=(mid, browser_id)`` 才能识别「哪些页被引用」，
+          不传则退回旧的 `_enforce_page_limit`（关闭最旧页）行为。
+
+        Args:
+            session_key: ``(mid, browser_id)``，用于查询页面别名占用。
         """
+        if session_key is not None:
+            from app.services.RPA_browser.session.page_registry import (
+                page_registry,
+            )
+
+            opener = next(
+                (p for p in self.all_pages if not p.is_closed()), None
+            )
+            if opener is None:
+                raise RuntimeError("没有可用页面，无法创建新页面")
+            return await page_registry.create_page(
+                session_key,
+                opener=opener,
+                capacity=int(self.max_pages),
+            )
         return await self.__new_page()
 
     async def switch_to_page(self, page_index: int) -> Page:

@@ -91,6 +91,7 @@ def _to_detail(model) -> WorkflowDetailResponse:
         notify_on_start=model.notify_on_start,
         notify_on_end=model.notify_on_end,
         log_enabled=model.log_enabled,
+        log_debug=model.log_debug,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
@@ -120,6 +121,7 @@ def _to_list_item(model) -> WorkflowAdminListItemResponse:
         notify_on_start=model.notify_on_start,
         notify_on_end=model.notify_on_end,
         log_enabled=model.log_enabled,
+        log_debug=model.log_debug,
         created_at=model.created_at,
         updated_at=model.updated_at,
         mid=model.mid,
@@ -238,6 +240,7 @@ async def update_workflow_admin(
         notify_on_start=request.notify_on_start,
         notify_on_end=request.notify_on_end,
         log_enabled=request.log_enabled,
+        log_debug=request.log_debug,
     )
     if not model:
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")

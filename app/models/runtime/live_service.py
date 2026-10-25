@@ -4,7 +4,7 @@ Runtime 模块 - LiveService 数据模型
 定义 LiveService 等服务中使用的内部数据模型（dataclass）。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, field
 from typing import Set
 import time
 from app.config import settings
@@ -39,10 +39,16 @@ class BrowserSessionEntry:
     expires_at: int | None = None
     # 自动化任务占用计数（>0 时禁止一切降级/关闭），见 §5.15
     pin_count: int = 0
-    # 工作流执行占用：非 None 表示该会话正在执行某次工作流运行（见 §5.17）。
+    # 工作流执行占用：非空表示该会话有工作流在跑（见 §5.17 / 多页面并行计划书 §3）。
+    # **同一浏览器允许多个工作流并行**，故这里是集合而非单值。
     # 与 pin_count 的区别：pin 无法区分「工作流执行」与「用户单步调试」（两者都会 pin），
-    # 因此执行期互斥（工作流运行时禁止调试、放行直播）必须依赖本字段。
-    workflow_run_id: str | None = None
+    # 因此执行期互斥（有工作流运行时禁止调试、放行直播）必须依赖本字段。
+    active_workflow_runs: set[str] = field(default_factory=set)
+
+    @property
+    def workflow_run_id(self) -> str | None:
+        """兼容读取：返回任意一个活跃 run_id（无则 None）。"""
+        return next(iter(self.active_workflow_runs), None)
     # 闲置超时后进入宽限期的时间戳（用于「倒计时关实例」）
     terminate_scheduled_at: int | None = None
 
@@ -68,8 +74,8 @@ class BrowserSessionEntry:
 
     @property
     def is_workflow_running(self) -> bool:
-        """是否正在执行工作流（执行期禁止调试类接口；直播为只读拉流，不受影响）"""
-        return self.workflow_run_id is not None
+        """是否有工作流在跑（执行期禁止调试类接口；直播为只读拉流，不受影响）"""
+        return bool(self.active_workflow_runs)
 
     @property
     def no_active_connections(self) -> bool:

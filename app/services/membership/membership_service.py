@@ -1622,6 +1622,8 @@ class MembershipService:
             WorkflowRunStatusEnum,
             WorkflowRunTriggerEnum,
         )
+        from app.services.execution.run_events import publish_status_changed
+        from app.services.execution.run_state_machine import ensure_transition
         from app.utils.depends.session_manager import DatabaseSessionManager
 
         now = now_local()
@@ -1722,7 +1724,12 @@ class MembershipService:
                     remark="定时任务运行会话丢失，兜底结算",
                 )
                 current.settled_seconds = already_charged + charged
-                current.status = WorkflowRunStatusEnum.FAILED
+                # 状态迁移统一过状态机（RUNNING → FAILED）
+                current.status = ensure_transition(
+                    current.status,
+                    WorkflowRunStatusEnum.FAILED,
+                    run_id=current.run_id,
+                )
                 current.error_message = "会话丢失（进程重启/异常），已兜底结算时长"
                 current.finished_at = now
                 current.duration_ms = run_seconds * 1000
@@ -1737,6 +1744,12 @@ class MembershipService:
                     now=now,
                 )
                 await session.commit()
+                publish_status_changed(
+                    current.run_id,
+                    WorkflowRunStatusEnum.FAILED,
+                    from_status=WorkflowRunStatusEnum.RUNNING,
+                    reason="会话丢失，计费兜底结算",
+                )
                 logger.warning(
                     f"[Membership] 崩溃兜底结算完成: run={current.run_id}, "
                     f"charged={charged}s"
@@ -1753,6 +1766,11 @@ class MembershipService:
             if balance <= 0:
                 # 熔断：标记失败 + 关闭会话（执行线程随后自然失败退出，
                 # 其最终结算仍会按实际时长补扣/幂等收尾）
+                ensure_transition(
+                    current.status,
+                    WorkflowRunStatusEnum.FAILED,
+                    run_id=current.run_id,
+                )
                 await session.exec(
                     update(WorkflowRunRecord)
                     .where(WorkflowRunRecord.run_id == current.run_id)
@@ -1763,6 +1781,12 @@ class MembershipService:
                     )
                 )
                 await session.commit()
+                publish_status_changed(
+                    current.run_id,
+                    WorkflowRunStatusEnum.FAILED,
+                    from_status=WorkflowRunStatusEnum.RUNNING,
+                    reason="时长余额已用尽，定时任务熔断",
+                )
                 try:
                     from app.services.RPA_browser.session.live_service import (
                         live_service,

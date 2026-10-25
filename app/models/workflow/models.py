@@ -76,6 +76,8 @@ from app.models.workflow.workflow_requests import (
     WorkflowExecuteRequest,
     WorkflowForkRequest,
     WorkflowListRequest,
+    WorkflowResourceRecordCreateRequest,
+    WorkflowResourceRecordDeleteRequest,
     WorkflowResourceRecordListRequest,
     WorkflowRunLogListRequest,
     WorkflowRunNowRequest,
@@ -92,9 +94,11 @@ from app.models.workflow.workflow_responses import (
     WorkflowExecuteResponse,
     WorkflowForkResponse,
     WorkflowListItemResponse,
+    WorkflowResourceRecordDeleteResponse,
     WorkflowResourceRecordItemResponse,
     WorkflowRunLogDetailResponse,
     WorkflowRunLogItemResponse,
+    WorkflowRunStopResponse,
     WorkflowSyncResponse,
 )
 
@@ -158,7 +162,10 @@ __all__ = [
     "ReloadActionsResponse",
     # 已处理资源记录
     "WorkflowResourceRecordListRequest",
+    "WorkflowResourceRecordCreateRequest",
+    "WorkflowResourceRecordDeleteRequest",
     "WorkflowResourceRecordItemResponse",
+    "WorkflowResourceRecordDeleteResponse",
     # 内部值对象 / 混入
     "UpstreamSyncFlag",
     "UpstreamSyncFields",

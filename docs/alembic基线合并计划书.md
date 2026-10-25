@@ -57,6 +57,40 @@ DROP DATABASE IF EXISTS BiliRPADB; CREATE DATABASE BiliRPADB;
 uv run alembic upgrade head
 ```
 
+### 4.1 保留数据的重建（2026-10-21 实操记录）
+
+需要「只换 schema、数据全留」时按下面顺序做（MySQL 在容器 `fastapi-mysql` 内）：
+
+```bash
+TS=$(date +%Y%m%d_%H%M%S)
+# 1) 整库兜底备份（结构 + 数据）
+docker exec fastapi-mysql sh -c 'mysqldump -uroot -p*** --single-transaction \
+  --set-gtid-purged=OFF --routines --triggers --databases BiliRPADB' > /tmp/bilirpa_backup_$TS.sql
+# 2) 只导数据（务必 --complete-insert：新旧基线列物理顺序可能不同）
+docker exec fastapi-mysql sh -c 'mysqldump -uroot -p*** --single-transaction \
+  --set-gtid-purged=OFF --no-create-info --complete-insert --skip-triggers \
+  --skip-routines --skip-add-locks --skip-comments --no-tablespaces \
+  --ignore-table=BiliRPADB.alembic_version BiliRPADB' > /tmp/bilirpa_data_$TS.sql
+# 3) 重建 + 建表
+docker exec fastapi-mysql sh -c "mysql -uroot -p*** -e \
+  'DROP DATABASE IF EXISTS BiliRPADB; CREATE DATABASE BiliRPADB CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;'"
+uv run alembic upgrade head
+# 4) 回灌（文件头加 SET FOREIGN_KEY_CHECKS=0）
+(echo 'SET FOREIGN_KEY_CHECKS=0;'; cat /tmp/bilirpa_data_$TS.sql) \
+  | docker exec -i fastapi-mysql sh -c 'mysql -uroot -p*** BiliRPADB'
+# 5) 逐表行数比对 + 启动服务确认 alembic / Schema 校验通过
+```
+
+两个必踩的坑：
+
+| 现象 | 原因 | 处置 |
+|---|---|---|
+| `ERROR 3546 @@GLOBAL.GTID_PURGED cannot be changed` | dump 默认带 `SET @@GLOBAL.GTID_PURGED`，目标实例已有 GTID | dump 加 `--set-gtid-purged=OFF`（或导入前删掉该语句） |
+| `ERROR 1231 sql_log_bin can't be set to the value of 'NULL'` | 删了 `SET @MYSQLDUMP_TEMP_LOG_BIN=...` 却留着文件尾的还原语句 | 两条一起删，或整体加 `--set-gtid-purged=OFF` 后不再手工裁剪 |
+
+> 注意：`--no-create-info` 的 dump 必须带 `--complete-insert`。新基线按模型声明顺序建列，
+> 旧库列顺序不同，不带列名的 INSERT 会**静默错位**。
+
 ## 5. 验收标准
 
 - [x] `ls alembic/versions` 只剩 1 个文件（`20261021_rpa_baseline.py`）；

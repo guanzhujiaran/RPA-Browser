@@ -13,6 +13,7 @@ from app.models.execution.action_params import CompositeParams, CompositeResult
 from app.models.execution.action_params import BuiltinActionName
 from app.models.execution.action_params import is_composite_action_id
 from app.models.execution.action_params import IfElseParams, IfElseResult
+from app.models.execution.action_params import ParallelParams
 from app.models.execution.action_params import LoopParams, LoopResult
 from app.models.execution.action_params import (
     BaseWorkflowStep,
@@ -27,6 +28,7 @@ from app.models.execution.condition_models import (
     ConditionEvaluateError,
 )
 import ast
+import asyncio
 import time
 import re
 import uuid
@@ -46,6 +48,7 @@ from app.services.execution.actions.safe_eval import (
     safe_evaluate_condition,
 )
 from app.config import settings
+from app.services.RPA_browser.session.page_registry import page_registry
 from app.models.database.workflow.models import BuiltinActionType
 from app.models.database.log.models import ActionLogSourceEnum
 from app.services.execution.action_logger import (
@@ -60,7 +63,11 @@ from app.utils.depends.session_manager import DatabaseSessionManager
 class ExecutionContext:
     """执行上下文 - 保存执行状态（备忘录模式）"""
 
-    def __init__(self, variables: Dict = None, exec_meta: Dict | None = None):
+    def __init__(
+        self,
+        variables: dict | None = None,
+        exec_meta: dict | None = None,
+    ):
         self.variables = dict(variables) if variables else {}
         self.execution_stack: List[str] = []
         self.current_depth = 0
@@ -192,7 +199,7 @@ class ExecutionStrategy:
                 return False
         return safe_evaluate_condition(condition, self.context.variables)
 
-    def _eval_node(self, node: ast.AST, variables: Dict | None = None) -> Any:
+    def _eval_node(self, node: ast.AST, variables: dict | None = None) -> Any:
         """委托给模块级 _eval_ast_node"""
         if variables is None:
             variables = self.context.variables
@@ -455,14 +462,54 @@ def _normalize_children(children: Any) -> List[WorkflowStep]:
             normalized.append(child)
         elif isinstance(child, dict):
             step = workflow_step_adapter.validate_python(_ensure_action_type(child))
-            # 递归规范化其内部嵌套分支
-            cfg = step.params
-            if isinstance(cfg, dict):
-                for key in ("loopBranch", "TrueBranch", "FalseBranch"):
-                    if isinstance(cfg.get(key), list):
-                        cfg[key] = _normalize_children(cfg[key])
             normalized.append(step)
+            _normalize_nested_branches(step)
     return normalized
+
+
+#: 控制流步骤承载子步骤的参数名（与 PipelineBuilder / StepExecutor 读取的一致）
+_BRANCH_PARAM_KEYS: tuple[str, ...] = ("loopBranch", "TrueBranch", "FalseBranch")
+
+
+def _normalize_nested_branches(step: BaseWorkflowStep) -> None:
+    """递归把步骤内部的嵌套分支也规范化成模型。
+
+    注意这里必须同时兼容两种 params 形态：反序列化后 ``step.params`` 是 pydantic
+    模型（LoopParams / IfElseParams），只有「未经 union 校验的原始 dict」才是 dict。
+    旧实现只在 ``cfg`` 是 dict 时递归，导致「循环 → 分支 → 循环」这类三层嵌套里
+    最内层仍是原始 dict，执行时 ``self.params.loopBranch`` 直接失效
+    （表现为内层循环整体不执行且无日志）。
+    """
+    cfg = step.params
+    if cfg is None:
+        return
+
+    if isinstance(cfg, dict):
+        for key in _BRANCH_PARAM_KEYS:
+            value = cfg.get(key)
+            if isinstance(value, list) and value:
+                cfg[key] = _normalize_children(value)
+                for child in cfg[key]:
+                    _normalize_nested_branches(child)
+        return
+
+    updates: dict[str, list[WorkflowStep]] = {}
+    for key in _BRANCH_PARAM_KEYS:
+        value = getattr(cfg, key, None)
+        if isinstance(value, list) and value:
+            updates[key] = _normalize_children(value)
+    if not updates:
+        return
+    try:
+        step.params = cfg.model_copy(update=updates)
+    except Exception:  # noqa: BLE001 - 模型不允许赋值时退回逐个字段设置
+        for key, value in updates.items():
+            setattr(cfg, key, value)
+        step.params = cfg
+
+    for children in updates.values():
+        for child in children:
+            _normalize_nested_branches(child)
 
 
 def _collect_logs(results: List[ActionResult], offset: int = 0) -> List[str]:
@@ -978,7 +1025,7 @@ class LoopAction(BaseAction[LoopParams]):
         variables: Dict,
         params: LoopParams | None = None,
         timeout: int = 30000,
-        input_vars: Dict | None = None,
+        input_vars: dict | None = None,
         output_vars: List[str] | None = None,
         action_name: str | None = None,
     ):
@@ -1415,7 +1462,7 @@ class IfElseAction(BaseAction[IfElseParams]):
         variables: Dict,
         params: IfElseParams | None = None,
         timeout: int = 30000,
-        input_vars: Dict | None = None,
+        input_vars: dict | None = None,
         output_vars: List[str] | None = None,
         action_name: str | None = None,
     ):
@@ -1565,8 +1612,167 @@ class IfElseAction(BaseAction[IfElseParams]):
         return results
 
 
+class ParallelAction(BaseAction[ParallelParams]):
+    """多分支并行执行：每个分支可绑定独立页面，分支之间用 asyncio 并发。"""
+
+    action_id: BuiltinActionType = BuiltinActionType.PARALLEL
+    action_type: BuiltinActionType = BuiltinActionType.PARALLEL
+    params: ParallelParams
+
+    @classmethod
+    def new_action(
+        cls,
+        *,
+        mid: int,
+        page,
+        variables: Dict,
+        params: ParallelParams | None = None,
+        timeout: int = 30000,
+        input_vars: Dict | None = None,
+        output_vars: List[str] | None = None,
+        action_name: str | None = None,
+    ):
+        safe_params = cls._convert_params(params or {})
+        kwargs = {
+            "action_id": cls.action_id,
+            "action_type": cls.action_type,
+            "mid": mid,
+            "page": page,
+            "params": safe_params,
+            "timeout": timeout,
+            "input_vars": input_vars or {},
+            "output_vars": output_vars or [],
+            "variables": variables or {},
+        }
+        if action_name is not None:
+            kwargs["_action_name"] = action_name
+        return cls(**kwargs)
+
+    async def _execute(self) -> ActionResult:
+        start_time = time.time()
+        valid, error_msg, validated = self.validate_params_with_model(self.params)
+        if not valid or validated is None:
+            return ActionResult(
+                success=False,
+                error=error_msg,
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+        branches = list(validated.branches or [])
+        if not branches:
+            return ActionResult(
+                success=False,
+                error="并行分支为空",
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+        key = (int(self.mid), int(self.exec_meta.get("browser_id") or 0))
+
+        async def run_branch(branch) -> Dict[str, Any]:
+            page = self.page
+            if branch.page:
+                candidate = page_registry.get(key, branch.page)
+                if candidate is None:
+                    return {
+                        "name": branch.name,
+                        "success": False,
+                        "error": f"页面 {branch.page!r} 不存在或已关闭",
+                        "results": [],
+                    }
+                page = candidate
+
+            # 分支变量隔离：以父作用域快照为起点，结束时按 export 显式合并
+            context = ExecutionContext(dict(self.variables), self.exec_meta)
+            context.current_depth = int(self.exec_meta.get("depth") or 0) + 1
+            executor = StepExecutor(context, page, self.mid)
+
+            results: List[Dict[str, Any]] = []
+            for index, step in enumerate(_normalize_children(branch.steps)):
+                attempts = await executor.execute_with_retry(step, index)
+                last = attempts[-1]
+                results.append(
+                    {
+                        "action_id": last.action_id,
+                        "action_name": last.action_name,
+                        "success": last.success,
+                        "error": last.error,
+                        "data": last.data,
+                    }
+                )
+                if not last.success:
+                    break
+
+            for var_name in branch.export:
+                if var_name in context.variables:
+                    self.variables[var_name] = context.variables[var_name]
+
+            failed = next((r for r in results if not r["success"]), None)
+            return {
+                "name": branch.name,
+                "success": failed is None,
+                "error": failed.get("error") if failed else None,
+                "results": results,
+            }
+
+        branch_results: List[Dict[str, Any]] = []
+        tasks = [asyncio.create_task(run_branch(b)) for b in branches]
+        try:
+            if validated.on_branch_error == "abort":
+                for completed in asyncio.as_completed(tasks):
+                    result = await completed
+                    branch_results.append(result)
+                    if not result["success"]:
+                        for task in tasks:
+                            task.cancel()
+                        break
+                # 等待被取消的分支收尾，避免 "Task was destroyed" 告警
+                await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                gathered = await asyncio.gather(*tasks, return_exceptions=True)
+                for item in gathered:
+                    if isinstance(item, BaseException):
+                        branch_results.append(
+                            {
+                                "name": "?",
+                                "success": False,
+                                "error": str(item),
+                                "results": [],
+                            }
+                        )
+                    else:
+                        branch_results.append(item)
+        except asyncio.CancelledError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        failed_branches = [r for r in branch_results if not r["success"]]
+        error = None
+        if failed_branches:
+            error = "; ".join(
+                f"分支 {r['name']} 失败: {r.get('error')}" for r in failed_branches
+            )
+
+        return ActionResult(
+            success=not failed_branches,
+            error=error,
+            data={
+                "branches": branch_results,
+                "failed_branches": [r["name"] for r in failed_branches],
+            },
+            execution_time=time.time() - start_time,
+            action_id=self.metadata.id,
+            action_name=self.metadata.name,
+        )
+
 # 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
 
+register_action_class(ParallelAction)
 register_action_class(LoopAction)
 register_action_class(IfElseAction)
 
@@ -1587,7 +1793,7 @@ class CompositeAction(BaseAction[CompositeParams]):
         variables: Dict,
         params: CompositeParams | None = None,
         timeout: int = 30000,
-        input_vars: Dict | None = None,
+        input_vars: dict | None = None,
         output_vars: List[str] | None = None,
         action_name: str | None = None,
     ):

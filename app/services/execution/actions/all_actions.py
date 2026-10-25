@@ -26,6 +26,10 @@ from app.services.execution.actions.navigation import (  # noqa: F401
     NavigateAction,
     NewPageAction,
 )
+from app.services.execution.actions.page_actions import (  # noqa: F401
+    ClosePageAction,
+    OpenPageAction,
+)
 from app.services.execution.actions.screenshot import ScreenshotAction  # noqa: F401
 from app.services.execution.actions.llm import LLMAction  # noqa: F401
 from app.services.execution.actions.fetch_external_data import (  # noqa: F401
@@ -36,6 +40,7 @@ from app.services.execution.actions.mark_resource_result import (  # noqa: F401
 )
 from app.services.execution.actions.random_pick import RandomPickAction  # noqa: F401
 from app.services.execution.actions.debug import PrintAction  # noqa: F401
+from app.services.execution.actions.notify import NotifyAction  # noqa: F401
 from app.services.execution.actions.list_utils import (  # noqa: F401
     ShuffleListAction,
     SortListAction,

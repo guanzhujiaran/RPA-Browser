@@ -31,6 +31,8 @@ from app.utils.depends.browser_session_depends import (
     ActiveBrowserSession,
     require_active_browser_session,
 )
+from loguru import logger
+from app.services.RPA_browser.session.page_registry import page_registry
 from ..base import new_operation_router
 
 router = new_operation_router()
@@ -47,7 +49,10 @@ async def open_page(
     """在浏览器中打开指定URL"""
     # page_index 为负数表示新建页面
     if request.page_index < 0:
-        page = await session.browser_session.create_new_page_with_limit()
+        # 走页面注册表：满了先回收未标记页，再等待空位（不关工作流的页）
+        page = await session.browser_session.create_new_page_with_limit(
+            (session.mid, int(session.browser_id))
+        )
         page_index = len(session.all_pages) - 1
     else:
         page = session.get_page(request.page_index)
@@ -65,12 +70,28 @@ async def close_page(
     request: ClosePageRequest,
     session: ActiveBrowserSession = Depends(require_active_browser_session()),
 ) -> StandardResponse[dict]:
-    """关闭指定页面"""
+    """关闭指定页面（被工作流引用的页面不允许关闭）"""
     page = session.get_page(request.page_index)
 
     # 不能关闭最后一个页面
     if len(session.all_pages) <= 1:
         return error_response(ResponseCode.BAD_REQUEST, "无法关闭最后一个页面")
+
+    # 工作流占用检查：别名页（open_page 创建）不能手动关闭
+    alias = page_registry.find_alias(
+        (session.mid, int(session.browser_id)), page
+    )
+    logger.debug(
+        f"[close_page] index={request.page_index} aliases="
+        f"{page_registry.list_aliases((session.mid, int(session.browser_id)))} "
+        f"pages={len(session.all_pages)}"
+    )
+    if alias:
+        return error_response(
+            ResponseCode.BAD_REQUEST,
+            f"页面 {alias!r} 正在被工作流使用，不能手动关闭"
+            "（请先停止对应工作流或用 close_page 动作关闭）",
+        )
 
     await page.close()
 

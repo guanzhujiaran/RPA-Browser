@@ -141,6 +141,15 @@ async def start_background_tasks():
     # 注册所有后台任务
     register_background_tasks()
 
+    # 注册运行状态事件订阅者（docs/工作流运行状态机计划书.md §7）：
+    # 必须在启动恢复（下面对 RUNNING 记录的收口）之前注册，否则启动期收口产生的事件
+    # 没人消费，工作流卡片的 last_run_status 会滞后。
+    from app.services.execution.run_event_handlers import (
+        register_default_run_event_handlers,
+    )
+
+    register_default_run_event_handlers()
+
     # 崩溃恢复：先把上次进程残留的 RUNNING 运行记录收口为 INTERRUPTED，
     # 否则同浏览器并发防护（browser_id + RUNNING）会把已死运行误判为执行中，
     # 导致该浏览器的工作流永远无法再启动。必须在重建定时任务之前完成。

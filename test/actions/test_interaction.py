@@ -170,13 +170,20 @@ class TestScrollAction:
         self.page = page
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_scroll_to_bottom(self):
-        """测试滚动到页面底部"""
+    async def test_scroll_without_params_returns_to_top(self):
+        """测试无参数滚动：先滚到底部，再滚回页面顶部
+
+        契约（见 docs/内置滚动动作参数扩展计划书.md）：不提供 selector / x / y 时
+        走兜底模式 `window.scrollTo(0, 0)`，即**滚回顶部**（历史行为，存量 JSON 不变）。
+        """
         from app.services.execution.actions.interaction import ScrollAction
 
         await self.page.set_content(
             "<html><body><div style='height: 3000px;'>Long Content</div></body></html>"
         )
+        # 先手动滚下去，制造“不在顶部”的前提
+        await self.page.evaluate("window.scrollTo(0, 1500)")
+        assert await self.page.evaluate("window.scrollY") > 0
 
         action = ScrollAction.new_action(
             mid=1,
@@ -187,9 +194,31 @@ class TestScrollAction:
 
         result = await action.execute()
         assert result.success
-        # 验证滚动位置确实改变了
+        # 兜底模式：滚回页面顶部
         scroll_y = await self.page.evaluate("window.scrollY")
-        assert scroll_y > 0, f"Expected scrollY > 0 after scroll, got {scroll_y}"
+        assert scroll_y == 0, f"Expected scrollY == 0 after scroll to top, got {scroll_y}"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_scroll_wheel_mode_scrolls_down(self):
+        """测试滚轮模式：提供 y 时分步 mouse.wheel 向下滚动（与站点无关的通用能力）"""
+        from app.services.execution.actions.interaction import ScrollAction
+
+        await self.page.set_content(
+            "<html><body><div style='height: 3000px;'>Long Content</div></body></html>"
+        )
+        await self.page.evaluate("window.scrollTo(0, 0)")
+
+        action = ScrollAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={"test": True},
+            params=ScrollParams(y=800, steps=4, interval_ms=50),
+        )
+
+        result = await action.execute()
+        assert result.success
+        scroll_y = await self.page.evaluate("window.scrollY")
+        assert scroll_y > 0, f"Expected scrollY > 0 after wheel scroll, got {scroll_y}"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_scroll_to_element(self):

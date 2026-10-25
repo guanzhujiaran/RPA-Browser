@@ -1,0 +1,179 @@
+{
+  "name": "微博转发抽奖",
+  "description": "在微博搜索结果页按关键词抓取抽奖微博，逐条点击转发并填写文案（先判断转发弹窗是否存在，已转发/无权限的条目自动跳过）。需要已登录的微博浏览器会话；建议通过工作流执行（单动作直跑走复合动作旧链，if_else 分支不生效）。",
+  "action_type": "composite",
+  "steps": [
+    {
+      "action_id": "print",
+      "action_type": "print",
+      "params": {
+        "message": "【微博转发抽奖】开始"
+      }
+    },
+    {
+      "action_id": "navigate",
+      "action_type": "navigate",
+      "params": {
+        "url": "https://s.weibo.com/weibo?q=%E8%BD%AC%E5%8F%91%E6%8A%BD%E5%A5%96",
+        "timeout": 60000,
+        "wait_until": "domcontentloaded"
+      }
+    },
+    {
+      "action_id": "wait",
+      "action_type": "wait",
+      "on_error": "continue",
+      "params": {
+        "selector": ".card-wrap[action-type=\"feed_list_item\"] >> nth=0",
+        "timeout": 15000
+      },
+      "output_vars": [
+        "list_ok"
+      ]
+    },
+    {
+      "action_id": "loop",
+      "action_type": "loop",
+      "params": {
+        "count": 2,
+        "loop_index_var": "card_i",
+        "on_error": "continue",
+        "loopBranch": [
+          {
+            "action_id": "click",
+            "action_type": "click",
+            "on_error": "continue",
+            "params": {
+              "selector": ".card-wrap[action-type=\"feed_list_item\"] >> nth={{card_i}} >> a[action-type=\"feed_list_forward\"]",
+              "timeout": 8000
+            }
+          },
+          {
+            "action_id": "wait",
+            "action_type": "wait",
+            "on_error": "continue",
+            "params": {
+              "selector": "textarea[node-type=\"textEl\"]",
+              "timeout": 6000
+            },
+            "output_vars": [
+              "dialog_ok"
+            ]
+          },
+          {
+            "action_id": "if_else",
+            "action_type": "if_else",
+            "params": {
+              "condition": {
+                "logic": "AND",
+                "condition": {
+                  "field": "dialog_ok",
+                  "condition_value": true,
+                  "condition_value_type": "BOOLEAN"
+                }
+              },
+              "TrueBranch": [
+                {
+                  "action_id": "input",
+                  "action_type": "input",
+                  "params": {
+                    "selector": "textarea[node-type=\"textEl\"]",
+                    "value": "转发抽奖",
+                    "timeout": 5000
+                  }
+                },
+                {
+                  "action_id": "click",
+                  "action_type": "click",
+                  "params": {
+                    "selector": "text=\"转发\" >> nth=-1",
+                    "timeout": 8000
+                  }
+                },
+                {
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "on_error": "continue",
+                  "params": {
+                    "selector": "textarea[node-type=\"textEl\"]",
+                    "state": "hidden",
+                    "timeout": 10000
+                  },
+                  "output_vars": [
+                    "forwarded"
+                  ]
+                },
+                {
+                  "action_id": "print",
+                  "action_type": "print",
+                  "params": {
+                    "message": "【微博抽奖】第{{card_i}}条已提交={{forwarded}}"
+                  }
+                }
+              ],
+              "FalseBranch": [
+                {
+                  "action_id": "print",
+                  "action_type": "print",
+                  "params": {
+                    "message": "【微博抽奖】第{{card_i}}条无弹窗（已转发/无权限），跳过"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "action_id": "wait",
+            "action_type": "wait",
+            "params": {
+              "timeout": 3000
+            }
+          }
+        ]
+      },
+      "on_error": "continue"
+    },
+    {
+      "action_id": "print",
+      "action_type": "print",
+      "params": {
+        "message": "【微博转发抽奖】结束"
+      }
+    }
+  ],
+  "parameters_schema": [],
+  "input_vars": [
+    {
+      "name": "search_url",
+      "type": "string",
+      "required": false,
+      "default": "https://s.weibo.com/weibo?q=%E8%BD%AC%E5%8F%91%E6%8A%BD%E5%A5%96",
+      "description": "微博搜索页 URL（关键词需自行 urlencode，默认=转发抽奖）"
+    },
+    {
+      "name": "forward_text",
+      "type": "string",
+      "required": false,
+      "default": "转发抽奖",
+      "description": "转发时填写的文字"
+    }
+  ],
+  "output_vars": [],
+  "tags": [
+    "微博",
+    "抽奖"
+  ],
+  "is_public": false,
+  "timeout": 30000,
+  "retry_on_error": false,
+  "retry_times": 0,
+  "retry_delay": 1.0,
+  "log_enabled": true,
+  "log_debug": null,
+  "log_record_params": true,
+  "log_record_result": true,
+  "log_record_variables": false,
+  "log_only_on_error": false,
+  "log_max_payload_length": 4000,
+  "log_retention_days": 30
+}

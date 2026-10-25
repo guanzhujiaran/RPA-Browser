@@ -178,7 +178,14 @@ class ResourceRecordService:
                     "resource_id": raw,
                     "run_id": run_id,
                     "status": status,
-                    "fail_reason": None if success else (fail_reason or None),
+                    # 只有 success 才丢弃原因：skipped 是「终态跳过」，原因（如
+                    # 「已点赞，视为已参与」「活动已结束」）恰恰是排查误记的唯一线索，
+                    # 之前按 success 判断会把 skipped 的原因一起抹掉。
+                    "fail_reason": (
+                        None
+                        if status == ResourceProcessStatus.SUCCESS
+                        else (fail_reason or None)
+                    ),
                     "process_count": 1,
                     "extra": item_extra,
                     "first_processed_at": now,
@@ -204,6 +211,102 @@ class ResourceRecordService:
             await session.execute(stmt)
             await session.commit()
         return len(rows)
+
+    # ---------------- 单条读取 / 手工增删（前端「已处理数据」维护） ----------------
+
+    @staticmethod
+    async def get_record(
+        mid: int | str,
+        workflow_id: int,
+        browser_id: int | str,
+        resource_type: str,
+        resource_id: Any,
+    ) -> WorkflowResourceRecord | None:
+        """按唯一键（mid + workflow + browser + type + resource_id）取单条记录。"""
+        async with DatabaseSessionManager.async_session() as session:
+            return (
+                await session.exec(
+                    select(WorkflowResourceRecord).where(
+                        WorkflowResourceRecord.mid == str(mid),
+                        WorkflowResourceRecord.workflow_id == int(workflow_id),
+                        WorkflowResourceRecord.browser_id == int(browser_id or 0),
+                        WorkflowResourceRecord.resource_type == resource_type,
+                        WorkflowResourceRecord.resource_id == _norm_id(resource_id),
+                    )
+                )
+            ).first()
+
+    @staticmethod
+    async def delete_records(
+        mid: int | str,
+        workflow_id: int,
+        *,
+        ids: Sequence[int] | None = None,
+        browser_id: int | None = None,
+        resource_type: str | None = None,
+        status: ResourceProcessStatus | None = None,
+        resource_id: str | None = None,
+        run_id: str | None = None,
+        dry_run: bool = False,
+    ) -> int:
+        """删除已处理资源记录（使这些资源重新参与取数），返回删除条数。
+
+        与 :meth:`reset` 的区别：`browser_id` 可省略（前端「已处理数据」是按工作流看
+        整体），并支持按记录主键 / 运行ID / 业务主键删除，用于清理误记数据。
+
+        安全约束（防止一次点错清空整个工作流的去重记录）：
+            - 除 mid + workflow_id 外，**必须**至少再给一个过滤条件；
+            - 支持 ``dry_run`` 只统计不删除，供前端二次确认。
+
+        Args:
+            ids: 记录主键（列表页勾选删除）。
+            run_id: 所属运行ID（清理「某一轮运行」写入的记录）。
+            resource_id: 业务主键，**精确匹配**（与列表页的模糊搜索语义不同）。
+        """
+        conditions = [
+            WorkflowResourceRecord.mid == str(mid),
+            WorkflowResourceRecord.workflow_id == int(workflow_id),
+        ]
+        if ids:
+            conditions.append(
+                WorkflowResourceRecord.id.in_(list(ids))  # type: ignore[attr-defined]
+            )
+        if browser_id is not None:
+            conditions.append(
+                WorkflowResourceRecord.browser_id == int(browser_id or 0)
+            )
+        if resource_type:
+            conditions.append(
+                WorkflowResourceRecord.resource_type == resource_type
+            )
+        if status is not None:
+            conditions.append(WorkflowResourceRecord.status == status)
+        if resource_id:
+            conditions.append(
+                WorkflowResourceRecord.resource_id == _norm_id(resource_id)
+            )
+        if run_id:
+            conditions.append(WorkflowResourceRecord.run_id == run_id)
+
+        if len(conditions) <= 2:
+            raise ValueError(
+                "缺少删除条件：除工作流外至少指定 ids / browser_id / resource_type / "
+                "status / resource_id / run_id 之一"
+            )
+
+        async with DatabaseSessionManager.async_session() as session:
+            if dry_run:
+                total = await session.scalar(
+                    sa.select(sa_func.count())
+                    .select_from(WorkflowResourceRecord)
+                    .where(*conditions)
+                )
+                return int(total or 0)
+            result = await session.execute(
+                sa_delete(WorkflowResourceRecord).where(*conditions)  # type: ignore[arg-type]
+            )
+            await session.commit()
+            return int(result.rowcount or 0)
 
     # ---------------- 重置 / 历史 ----------------
 

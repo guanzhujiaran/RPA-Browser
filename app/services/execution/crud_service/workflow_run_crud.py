@@ -10,13 +10,22 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List
 
-from sqlmodel import func, select
+from sqlmodel import col, func, select
 from sqlalchemy import update
 
 from app.models.database.workflow.models import (
     WorkflowRunRecord,
     WorkflowRunStatusEnum,
     WorkflowRunTriggerEnum,
+)
+from app.services.execution.run_events import (
+    WorkflowRunSummary,
+    publish_status_changed,
+)
+from app.services.execution.run_state_machine import (
+    ensure_initial_status,
+    ensure_transition,
+    normalize_status,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
 
@@ -55,13 +64,17 @@ class WorkflowRunCrudService:
         if isinstance(trigger_source, str):
             trigger_source = WorkflowRunTriggerEnum(trigger_source)
 
+        record_run_id = run_id or WorkflowRunCrudService.new_run_id()
         model = WorkflowRunRecord(
-            run_id=run_id or WorkflowRunCrudService.new_run_id(),
+            run_id=record_run_id,
             workflow_id=int(workflow_id),
             mid=str(mid),
             browser_id=int(browser_id) if browser_id is not None else 0,
             trigger_source=trigger_source,
-            status=WorkflowRunStatusEnum.RUNNING,
+            # 状态迁移统一由状态机校验（见 docs/工作流运行状态机计划书.md）
+            status=ensure_initial_status(
+                WorkflowRunStatusEnum.RUNNING, run_id=record_run_id
+            ),
             total=total,
             started_at=datetime.now(),
             resume_of=resume_of,
@@ -75,7 +88,178 @@ class WorkflowRunCrudService:
             session.add(model)
             await session.commit()
             await session.refresh(model)
-            return model
+        # 落库成功后再发事件（见 docs/工作流运行状态机计划书.md §7）
+        publish_status_changed(
+            model.run_id, WorkflowRunStatusEnum.RUNNING, reason="创建运行记录"
+        )
+        return model
+
+    @staticmethod
+    async def create_queued(
+        workflow_id: int,
+        mid: int | str,
+        browser_id: int | None,
+        trigger_source: WorkflowRunTriggerEnum | str,
+        run_id: str,
+    ) -> WorkflowRunRecord:
+        """创建一条 queued 状态记录（排队凭证）。
+
+        排队期间前端即可看到这次运行（``status=queued``），进程重启后
+        ``list_queued()`` 会把它重新入队，因此**必须落库**，不能只放内存。
+        """
+        if isinstance(trigger_source, str):
+            trigger_source = WorkflowRunTriggerEnum(trigger_source)
+
+        model = WorkflowRunRecord(
+            run_id=run_id,
+            workflow_id=int(workflow_id),
+            mid=str(mid),
+            browser_id=int(browser_id) if browser_id is not None else 0,
+            trigger_source=trigger_source,
+            status=ensure_initial_status(WorkflowRunStatusEnum.QUEUED, run_id=run_id),
+            total=0,
+            # 受理即写入 started_at：运行列表按它排序，排队项也要有稳定顺序
+            started_at=datetime.now(),
+        )
+        async with DatabaseSessionManager.async_session() as session:
+            session.add(model)
+            await session.commit()
+            await session.refresh(model)
+        publish_status_changed(model.run_id, WorkflowRunStatusEnum.QUEUED, reason="创建排队记录")
+        return model
+
+    @staticmethod
+    async def mark_running(
+        run_id: str,
+        *,
+        total: int,
+        resume_of: str | None = None,
+        resume_count: int = 0,
+        checkpoint_step: int = 0,
+        success_count: int = 0,
+        failed_count: int = 0,
+    ) -> WorkflowRunRecord | None:
+        """把排队中的记录转为 running（拿到执行权后调用）。
+
+        Returns:
+            更新后的记录；记录不存在或已不是 QUEUED（被取消 / 超时）时返回 None。
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(WorkflowRunRecord).where(WorkflowRunRecord.run_id == run_id)
+            )
+            model = result.first()
+            if model is None or model.status != WorkflowRunStatusEnum.QUEUED:
+                return None
+
+            model.status = ensure_transition(
+                model.status, WorkflowRunStatusEnum.RUNNING, run_id=run_id
+            )
+            model.total = total
+            model.started_at = datetime.now()
+            model.resume_of = resume_of
+            model.resume_count = resume_count
+            model.checkpoint_step = checkpoint_step
+            model.completed_steps = checkpoint_step
+            model.success_count = success_count
+            model.failed_count = failed_count
+            session.add(model)
+            await session.commit()
+            await session.refresh(model)
+        publish_status_changed(
+            run_id,
+            WorkflowRunStatusEnum.RUNNING,
+            from_status=WorkflowRunStatusEnum.QUEUED,
+            reason="取得执行权，开始运行",
+        )
+        return model
+
+    @staticmethod
+    async def list_queued() -> List[WorkflowRunRecord]:
+        """列出所有排队中的运行（按提交顺序，即主键升序）。"""
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(WorkflowRunRecord)
+                .where(WorkflowRunRecord.status == WorkflowRunStatusEnum.QUEUED)
+                .order_by(col(WorkflowRunRecord.id))
+            )
+            return list(result.all())
+
+    @staticmethod
+    async def finish_queued(
+        run_id: str,
+        *,
+        status: WorkflowRunStatusEnum,
+        error_message: str | None = None,
+    ) -> bool:
+        """把排队中的记录直接落终态（排队取消 / 超时）。
+
+        只对仍为 QUEUED 的记录生效，避免覆盖已经开始执行的运行。
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(WorkflowRunRecord).where(WorkflowRunRecord.run_id == run_id)
+            )
+            model = result.first()
+            if model is None or model.status != WorkflowRunStatusEnum.QUEUED:
+                return False
+
+            previous = model.status
+            model.status = ensure_transition(model.status, status, run_id=run_id)
+            model.error_message = error_message
+            model.finished_at = datetime.now()
+            session.add(model)
+            await session.commit()
+        publish_status_changed(
+            run_id,
+            status,
+            from_status=previous,
+            reason=error_message or "排队记录终止",
+        )
+        return True
+
+    @staticmethod
+    async def list_active_of_workflow(
+        workflow_id: int,
+        mid: int | str,
+        *,
+        exclude_run_id: str = "",
+    ) -> List[WorkflowRunRecord]:
+        """列出某工作流仍在进行中的运行（QUEUED / RUNNING）。
+
+        停止工作流时，除中断当前运行外，同工作流可能还有其它浏览器目标的运行
+        （多选浏览器 / 定时触发），它们若继续执行等于「停止没生效」。
+
+        Args:
+            exclude_run_id: 需要排除的运行ID（通常是本次已单独处理的运行）。
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(WorkflowRunRecord).where(
+                    WorkflowRunRecord.workflow_id == int(workflow_id),
+                    WorkflowRunRecord.mid == str(mid),
+                    WorkflowRunRecord.status.in_(
+                        [WorkflowRunStatusEnum.QUEUED, WorkflowRunStatusEnum.RUNNING]
+                    ),
+                )
+            )
+            return [
+                model
+                for model in result.all()
+                if model.run_id and model.run_id != exclude_run_id
+            ]
+
+    @staticmethod
+    async def get_queue_context(run_id: str) -> tuple[int, int] | None:
+        """取运行所属 (mid, browser_id)，供取消排队时定位队列键。"""
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(WorkflowRunRecord).where(WorkflowRunRecord.run_id == run_id)
+            )
+            model = result.first()
+            if model is None:
+                return None
+            return int(model.mid), int(model.browser_id)
 
     @staticmethod
     async def update_progress(
@@ -168,8 +352,13 @@ class WorkflowRunCrudService:
         *,
         resumable: bool = False,
         checkpoint_step: int = 0,
+        summary: WorkflowRunSummary | None = None,
     ) -> bool:
         """写入运行结束状态（CAS：仅当记录仍为 ``RUNNING`` 时命中）
+
+        Args:
+            summary: 运行结果摘要，随终态事件下发给订阅者（通知 / 计费），
+                见 ``docs/工作流运行状态机计划书.md`` §6.5。
 
         状态转移以「比较并交换」实现——``UPDATE ... WHERE run_id=? AND status='RUNNING'``，
         避免与兜底收口（``interrupt_stale_running``）并发时互相覆盖终态。
@@ -178,8 +367,9 @@ class WorkflowRunCrudService:
             True 表示本次成功把状态从 RUNNING 推进到终态；False 表示记录已终结或
             不存在（本次为幂等空操作）。
         """
-        if isinstance(status, str):
-            status = WorkflowRunStatusEnum(status)
+        status = normalize_status(status)
+        # 运行中只能迁到终态：非法目标在这里直接报错，不落 SQL
+        ensure_transition(WorkflowRunStatusEnum.RUNNING, status, run_id=run_id)
 
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
@@ -204,7 +394,17 @@ class WorkflowRunCrudService:
             await session.commit()
             # rowcount 不可得（部分驱动/封装不暴露）时按「命中」处理：终态由 WHERE
             # 子句保证唯一，返回值仅用于日志与短路，不影响正确性。
-            return bool(getattr(result, "rowcount", 1))
+            hit = bool(getattr(result, "rowcount", 1))
+        if hit:
+            # 只在真正推进到终态时发事件（幂等空操作不产生重复事件）
+            publish_status_changed(
+                run_id,
+                status,
+                from_status=WorkflowRunStatusEnum.RUNNING,
+                reason=error_message or "运行收口",
+                summary=summary,
+            )
+        return hit
 
     @staticmethod
     async def get_running_for_browser(
@@ -296,6 +496,11 @@ class WorkflowRunCrudService:
         settled = [r for r in stale if r.settled_seconds is not None]
         if settled:
             try:
+                # 批量迁移同样过状态机：RUNNING → INTERRUPTED 是唯一目标
+                ensure_transition(
+                    WorkflowRunStatusEnum.RUNNING,
+                    WorkflowRunStatusEnum.INTERRUPTED,
+                )
                 async with DatabaseSessionManager.async_session() as session:
                     settled_ids = [r.run_id for r in settled]
                     await session.exec(
@@ -322,6 +527,14 @@ class WorkflowRunCrudService:
                         )
                     await session.commit()
                     interrupted.extend(settled)
+                # 提交后再发事件（旁路：失败不影响收口）
+                for done in settled:
+                    publish_status_changed(
+                        done.run_id,
+                        WorkflowRunStatusEnum.INTERRUPTED,
+                        from_status=WorkflowRunStatusEnum.RUNNING,
+                        reason=reason,
+                    )
             except Exception as exc:  # noqa: BLE001 - 转最终兜底收口
                 logger.warning(
                     f"[WorkflowRun] 批量收口已结算运行失败，转最终兜底: {exc}"
@@ -391,7 +604,11 @@ class WorkflowRunCrudService:
                                 f"run={run.run_id}, {billing_exc}"
                             )
 
-                    current.status = WorkflowRunStatusEnum.INTERRUPTED
+                    current.status = ensure_transition(
+                        current.status,
+                        WorkflowRunStatusEnum.INTERRUPTED,
+                        run_id=run.run_id,
+                    )
                     current.error_message = (
                         f"{reason}（计费兜底失败: {billing_error}）"
                         if billing_error
@@ -409,6 +626,12 @@ class WorkflowRunCrudService:
                     # 触发 DetachedInstanceError（会话已退出）
                     await session.refresh(current)
                     interrupted.append(current)
+                publish_status_changed(
+                    current.run_id,
+                    WorkflowRunStatusEnum.INTERRUPTED,
+                    from_status=WorkflowRunStatusEnum.RUNNING,
+                    reason=reason,
+                )
             except Exception as exc:  # noqa: BLE001 - 取行/提交等基础设施异常
                 logger.warning(
                     f"[WorkflowRun] 逐条收口事务失败，改用兜底强制收口: "
@@ -439,6 +662,12 @@ class WorkflowRunCrudService:
         """
         from app.utils.time_util import now_local
 
+        # 兜底收口的迁移是固定的 RUNNING → INTERRUPTED，仍走状态机保持单一规则来源
+        ensure_transition(
+            WorkflowRunStatusEnum.RUNNING,
+            WorkflowRunStatusEnum.INTERRUPTED,
+            run_id=run_id,
+        )
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 update(WorkflowRunRecord)
@@ -456,7 +685,15 @@ class WorkflowRunCrudService:
                 )
             )
             await session.commit()
-            return bool(getattr(result, "rowcount", 1))
+            hit = bool(getattr(result, "rowcount", 1))
+        if hit:
+            publish_status_changed(
+                run_id,
+                WorkflowRunStatusEnum.INTERRUPTED,
+                from_status=WorkflowRunStatusEnum.RUNNING,
+                reason=reason,
+            )
+        return hit
 
     @staticmethod
     async def get_by_run_id(

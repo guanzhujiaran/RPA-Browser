@@ -34,6 +34,11 @@ from app.models.execution.action_param_models import (
     MarkResourceResultParams,
     NavigateParams,
     NewPageParams,
+    NotifyParams,
+    OpenPageParams,
+    ClosePageParams,
+    ParallelParams,
+    ParallelBranch,
     PickLineParams,
     PrintParams,
     RandomPickParams,
@@ -176,6 +181,12 @@ class PrintWorkflowStep(BaseWorkflowStep[PrintParams]):
     action_type: Literal[BuiltinActionType.PRINT] = BuiltinActionType.PRINT  # type: ignore[assignment]
 
 
+class NotifyWorkflowStep(BaseWorkflowStep[NotifyParams]):
+    """发送通知步骤"""
+
+    action_type: Literal[BuiltinActionType.NOTIFY] = BuiltinActionType.NOTIFY  # type: ignore[assignment]
+
+
 class RandomPickWorkflowStep(BaseWorkflowStep[RandomPickParams]):
     """随机取值步骤"""
 
@@ -224,6 +235,24 @@ class CompositeWorkflowStep(BaseWorkflowStep[CompositeParams]):
     action_type: Literal[BuiltinActionType.COMPOSITE] = BuiltinActionType.COMPOSITE  # type: ignore[assignment]
 
 
+class OpenPageWorkflowStep(BaseWorkflowStep[OpenPageParams]):
+    """按别名打开页面步骤"""
+
+    action_type: Literal[BuiltinActionType.OPEN_PAGE] = BuiltinActionType.OPEN_PAGE  # type: ignore[assignment]
+
+
+class ClosePageWorkflowStep(BaseWorkflowStep[ClosePageParams]):
+    """关闭指定别名页面步骤"""
+
+    action_type: Literal[BuiltinActionType.CLOSE_PAGE] = BuiltinActionType.CLOSE_PAGE  # type: ignore[assignment]
+
+
+class ParallelWorkflowStep(BaseWorkflowStep[ParallelParams]):
+    """并行分支步骤"""
+
+    action_type: Literal[BuiltinActionType.PARALLEL] = BuiltinActionType.PARALLEL  # type: ignore[assignment]
+
+
 def _ensure_action_type(v: Any) -> Any:
     """若 dict 缺少 action_type，从 action_id 自动填充，递归处理 children。"""
     if isinstance(v, dict):
@@ -238,6 +267,15 @@ def _ensure_action_type(v: Any) -> Any:
                 _ensure_action_type(c) if isinstance(c, dict) else c
                 for c in v["children"]
             ]
+        # 并行分支里的 steps 也要按 action_id 推导 action_type
+        params = v.get("params")
+        if isinstance(params, dict):
+            for branch in params.get("branches") or []:
+                if isinstance(branch, dict) and branch.get("steps"):
+                    branch["steps"] = [
+                        _ensure_action_type(c) if isinstance(c, dict) else c
+                        for c in branch["steps"]
+                    ]
     return v
 
 
@@ -307,9 +345,13 @@ WorkflowStep = (
     | PickLineWorkflowStep
     | BiliReserveWorkflowStep
     | PrintWorkflowStep
+    | NotifyWorkflowStep
     | LoopWorkflowStep
     | IfElseWorkflowStep
     | CompositeWorkflowStep
+    | OpenPageWorkflowStep
+    | ClosePageWorkflowStep
+    | ParallelWorkflowStep
 )
 
 # TypeAdapter 用于从 dict 反序列化
@@ -336,9 +378,13 @@ _WORKFLOW_STEP_CLASS_MAP: dict[BuiltinActionType, type[BaseWorkflowStep[Any]]] =
     BuiltinActionType.PICK_LINE: PickLineWorkflowStep,
     BuiltinActionType.BILI_RESERVE: BiliReserveWorkflowStep,
     BuiltinActionType.PRINT: PrintWorkflowStep,
+    BuiltinActionType.NOTIFY: NotifyWorkflowStep,
     BuiltinActionType.LOOP: LoopWorkflowStep,
     BuiltinActionType.IF_ELSE: IfElseWorkflowStep,
     BuiltinActionType.COMPOSITE: CompositeWorkflowStep,
+    BuiltinActionType.OPEN_PAGE: OpenPageWorkflowStep,
+    BuiltinActionType.CLOSE_PAGE: ClosePageWorkflowStep,
+    BuiltinActionType.PARALLEL: ParallelWorkflowStep,
 }
 
 
@@ -384,7 +430,14 @@ def create_workflow_step(
 # 参数模型中通过字符串前向引用 "WorkflowStep" 声明嵌套步骤字段
 # （LoopParams.loopBranch / IfElseParams.*Branch / CompositeParams.steps），
 # 其定义模块没有 WorkflowStep 符号，需在此显式注入命名空间完成重建。
-for _params_model in (LoopParams, IfElseParams, CompositeParams):
+# ParallelBranch 自身也通过字符串引用 WorkflowStep，必须一并注入命名空间
+for _params_model in (
+    LoopParams,
+    IfElseParams,
+    CompositeParams,
+    ParallelParams,
+    ParallelBranch,
+):
     _params_model.model_rebuild(_types_namespace={"WorkflowStep": WorkflowStep})
 
 __all__ = [
@@ -402,6 +455,9 @@ __all__ = [
     "LLMWorkflowStep",
     "LoopWorkflowStep",
     "MarkResourceResultWorkflowStep",
+    "OpenPageWorkflowStep",
+    "ClosePageWorkflowStep",
+    "ParallelWorkflowStep",
     "NavigateWorkflowStep",
     "NewPageWorkflowStep",
     "PickLineWorkflowStep",

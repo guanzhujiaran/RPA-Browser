@@ -11,11 +11,15 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 from typing import Any, ClassVar, Literal, Type
 
 from pydantic import Field, field_validator, model_validator
 from sqlmodel import SQLModel
+
+from bili_common.models.notify import NotifyLevelEnum
 
 from app.models.database.workflow.resource_record import ResourceProcessStatus
 from app.models.execution.condition_models import ConditionRule
@@ -63,6 +67,14 @@ class ActionLogOption(SQLModel):
     """
 
     enabled: bool = Field(default=False, description="是否采集该操作的执行日志")
+    debug: bool = Field(
+        default=False,
+        description=(
+            "调试模式（用户级开关，见调度外壳计划书 §9.8）：强制全量采集——"
+            "入参/结果/变量全记、成功也记、payload 不截断；"
+            "由 action_logger._normalize_debug 归一化，保留期与普通日志一致"
+        ),
+    )
     record_params: bool = Field(default=True, description="是否记录变量替换后的入参")
     record_result: bool = Field(default=True, description="是否记录执行返回结果")
     record_variables: bool = Field(default=False, description="是否记录变量池快照")
@@ -92,6 +104,16 @@ class BaseActionParams(SQLModel):
     log: ActionLogOption | None = Field(
         default=None,
         description="操作日志采集选项；为空时按 action 自有配置或服务端兜底决定",
+    )
+
+    #: 页面别名：指定该步骤在哪个页面执行（open_page 创建）；空 = 默认页 main
+    page: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "页面别名：指定该步骤在哪个页面执行（由 open_page 创建）；"
+            "为空时使用默认页面 main"
+        ),
     )
 
     input_variables: ClassVar[list[VariableSpec]] = []
@@ -186,9 +208,42 @@ class NewPageParams(BaseActionParams):
 
 
 class ScrollParams(SelectorActionParams):
-    """滚动操作参数 - 对应 locator.scroll_into_view_if_needed()"""
+    """滚动操作参数
 
-    pass
+    三种用法（见 ``docs/内置滚动动作参数扩展计划书.md``）：
+
+    - **滚轮模式**：提供 ``x`` / ``y``（任一非 None）→ 分 ``steps`` 次调用
+      ``page.mouse.wheel``，与站点无关，会正常触发懒加载 / IntersectionObserver；
+    - **元素模式**：提供 ``selector`` → ``locator.scroll_into_view_if_needed()``；
+    - **兜底模式**：都不提供 → ``window.scrollTo(0, 0)``（滚回顶部，历史行为）。
+
+    滚轮模式优先于 selector。
+    """
+
+    x: int | None = Field(
+        default=None,
+        ge=-100000,
+        le=100000,
+        description="水平滚动像素（正数向右）；提供 x/y 时走滚轮相对滚动，忽略 selector",
+    )
+    y: int | None = Field(
+        default=None,
+        ge=-100000,
+        le=100000,
+        description="垂直滚动像素（正数向下）；提供 x/y 时走滚轮相对滚动，忽略 selector",
+    )
+    steps: int = Field(
+        default=1,
+        ge=1,
+        le=20,
+        description="分几步滚完（1=一次到位）；多步+间隔更接近真人，逐步触发懒加载",
+    )
+    interval_ms: int = Field(
+        default=200,
+        ge=0,
+        le=5000,
+        description="滚轮模式下每步之间的间隔（毫秒）",
+    )
 
 
 class WaitParams(SelectorActionParams):
@@ -339,6 +394,36 @@ class ScreenshotParams(SelectorActionParams):
     ]
 
 
+class LLMModelConfig(SQLModel):
+    """LLM 备用模型配置（主模型失败时按顺序回退，各自独立额度池）"""
+
+    model: str = Field(max_length=200, description="模型名称")
+    server_url: str = Field(
+        max_length=2048,
+        description="API 服务器地址",
+        # 供前端做通用 URL 校验（前端按 format 判断，不依赖具体字段名）
+        json_schema_extra={"format": "uri"},
+    )
+    api_key: str = Field(max_length=500, description="API 密钥")
+
+
+def _parse_model_configs(text: str) -> list[dict]:
+    """把 JSON 数组文本解析成模型配置列表（兼容模板替换后的 Python repr）"""
+    raw = text.strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        try:
+            parsed = ast.literal_eval(raw)
+        except (ValueError, SyntaxError) as exc:
+            raise ValueError(f"不是合法的 JSON / 列表文本: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("必须是数组")
+    return parsed
+
+
 class LLMParams(BaseActionParams):
     """LLM 对话操作参数"""
 
@@ -359,6 +444,47 @@ class LLMParams(BaseActionParams):
         default=None,
         description="JSON Schema 定义，提供后将启用 LangChain structured output，返回符合 schema 的结构化数据",
     )
+    # 备用模型（LangChain with_fallbacks）：主模型抛异常时按顺序回退
+    fallbacks: list[LLMModelConfig] = Field(
+        default_factory=list,
+        description=(
+            "备用模型列表（主模型失败时按顺序回退，见 docs/LLM模型回退计划书.md）；"
+            "留空=只用主模型，行为与旧版一致"
+        ),
+    )
+
+    #: 工作流变量注入的备用模型池（JSON 数组文本，通常写成 "{{llm_fallbacks}}"）
+    #: 为什么不复用 `fallbacks`：模板字符串会先经过类型校验（详情接口、序列化路径），
+    #: 列表字段拿到 "{{var}}" 会校验失败，前端也拿不到数组去渲染。
+    fallbacks_json: str | None = Field(
+        default=None,
+        max_length=20000,
+        description=(
+            "备用模型池（JSON 数组文本，如 \"[{\\\"model\\\":...}]\"）；"
+            "通常填 {{llm_fallbacks}} 由工作流变量注入，与 fallbacks 二选一（fallbacks 优先）"
+        ),
+    )
+
+    @field_validator("fallbacks", mode="before")
+    @classmethod
+    def _coerce_fallbacks(cls, value: Any):
+        """兼容数组 / JSON 文本 / 模板替换后的 Python repr
+
+        注意：动作 JSON 里若把 `fallbacks` 直接写成 `"{{llm_fallbacks}}"`，在校验阶段
+        拿到的只是未解析的模板串——这里返回空列表（不报错），实际池子交给
+        `fallbacks_json` 在运行时解析，避免详情接口/步骤反序列化直接失败。
+        """
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or "{{" in text:
+                return []
+            try:
+                return _parse_model_configs(text)
+            except ValueError:
+                return []
+        return value
 
     output_variables: ClassVar[list[VariableSpec]] = [
         VariableSpec(name="content", description="回复文本内容"),
@@ -639,6 +765,39 @@ class PrintParams(BaseActionParams):
     )
 
 
+class NotifyParams(BaseActionParams):
+    """发送通知参数（站内系统通知 + 外部推送，见 docs/通知动作与运行告警计划书.md）
+
+    动作只做「发通知」这一通用机制，业务判断（什么时候该发）留给动作 JSON 的 if_else。
+    """
+
+    title: str = Field(
+        max_length=200, description="通知标题（支持 {{变量}}，带运行唯一标识可避免被幂等吞掉）"
+    )
+    content: str = Field(
+        default="", max_length=4000, description="通知正文（支持 {{变量}}）"
+    )
+    level: NotifyLevelEnum = Field(
+        default=NotifyLevelEnum.NORMAL,
+        description="通知级别：1 普通 / 2 重要 / 3 紧急（决定外部推送主题 [i]/[w]/[f]）",
+    )
+    jump_url: str | None = Field(
+        default=None, max_length=1000, description="站内通知的跳转地址（前端路由）"
+    )
+    channel: Literal["both", "inbox", "push"] = Field(
+        default="both", description="投递通道：both=两者都发 / inbox=仅站内 / push=仅外部推送"
+    )
+    dedupe_key: str | None = Field(
+        default=None,
+        max_length=200,
+        description="去重键（同一 mid + key 在去重窗口内只发一次）；留空用 title",
+    )
+    once_per_day: bool = Field(
+        default=True,
+        description="按服务时区自然日去重：同一天内相同 key 只发一次，避免循环里刷屏",
+    )
+
+
 class ShuffleListParams(BaseActionParams):
     """打乱列表操作参数 - 原地随机打乱变量池中的一个列表
 
@@ -789,7 +948,24 @@ class LoopParams(BaseActionParams):
 
         映射源路径支持点分隔嵌套访问，如 "loop_item.user.profile.id"。
         也支持引用循环索引 "loop_index"。
+
+    循环名称 (name)：
+        可选的展示名，用于运行消息 / 进度条里标识「这个循环在干什么」。
+        支持 {{变量}} 模板且**每轮按当前作用域解析**（此时 loop_item /
+        loop_index 已就绪），如 "处理 {{loop_item.title}}" 在第 3 轮展示为
+        「处理 某某的动态」；变量缺失时保留字面量，不影响循环执行。
+        留空时回落 action_id（"loop"），与历史行为一致。
     """
+
+    # ── 循环名称（可选，展示用；支持 {{变量}} 模板逐轮解析）──
+    name: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "循环显示名称（支持 {{变量}} 模板，如 '处理 {{loop_item.title}}'），"
+            "用于运行消息 / 进度中标识本循环在做什么；留空回落 'loop'"
+        ),
+    )
 
     # ── 循环来源配置 ──
     loop_source: Literal["fixed_count", "variable", "expression", "json_list"] = Field(
@@ -922,6 +1098,81 @@ class CompositeParams(BaseActionParams):
     )
 
 
+# ─────────────── 多页面 / 并行（见 docs/多页面并行执行计划书.md） ───────────────
+
+
+class OpenPageParams(BaseActionParams):
+    """按别名打开新页面。
+
+    页面数达到 ``browser_max_pages_per_context`` 时**等待空位**（不会关闭任何
+    已有页面），等待超时返回可读业务错误。
+    """
+
+    name: str = Field(
+        max_length=64,
+        description="页面别名（后续步骤用 params.page 引用），同一运行内唯一",
+    )
+    url: str | None = Field(
+        default=None, max_length=2048, description="新页面初始 URL（可选）"
+    )
+    wait_until: WaitUntilEnum = Field(
+        default=WaitUntilEnum.LOAD, description="导航等待条件（仅在提供 url 时生效）"
+    )
+    nav_timeout: float = Field(
+        default=30000, ge=1000, le=300000, description="导航超时（毫秒）"
+    )
+    acquire_timeout: float = Field(
+        default=60,
+        ge=0,
+        le=3600,
+        description="页面已满时等待空位的最长时间（秒）",
+    )
+
+    output_variables: ClassVar[list[VariableSpec]] = [
+        VariableSpec(name="page_alias", description="新页面别名"),
+    ]
+
+
+class ClosePageParams(BaseActionParams):
+    """关闭指定别名的页面并释放容量（唤醒等待中的 open_page）。"""
+
+    name: str = Field(max_length=64, description="要关闭的页面别名（不能是 main）")
+
+
+class ParallelBranch(SQLModel):
+    """并行分支定义。"""
+
+    name: str = Field(
+        max_length=64, description="分支名（日志前缀与变量命名空间），同层唯一"
+    )
+    page: str | None = Field(
+        default=None,
+        max_length=64,
+        description="该分支默认页面别名；分支内步骤未显式指定 page 时使用",
+    )
+    steps: list["WorkflowStep"] = Field(
+        default_factory=list, description="分支内顺序执行的步骤"
+    )
+    export: list[str] = Field(
+        default_factory=list,
+        description="分支结束后要导出到父作用域的变量名（避免并发写冲突）",
+    )
+
+
+class ParallelParams(BaseActionParams):
+    """多个分支并行执行（每个分支可绑定独立页面）。"""
+
+    branches: list[ParallelBranch] = Field(
+        default_factory=list, description="并行分支列表"
+    )
+    on_branch_error: Literal["continue", "abort"] = Field(
+        default="continue",
+        description="单个分支失败时的策略：continue=其它分支继续跑完；abort=取消其余分支",
+    )
+
+
+
+
 AllActionParams = (
     ClickParams
     | InputParams
@@ -942,10 +1193,17 @@ AllActionParams = (
     | SortListParams
     | PickLineParams
     | BiliReserveParams
+    | NotifyParams
     | LoopParams
     | IfElseParams
     | CompositeParams
+    | OpenPageParams
+    | ClosePageParams
+    | ParallelParams
 )
+
+# endregion
+
 
 # endregion
 
@@ -973,8 +1231,12 @@ BUILTIN_ACTION_PARAMS_MAP: dict[str, Type[AllActionParams]] = {
     "shuffle_list": ShuffleListParams,
     "sort_list": SortListParams,
     "pick_line": PickLineParams,
+    "notify": NotifyParams,
     "bili_reserve": BiliReserveParams,
     "loop": LoopParams,
     "if_else": IfElseParams,
     "composite": CompositeParams,
+    "open_page": OpenPageParams,
+    "close_page": ClosePageParams,
+    "parallel": ParallelParams,
 }

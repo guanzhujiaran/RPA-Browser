@@ -195,9 +195,27 @@ class BrowserContext(PlaywrightBrowserContext):
 
         pages: List[Page] = []
         for _page in self._browser.pages:
-            page = Page(_page, self, self.faker)
-            pages.append(page)
+            pages.append(self._wrap_page(_page))
         return pages
+
+    def _wrap_page(self, _page) -> Page:
+        """按底层 impl 缓存 Page 包装：同一页面始终返回同一对象。
+
+        没有稳定身份时，``all_pages[i]`` 与 ``new_page()`` 的返回值无法比较，
+        上层（如页面别名注册表判断「页面是否被工作流占用」）会全部失效。
+        """
+        cache = getattr(self, "_page_wrapper_cache", None)
+        if cache is None:
+            cache = {}
+            self._page_wrapper_cache = cache
+
+        impl = getattr(_page, "_impl_obj", None)
+        key = id(impl) if impl is not None else id(_page)
+        wrapper = cache.get(key)
+        if wrapper is None or getattr(wrapper, "_page", None) is not _page:
+            wrapper = Page(_page, self, self.faker)
+            cache[key] = wrapper
+        return wrapper
 
     async def cache_responses(self):
         async def route_interceptor(route: PlaywrightRoute):
@@ -250,6 +268,15 @@ class BrowserContext(PlaywrightBrowserContext):
         # Close first page it's the first empty about:blank page of the Persistent Context
         if not self.persistent_page.is_closed():
             await self.persistent_page.close()
+
+        # 登记进包装缓存，保证后续 pages / all_pages 拿到的是同一对象
+        impl = getattr(getattr(page, "_page", None), "_impl_obj", None)
+        if impl is not None:
+            cache = getattr(self, "_page_wrapper_cache", None)
+            if cache is None:
+                cache = {}
+                self._page_wrapper_cache = cache
+            cache[id(impl)] = page
 
         return page
 

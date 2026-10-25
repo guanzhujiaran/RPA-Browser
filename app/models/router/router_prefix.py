@@ -105,6 +105,20 @@ class BrowserControlRouterPath(StrEnumAutoDoc):
     workflows_runs_resume = "/workflows/runs/resume"
     # 已处理资源记录（去重数据源，含记录主键 id 与业务主键 resource_id）
     workflows_resources_list = "/workflows/resources/list"
+    # 手工新增/更新一条已处理资源记录（修正去重数据）
+    workflows_resources_create = "/workflows/resources/create"
+    # 删除已处理资源记录（单条 / 勾选批量 / 按运行清理，支持 dry_run）
+    workflows_resources_delete = "/workflows/resources/delete"
+
+    # === MCP 调试（供 fastapi-mcp 生成工具，tag=BROWSER_CONTROL_MCP_DEBUG）===
+    debug_actions_list = "/debug/actions/list"
+    debug_actions_get = "/debug/actions/get"
+    debug_actions_validate = "/debug/actions/validate"
+    debug_actions_execute = "/debug/actions/execute"
+    debug_actions_save = "/debug/actions/save"
+    debug_workflows_run_and_wait = "/debug/workflows/run-and-wait"
+    debug_runs_logs = "/debug/runs/logs"
+    debug_action_logs_recent = "/debug/action-logs/recent"
 
     # === 操作日志查询 ===
     action_logs_list = "/action-logs/list"

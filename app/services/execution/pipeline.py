@@ -45,6 +45,7 @@ from app.models.execution.condition_models import (
     evaluate_rule,
 )
 from app.services.execution.actions.base import ActionResult
+from app.services.execution.actions.safe_eval import safe_evaluate_condition
 from app.services.execution.scope import Scope
 
 
@@ -88,6 +89,14 @@ class StepNode(ABC):
         except ConditionEvaluateError as e:
             logger.warning(f"步骤条件评估失败: {e}")
             return False
+
+    def display_name(self, scope: Scope) -> str:
+        """步骤显示名（运行消息 / 进度条 / 运行记录用）。
+
+        默认用 action_id；支持名称模板的步骤（目前是 LoopStep）覆写为
+        按当前作用域解析后的名称，让「这一步在干什么」可读。
+        """
+        return self.action_id
 
     @abstractmethod
     async def execute(
@@ -143,6 +152,7 @@ class LoopStep(StepNode):
         loop_item_var:   循环项作用域名（默认 "loop_item"）
         loop_index_var:  循环索引作用域名（默认 "loop_index"）
         param_mapping:   参数映射 {目标参数名: 源字段路径}
+        name:            循环显示名（可选，支持 {{变量}} 模板，逐轮解析）
     """
 
     body: Pipeline = field(default_factory=lambda: Pipeline([]))
@@ -154,11 +164,37 @@ class LoopStep(StepNode):
     loop_item_var: str = "loop_item"
     loop_index_var: str = "loop_index"
     param_mapping: dict[str, str] | None = None
+    #: 循环显示名（`LoopParams.name`）：支持 {{变量}} 模板，每轮按当前作用域解析，
+    #: 让运行消息 / 进度条能说明「这个循环在干什么」；为空回落 action_id。
+    name: str = ""
     # 每轮开始前评估：break=跳出整个循环，continue=跳过本轮循环体
     break_condition: ConditionRule | None = None
     continue_condition: ConditionRule | None = None
     # 每轮结束后的固定间隔（秒，0=不等待）。成功/失败都等，语义类似 finally。
     iteration_wait_seconds: float = 0.0
+
+    def _resolve_loop_name(self, scope: Scope) -> str:
+        """解析循环显示名（支持 {{var}} 模板，如 '处理 {{loop_item.title}}'）。
+
+        仅用于展示（运行消息 / 进度 / 运行记录），因此**非严格**解析：
+        变量缺失或点路径中断时保留 `{{var}}` 字面量，绝不让名称解析失败
+        影响循环执行。解析结果为空或仍含未解析模板时回落 action_id，
+        避免把 `{{xxx}}` 当名称展示给用户。
+        """
+        if not self.name:
+            return self.action_id
+        try:
+            resolved = scope.resolve_text(self.name).strip()
+        except Exception as exc:  # noqa: BLE001 - 展示名解析失败不影响执行
+            logger.warning(f"循环名称解析失败，回落 action_id: {exc}")
+            return self.action_id
+        if not resolved or "{{" in resolved:
+            return self.action_id
+        return resolved
+
+    def display_name(self, scope: Scope) -> str:
+        """顶层步骤的显示名：解析后的循环名称（无名称时仍是 action_id）。"""
+        return self._resolve_loop_name(scope)
 
     def _eval_condition(self, rule: ConditionRule | None, scope: Scope) -> bool:
         """安全评估 break/continue 条件（异常视为不命中，不打断循环）。"""
@@ -244,7 +280,8 @@ class LoopStep(StepNode):
             return
         await reporter.loop_iteration(
             action_id=self.action_id,
-            name=self.action_id,
+            # 循环显示名（含 {{变量}} 模板时按本轮作用域解析，此时 loop_item 已就绪）
+            name=self._resolve_loop_name(scope),
             index=index + 1,
             total=total,
             depth=scope.loop_nesting,
@@ -285,11 +322,46 @@ class LoopStep(StepNode):
         # 例外：`tolerated=True` 的失败已被 `on_error=continue` 显式忽略（动作自己允许失败，
         # 如「取文本没命中」），不参与循环结论，否则外层会把它当成致命失败。
         failed = next((r for r in results if not r.success and not r.tolerated), None)
+        # 被容忍的失败不改变结论，但**必须留下可读记录**：此前它们在这个出口被彻底丢弃，
+        # 循环只报 success=True / error=None，用户只看到「循环成功但什么都没做」，
+        # 完全看不出哪一步失败、失败原因是什么（见 docs/通知动作与运行告警计划书.md）。
+        tolerated_failures = [r for r in results if not r.success and r.tolerated]
+        first_tolerated = tolerated_failures[0] if tolerated_failures else None
+        data: dict[str, Any] = {
+            # iterations = 实际轮次（此前误用循环体内步骤结果条数，3 轮 × 4 步会报成 12）
+            "iterations": rounds,
+            "steps": len(results),
+            "failed_steps": len(tolerated_failures),
+        }
+        if first_tolerated is not None:
+            data["first_error"] = first_tolerated.error or "未知错误"
+            # 失败集中在哪一步：循环体里出错的动作名 + 出错轮次
+            data["first_failed_action"] = str(first_tolerated.action_id or "")
+        if not resolved_items and self.loop_items_var:
+            # 数据源解析不出列表（变量缺失 / 类型不对）时，循环会「0 轮静默成功」，
+            # 是「点赞转发评论都没执行」最隐蔽的来源，必须显式告警。
+            data["warning"] = (
+                f"循环数据源 {self.loop_items_var} 未解析出列表，本轮 0 次迭代"
+            )
+            logger.warning(
+                f"[LoopStep] {self.action_id}: {data['warning']}"
+            )
+        if failed is not None:
+            error_text = failed.error
+        elif first_tolerated is not None:
+            # 容忍 ≠ 无声：结论仍是成功（on_error=continue 的显式约定），但循环自身
+            # 必须带上可读的失败摘要，否则前端「错误」列、运行记录 error 字段、
+            # 操作日志全是一片空白，用户只能看到「循环成功但什么都没做」。
+            error_text = (
+                f"{len(tolerated_failures)} 个动作失败已按 on_error=continue 跳过；"
+                f"首个错误: {first_tolerated.error or '未知错误'}"
+            )
+        else:
+            error_text = None
         return ActionResult(
             success=failed is None,
-            error=failed.error if failed else None,
-            # iterations = 实际轮次（此前误用循环体内步骤结果条数，3 轮 × 4 步会报成 12）
-            data={"iterations": rounds, "steps": len(results)},
+            error=error_text,
+            data=data,
             action_id=self.action_id,
             action_name="loop",
         )
@@ -346,8 +418,6 @@ class LoopStep(StepNode):
     async def _loop_by_while(
         self, scope: Scope, executor: ActionExecutor
     ) -> tuple[list[ActionResult], int]:
-        from app.services.execution.actions.safe_eval import safe_evaluate_condition
-
         results = []
         rounds = 0
         i = 0
@@ -374,8 +444,6 @@ class LoopStep(StepNode):
     async def _loop_by_until(
         self, scope: Scope, executor: ActionExecutor
     ) -> tuple[list[ActionResult], int]:
-        from app.services.execution.actions.safe_eval import safe_evaluate_condition
-
         results = []
         rounds = 0
         i = 0
@@ -521,6 +589,12 @@ class LoopStep(StepNode):
             logger.warning(f"循环迭代失败但继续: {last_result.error}")
             # 循环级 continue 同样属于「显式容忍」：不计入整次运行的失败结论
             last_result.tolerated = True
+            # 补登运行告警：循环体内那一步的失败在 `body_step_finished` 里上报时
+            # 还没被标记 tolerated（标记发生在这里），不补登的话「容错样本」永远是空的，
+            # 结束通知里根本看不到这些失败（见 docs/通知动作与运行告警计划书.md）。
+            record = getattr(scope.progress, "record_tolerated", None)
+            if callable(record):
+                record(last_result, last_result.error)
             return True
 
         if self.on_error == OnErrorEnum.RETRY and self.retry > 0:
@@ -561,10 +635,6 @@ class IfElseStep(StepNode):
     async def execute(self, scope: Scope, executor: ActionExecutor) -> ActionResult:
         try:
             if self.expression:
-                from app.services.execution.actions.safe_eval import (
-                    safe_evaluate_condition,
-                )
-
                 take_true = safe_evaluate_condition(
                     self.expression, scope.snapshot()
                 )
@@ -585,7 +655,17 @@ class IfElseStep(StepNode):
                 success=True, action_id=self.action_id, action_name="if_else"
             )
 
-        results = await selected.execute(scope, executor)
+        # 分支体必须上报运行消息（无论是否在循环里）：否则「if_else → 分支内的
+        # 点击/输入/发送」这些真正干活的动作一条日志都不会出现，失败也无从定位
+        # （只看到 if_else 成功/失败，看不到里面到底哪一步挂了）。
+        # nested_body=True 只发消息、不占用循环的「第几条/共几条」进度，也不计入
+        # 顶层 completed_steps（分支体是一个顶层步骤，不能重复计数）。
+        results = await selected.execute(
+            scope,
+            executor,
+            body_of_loop=True,
+            nested_body=True,
+        )
         branch_failed = results and not results[-1].success
 
         if branch_failed:
@@ -625,7 +705,13 @@ class IfElseStep(StepNode):
             )
             return ActionResult(
                 success=True,
-                data={"branch": branch_name, "results": results},
+                # 容忍不等于抹掉：把被忽略的错误带进返回值，运行消息的「返回内容」
+                # 里仍能看到分支为什么失败（否则只显示一个 if_else 成功）。
+                data={
+                    "branch": branch_name,
+                    "results": results,
+                    "tolerated_error": last_result.error,
+                },
                 action_id=self.action_id,
                 action_name="if_else",
             )
@@ -681,6 +767,7 @@ class Pipeline:
         *,
         top_level: bool = False,
         body_of_loop: bool = False,
+        nested_body: bool = False,
     ) -> list[ActionResult]:
         """执行步骤序列。
 
@@ -690,6 +777,10 @@ class Pipeline:
             body_of_loop: 是否为循环的循环体（**任意嵌套层**）。为 True 时把本轮内的
                 动作上报到「循环内动作」维度（第二条进度条，只有最外层生效）
                 并发运行消息（每层都发），不计入顶层步骤。
+            nested_body: 是否为「嵌套管道」（if_else 的分支体，循环内 / 顶层都算）。
+                为 True 时只发运行消息、不占用第二条进度条（层级 +1，进度上报器会
+                跳过非最外层），让分支里失败的动作也能在运行日志里看到，
+                避免「页面明明没点下去，日志里却什么都查不到」。
         """
         results: list[ActionResult] = []
         reporter = scope.progress if top_level else None
@@ -697,7 +788,8 @@ class Pipeline:
             scope.progress if body_of_loop and scope.progress is not None else None
         )
         # 本循环体所在层级：顶层步骤为 0，最外层循环体为 1，再内一层为 2……
-        body_depth = scope.loop_nesting
+        # 嵌套分支体再 +1：既能在消息里按层缩进，又不会覆盖「第几条/共几条」进度。
+        body_depth = scope.loop_nesting + (1 if nested_body else 0)
         body_total = len(self.steps)
 
         for index, step in enumerate(self.steps):
@@ -720,7 +812,11 @@ class Pipeline:
 
                 logger.info(f"▶ 执行步骤: {step.action_id}")
                 if reporter is not None:
-                    await reporter.step_started(index, step.action_id)
+                    # 显示名：循环等带名称模板的步骤按当前作用域解析（如「遍历动态列表」），
+                    # 让「开始/完成步骤」与进度条说的是人话，而不是裸 action_id
+                    await reporter.step_started(
+                        index, step.action_id, step.display_name(scope)
+                    )
                     step_started = True
                 if body_reporter is not None:
                     # 循环体内动作开始：进度（仅最外层）+ 一条「循环内」运行消息（每层都发）
@@ -735,7 +831,9 @@ class Pipeline:
                 outcome_result = result
                 results.append(result)
                 outcome_success = result.success
-                step_error = None if result.success else result.error
+                # 成功也可能带 error（如循环里有被 tolerate 的失败）：把文案一并上报，
+                # 让运行消息 / 运行记录能显示「成功但降级」的事实，而不是彻底沉默。
+                step_error = result.error or None
 
 
                 if result.success:
@@ -780,9 +878,14 @@ class Pipeline:
 
             except Exception as e:
                 logger.error(f"步骤异常: {step.action_id} - {e}")
+                # outcome_success / step_error 必须一并置位：finally 里的上报是
+                # 「成功/失败 + 原因」的唯一来源，漏了就会把真实异常（如模板变量缺失）
+                # 报成「未知错误」，循环里更是看不出到底是哪一步、为什么挂。
+                outcome_success = False
+                step_error = str(e) or type(e).__name__
                 outcome_result = ActionResult(
                     success=False,
-                    error=str(e),
+                    error=step_error,
                     execution_time=0,
                     action_id=step.action_id,
                     action_name=step.action_id,
@@ -867,6 +970,7 @@ class PipelineBuilder:
                     PipelineBuilder._get_param(s, "loop_source") or "fixed_count"
                 )
                 loop_items_var = PipelineBuilder._get_param(s, "loop_items_var")
+                loop_name = PipelineBuilder._get_param(s, "name") or ""
                 loop_item_var = (
                     PipelineBuilder._get_param(s, "loop_item_var") or "loop_item"
                 )
@@ -874,7 +978,11 @@ class PipelineBuilder:
                     PipelineBuilder._get_param(s, "loop_index_var") or "loop_index"
                 )
                 param_mapping = PipelineBuilder._get_param(s, "param_mapping")
-                # 循环默认「单条失败继续下一条」：批量处理里一条失败不应中断整批。
+                # 循环默认与其它容器保持一致：**stop**（失败即中断）。
+                # 这里曾经硬编码兜底为 continue（"单条失败继续下一条"），但那个默认值
+                # 不体现在动作 JSON 里，作者根本看不见，结果是「循环一路成功、什么都没做、
+                # 也没有 error」——排查时最容易被误判成"跑通了"。批量容错必须显式写
+                # `"on_error": "continue"` 表态（内置动作通用性规范：业务差异落在 JSON）。
                 # 注意模型字段有默认值 stop，必须看「用户是否显式设置」
                 # （model_fields_set），否则永远拿到默认 stop。
                 explicit_on_error = (
@@ -882,7 +990,7 @@ class PipelineBuilder:
                     if "on_error" in getattr(s, "model_fields_set", set())
                     else None
                 )
-                on_error = OnErrorEnum(explicit_on_error or "continue")
+                on_error = OnErrorEnum(explicit_on_error or "stop")
                 on_error_raw = PipelineBuilder._get_attr(s, "on_error_branch")
                 on_error_branch = (
                     PipelineBuilder.build(on_error_raw) if on_error_raw else None
@@ -928,6 +1036,7 @@ class PipelineBuilder:
                         loop_items_var=loop_items_var
                         if loop_source != "fixed_count"
                         else None,
+                        name=str(loop_name),
                         loop_item_var=loop_item_var,
                         loop_index_var=loop_index_var,
                         param_mapping=param_mapping,

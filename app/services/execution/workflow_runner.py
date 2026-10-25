@@ -41,9 +41,10 @@ from app.services.execution.workflow.guards import (
     reap_zombie_runs,
 )
 from app.services.execution.workflow.launcher import (
-    _finalize_run_if_needed,
     _on_run_task_done,
+    finalize_run_after_task,
     launch_workflow_run,
+    requeue_pending_runs,
     resume_interrupted_runs,
     resume_run_record,
 )
@@ -72,7 +73,8 @@ __all__ = [
     "run_workflow",
     "launch_workflow_run",
     "_on_run_task_done",
-    "_finalize_run_if_needed",
+    "finalize_run_after_task",
     "resume_run_record",
     "resume_interrupted_runs",
+    "requeue_pending_runs",
 ]

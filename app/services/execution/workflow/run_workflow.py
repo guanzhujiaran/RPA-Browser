@@ -22,6 +22,7 @@ from typing import Any
 from loguru import logger
 from sqlmodel import select
 
+from app.config import settings
 from app.models.database.workflow.models import (
     UserWorkflow,
     WorkflowRunRecord,
@@ -29,14 +30,17 @@ from app.models.database.workflow.models import (
     WorkflowRunTriggerEnum,
 )
 from app.models.execution.request_params import WorkflowExecutionRequest
-from app.models.runtime.workflow_progress import WorkflowRunProgressData
-from app.services.execution.cancellation import cancellation_registry
-from app.services.execution.crud_service import (
-    workflow_crud_svr,
-    workflow_run_crud_svr,
+from app.models.runtime.workflow_progress import (
+    LoopRunSummary,
+    WorkflowRunProgressData,
+    render_loop_summaries,
 )
+from app.services.execution.cancellation import cancellation_registry
+from app.services.execution.crud_service import workflow_run_crud_svr
+from app.services.execution.run_events import WorkflowRunSummary
 from app.services.execution.run_tasks import workflow_run_tasks
 from app.services.RPA_browser.session.live_service import live_service
+from app.services.RPA_browser.session.page_registry import page_registry
 from app.services.membership.membership_service import MembershipService
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.services.execution.engine import ExecutionEngine
@@ -53,6 +57,33 @@ from app.services.execution.workflow.precheck import (
     _resolve_target_browser_id,
 )
 from app.services.execution.workflow_progress import WorkflowRunProgressReporter
+
+
+def _build_tolerated_breaker_message(
+    *,
+    success_count: int,
+    total: int,
+    tolerated_count: int,
+    threshold: int,
+    loop_summaries: list[LoopRunSummary],
+    samples: list[str],
+) -> str:
+    """容错熔断的失败原因文案（步骤级 + 循环级全量上下文，见计划书 §D4）。
+
+    熔断的主场景是批量循环容错——顶层可能只有 1 个步骤，只写「N 次失败被跳过」
+    用户看不出整体干成了多少，因此带上顶层步骤成败与循环聚合。
+    措辞是「次」不是「步」：`tolerated_count` 含循环体内失败，与只数顶层步骤的
+    `success_count/total` 不同口径，写「步」会自相矛盾。
+    """
+    loop_part = render_loop_summaries(loop_summaries)
+    if loop_part:
+        loop_part = f"；{loop_part}"
+    hint = f"；示例: {'；'.join(samples[:2])}" if samples else ""
+    return (
+        f"步骤成功 {success_count}/{total}，"
+        f"{tolerated_count} 次失败被容错跳过（熔断阈值 {threshold}）"
+        f"{loop_part}，判定为失败{hint}"
+    )
 
 
 async def _precheck(
@@ -132,25 +163,34 @@ async def _finalize_precheck_failure(
     """前置校验失败的统一落库 + 通知 + 摘要返回"""
     mid = int(workflow.mid)
     target = browser_id if browser_id is not None else workflow.browser_id
-    run = await workflow_run_crud_svr.create_running(
-        workflow_id=workflow.workflow_id,
-        mid=mid,
-        browser_id=target if target is not None else "",
-        trigger_source=trigger_source,
-        total=0,
-        run_id=run_id,
+    existing = (
+        await workflow_run_crud_svr.get_by_run_id(run_id) if run_id else None
     )
-    await workflow_run_crud_svr.finish(
-        run_id=run.run_id,
-        status=WorkflowRunStatusEnum.FAILED,
-        error_message=str(exc),
-        duration_ms=(time.time() - started) * 1000,
-    )
-    await workflow_crud_svr.update_run_state(
-        id=workflow.id,
-        status=WorkflowRunStatusEnum.FAILED.value,
-        last_run_at=datetime.now(),
-    )
+    if existing is not None and existing.status == WorkflowRunStatusEnum.QUEUED:
+        # 排队记录已存在：直接落失败终态，不能重复插入同一 run_id
+        await workflow_run_crud_svr.finish_queued(
+            run_id,
+            status=WorkflowRunStatusEnum.FAILED,
+            error_message=str(exc),
+        )
+        run = existing
+    else:
+        run = await workflow_run_crud_svr.create_running(
+            workflow_id=workflow.workflow_id,
+            mid=mid,
+            browser_id=target if target is not None else "",
+            trigger_source=trigger_source,
+            total=0,
+            run_id=run_id,
+        )
+        await workflow_run_crud_svr.finish(
+            run_id=run.run_id,
+            status=WorkflowRunStatusEnum.FAILED,
+            error_message=str(exc),
+            duration_ms=(time.time() - started) * 1000,
+        )
+    # 工作流卡片快照（last_run_status / last_run_at）由终态事件订阅者刷新
+    # （见 docs/工作流运行状态机计划书.md §7），这里不再直接写，避免两处口径。
     # 配置类失败同样要通知（受 notify_on_end 开关约束），避免定时任务静默失效
     if getattr(workflow, "notify_on_end", True):
         notified = await _notify_run(
@@ -190,19 +230,46 @@ async def _open_run(
     """创建运行记录（running）+ 进度上报器（SSE 推送 + 断点检查点）"""
     inherited_success = int(resume_from.success_count or 0) if resume_from else 0
     inherited_failed = int(resume_from.failed_count or 0) if resume_from else 0
-    run = await workflow_run_crud_svr.create_running(
-        workflow_id=workflow.workflow_id,
-        mid=int(workflow.mid),
-        browser_id=target_browser_id,
-        trigger_source=trigger_source,
-        total=len(steps),
-        run_id=run_id,
-        resume_of=resume_from.run_id if resume_from else None,
-        resume_count=(int(resume_from.resume_count or 0) + 1) if resume_from else 0,
-        checkpoint_step=resume_step,
-        success_count=inherited_success,
-        failed_count=inherited_failed,
-    )
+    queued = None
+    if run_id is not None:
+        queued = await workflow_run_crud_svr.get_by_run_id(run_id)
+    if queued is not None and queued.status == WorkflowRunStatusEnum.CANCELLED:
+        # 停止工作流会把排队记录直接置 CANCELLED：绝不能在这里新建 RUNNING 记录
+        # 把已取消的运行「复活」（见 docs/工作流停止计划书.md §3.3）
+        raise WorkflowRunnerError(f"运行已被取消: run={run_id}")
+    if queued is not None and queued.status == WorkflowRunStatusEnum.QUEUED:
+        # 排队记录已存在：直接激活为 RUNNING（保持 run_id 与前端看到的一致）
+        run = await workflow_run_crud_svr.mark_running(
+            str(run_id),
+            total=len(steps),
+            resume_of=resume_from.run_id if resume_from else None,
+            resume_count=(int(resume_from.resume_count or 0) + 1)
+            if resume_from
+            else 0,
+            checkpoint_step=resume_step,
+            success_count=inherited_success,
+            failed_count=inherited_failed,
+        )
+        if run is None:
+            raise WorkflowRunnerError(
+                f"排队记录已失效（可能被取消或超时）: run={run_id}"
+            )
+    else:
+        run = await workflow_run_crud_svr.create_running(
+            workflow_id=workflow.workflow_id,
+            mid=int(workflow.mid),
+            browser_id=target_browser_id,
+            trigger_source=trigger_source,
+            total=len(steps),
+            run_id=run_id,
+            resume_of=resume_from.run_id if resume_from else None,
+            resume_count=(int(resume_from.resume_count or 0) + 1)
+            if resume_from
+            else 0,
+            checkpoint_step=resume_step,
+            success_count=inherited_success,
+            failed_count=inherited_failed,
+        )
     # 运行批次ID 与 步骤日志批次ID 共用，便于下钻
     progress_data = WorkflowRunProgressData(
         run_id=run.run_id,
@@ -270,7 +337,24 @@ async def run_workflow(
             int(resume_from.checkpoint_step or resume_from.completed_steps or 0),
         )
 
-    # ---------- 前置校验 ----------
+    # ---------- 目标浏览器（排队需要队列键，提前解析） ----------
+    try:
+        target_browser_id = await _resolve_target_browser_id(workflow, browser_id)
+    except WorkflowRunnerError as exc:
+        return await _finalize_precheck_failure(
+            workflow,
+            exc=exc,
+            browser_id=browser_id,
+            run_id=run_id,
+            started=started,
+            trigger_source=trigger_source,
+        )
+
+    # 同一浏览器上多个工作流**并行**执行（见 docs/多页面并行执行计划书.md §3），
+    # 不再等待前序运行；页面资源由 open_page 的容量等待负责。
+    run_id = run_id or workflow_run_crud_svr.new_run_id()
+
+    # ---------- 前置校验（排队已保证同浏览器串行） ----------
     try:
         target_browser_id, steps, run_variables = await _precheck(
             workflow,
@@ -290,16 +374,21 @@ async def run_workflow(
             trigger_source=trigger_source,
         )
 
-    # ---------- 创建运行记录（running） + 进度上报器 ----------
-    run, progress_data, progress_reporter = await _open_run(
-        workflow,
-        trigger_source=trigger_source,
-        target_browser_id=target_browser_id,
-        steps=steps,
-        resume_step=resume_step,
-        resume_from=resume_from,
-        run_id=run_id,
-    )
+    # ---------- 创建/激活运行记录 + 进度上报器 ----------
+    try:
+        run, progress_data, progress_reporter = await _open_run(
+            workflow,
+            trigger_source=trigger_source,
+            target_browser_id=target_browser_id,
+            steps=steps,
+            resume_step=resume_step,
+            resume_from=resume_from,
+            run_id=run_id,
+        )
+    except Exception:
+        # 记录激活失败：task 即将结束，执行权由 done_callback 释放（避免永久占用）
+        raise
+
     # 运行批次ID 与 步骤日志批次ID 共用，便于下钻
     execution_id = run.run_id
 
@@ -324,26 +413,27 @@ async def run_workflow(
         entry = await live_service.get_or_create_browser_session_entry(
             mid=mid, browser_id=target_browser_id, headless=False
         )
-        # 同浏览器并发防护：一个浏览器会话同一时间只允许一个工作流执行
-        # （避免 workflow_run_id 相互覆盖导致双份计费/统计、熔断误伤，见计划书 §8.6）
-        # 存活真值取自 task 注册表：会话标记若指向一个本实例已无存活 task 的运行，
-        # 即为崩溃残留，清除后放行（否则该浏览器被永久拦截，见 §8.6 僵尸问题）。
-        if entry.workflow_run_id:
-            if workflow_run_tasks.is_alive(entry.workflow_run_id):
-                raise WorkflowRunnerError(
-                    f"该浏览器已有工作流在执行（run={entry.workflow_run_id}），"
-                    "请调整调度避免同浏览器并发"
-                )
+        # 同一浏览器上**允许多个工作流并行**（见 docs/多页面并行执行计划书.md §3），
+        # 因此这里不再拒绝「已有运行」，只清理会话标记里已无存活 task 的僵尸项，
+        # 避免崩溃残留让调试类接口被永久拒绝。
+        stale_runs = [
+            rid
+            for rid in list(entry.active_workflow_runs)
+            if not workflow_run_tasks.is_alive(rid)
+        ]
+        for stale in stale_runs:
             logger.warning(
                 f"[WorkflowRunner] 清除残留的会话执行标记: "
-                f"browser={target_browser_id}, stale_run={entry.workflow_run_id}"
+                f"browser={target_browser_id}, stale_run={stale}"
             )
-            live_service.end_workflow_run(mid, target_browser_id)
-        # 进入执行期互斥：运行期间禁止调试类接口操作同一会话（直播为只读拉流，不受影响）
+            live_service.end_workflow_run(mid, target_browser_id, stale)
+        # 进入执行期互斥：有工作流运行时禁止调试类接口操作该会话（直播只读，不受影响）
         live_service.begin_workflow_run(mid, target_browser_id, run.run_id)
         # 计费计时起点：会话成功获取后（见计划书 §5 计费接入点）
         billed_started = time.time()
         page = await entry.browser_session.get_current_page()
+        # 默认页面绑定为别名 main：步骤可用 params.page 引用其它页
+        page_registry.bind_main((mid, target_browser_id), page)
 
         req = WorkflowExecutionRequest(
             mid=mid,
@@ -363,6 +453,8 @@ async def run_workflow(
         # None = 未设置，听从动作级 → 项目兜底。开启后本次运行的每个步骤（含
         # 复合/循环/分支嵌套子步骤）都落一条 ActionLogRecord（source=workflow），
         # 可在运行记录中按 execution_id（= run_id）下钻。
+        # log_debug（调试模式，用户级开关）优先于总闸：开启后强制全量采集
+        # （入参/结果/变量全记、成功也记、payload 不截断，见调度外壳计划书 §9.8）。
         results = await ExecutionEngine().execute_steps(
             req,
             steps=steps,
@@ -370,6 +462,7 @@ async def run_workflow(
             browser_id=target_browser_id,
             page=page,
             workflow_log_enabled=workflow.log_enabled,
+            workflow_log_debug=workflow.log_debug,
             progress=progress_reporter,
             skip_steps=resume_step,
         )
@@ -382,6 +475,9 @@ async def run_workflow(
                 "execution_time": r.execution_time,
                 "action_id": r.action_id,
                 "action_name": r.action_name,
+                # tolerated 必须一起带出来：下面统计「致命失败」时要靠它区分
+                # on_error=continue 显式容忍的失败，缺了会把容错失败当致命失败。
+                "tolerated": bool(r.tolerated),
             }
             for r in results
         ]
@@ -403,14 +499,39 @@ async def run_workflow(
             f"[WorkflowRunner] 工作流执行被强制中断: {workflow.workflow_id}, run={run.run_id}"
         )
     finally:
-        # 退出执行期互斥：无论成功 / 失败 / 异常 / 取消都必须解除，避免会话被永久锁在「执行中」
-        live_service.end_workflow_run(mid, target_browser_id)
-        # 运行结束且无人占用时回收浏览器会话，及时释放资源。
-        # exclude_run_id 必须传：此处尚未 finish()，本次运行记录仍是 RUNNING，
-        # 不排除自身会被自己的记录挡住，表现为「运行已结束但浏览器一直开着」。
-        await _release_browser_after_run(
-            mid, target_browser_id, exclude_run_id=run.run_id
-        )
+        # 退出执行期互斥：无论成功 / 失败 / 异常 / 取消都必须解除本次标记
+        # （集合语义，其它并行运行不受影响）
+        # ⚠️ 必须容错：这里抛异常会让整个 finally 中断，跳过下面的终态落库，
+        # 运行记录永久停在 RUNNING，最终被兜底收口成「未正常收口 → 中断」。
+        try:
+            live_service.end_workflow_run(mid, target_browser_id, run.run_id)
+        except Exception as exc:  # noqa: BLE001 - 清理失败不影响收口
+            logger.warning(
+                f"[WorkflowRunner] 解除执行期标记失败: run={run.run_id}, {exc}"
+            )
+        # 执行权在 task 结束回调里释放（此处本次运行尚未写终态，提前释放会让下一位
+        # 的并发检查误判为「同浏览器已有工作流在执行」）；这里只判断是否还要保留浏览器
+        # 运行结束：只关闭本次运行自己打开的页面（main 与用户手动开的页保留），
+        # 浏览器交给空闲生命周期回收（见多页面计划书 §3）
+        try:
+            closed_aliases = await page_registry.close_owned(
+                (mid, target_browser_id), run.run_id
+            )
+            if closed_aliases:
+                logger.info(
+                    f"[WorkflowRunner] 运行结束已关闭页面: {closed_aliases}"
+                )
+        except Exception as exc:  # noqa: BLE001 - 清理失败不影响收口
+            logger.warning(f"[WorkflowRunner] 清理运行页面失败: {exc}")
+
+        if settings.workflow_release_browser_after_run:
+            # 多工作流并行：默认不回收浏览器（空闲生命周期处理）；显式开启时按下面逻辑回收
+            if True:
+                # exclude_run_id 必须传：此处尚未 finish()，本次运行记录仍是 RUNNING，
+                # 不排除自身会被自己的记录挡住，表现为「运行已结束但浏览器一直开着」。
+                await _release_browser_after_run(
+                    mid, target_browser_id, exclude_run_id=run.run_id
+                )
 
     # 协作式 / 强制停止：执行期间若收到「手动停止」请求，本次运行收口为 CANCELLED。
     # - 正常收口（SUCCESS）：步骤边界检测到停止标记 → 转 CANCELLED；
@@ -427,18 +548,9 @@ async def run_workflow(
     # 执行已结束，及时清理取消标记，避免键残留
     cancellation_registry.clear(execution_id)
 
-    # ---------- 时长结算与使用统计（仅定时任务计费；手动只记统计，见计划书 §3.1） ----------
-    if billed_started is not None:
-        await MembershipService.settle_workflow_run(
-            mid=mid,
-            browser_id=target_browser_id,
-            run_seconds=time.time() - billed_started,
-            workflow_id=workflow.workflow_id,
-            run_id=run.run_id,
-            is_scheduled=trigger_source == WorkflowRunTriggerEnum.SCHEDULE,
-        )
-
     # ---------- 汇总落库 ----------
+    # 时长结算与使用统计已改由终态事件订阅者执行（见 docs/工作流运行状态机计划书.md §6.5），
+    # 这里只把「可计费时长」随摘要带进事件；billed_started 为空表示没拿到会话、不计费。
     # 恢复运行时 results_data 只包含本次实际执行的步骤，计数需叠加旧运行的累计值
     total = len(steps)
     new_success = len([r for r in results_data if r.get("success")])
@@ -459,28 +571,75 @@ async def run_workflow(
         status = WorkflowRunStatusEnum.FAILED
         error_message = error_message or "执行引擎未返回任何步骤结果"
 
-    summary = {"total": total, "success": success_count, "failed": failed_count}
     if status == WorkflowRunStatusEnum.SUCCESS and new_fatal > 0:
         status = WorkflowRunStatusEnum.FAILED
         error_message = error_message or f"存在 {new_fatal} 个失败步骤"
 
+    # 容错熔断：`on_error=continue` 允许失败，但不允许「几乎全失败还报成功」。
+    # 达阈值即降级为 failed（原因写清容忍条数与示例），避免用户被假绿灯误导。
+    tolerated_threshold = int(settings.workflow_tolerated_fail_failed_threshold or 0)
+    tolerated_count = progress_reporter.tolerated_count
+    if (
+        status == WorkflowRunStatusEnum.SUCCESS
+        and tolerated_threshold > 0
+        and tolerated_count >= tolerated_threshold
+    ):
+        status = WorkflowRunStatusEnum.FAILED
+        error_message = _build_tolerated_breaker_message(
+            success_count=success_count,
+            total=total,
+            tolerated_count=tolerated_count,
+            threshold=tolerated_threshold,
+            loop_summaries=progress_reporter.loop_summaries,
+            samples=progress_reporter.tolerated_samples,
+        )
+        logger.warning(
+            f"[WorkflowRunner] 容错失败超过阈值，运行降级为失败: "
+            f"run={run.run_id}, tolerated={tolerated_count}, "
+            f"threshold={tolerated_threshold}"
+        )
+
     duration_ms = (time.time() - started) * 1000
+    # 结果摘要随终态事件下发：通知（步骤数 / 耗时 / 原因）与计费（可计费时长）都用它
+    run_summary = WorkflowRunSummary(
+        total=total,
+        success_count=success_count,
+        failed_count=failed_count,
+        duration_ms=duration_ms,
+        billable_seconds=(
+            max(time.time() - billed_started, 0.0) if billed_started is not None else 0.0
+        ),
+        error_message=error_message,
+        tolerated_count=progress_reporter.tolerated_count,
+        tolerated_samples=progress_reporter.tolerated_samples,
+        loop_summaries=progress_reporter.loop_summaries,
+    )
     # 断点：仅「非用户主动、非执行失败」的中断才可恢复（服务重启 / 关停取消 / 崩溃）
     checkpoint_step = min(progress_reporter.data.completed_steps, total)
     resumable = (
         status == WorkflowRunStatusEnum.INTERRUPTED and 0 < checkpoint_step < total
     )
-    await workflow_run_crud_svr.finish(
-        run_id=run.run_id,
-        status=status,
-        success_count=success_count,
-        failed_count=failed_count,
-        execution_id=execution_id,
-        error_message=error_message,
-        duration_ms=duration_ms,
-        resumable=resumable,
-        checkpoint_step=checkpoint_step,
-    )
+    # 终态落库失败（如状态机拒绝迁移、事件发布异常）**不能**让协程直接抛出：
+    # 一抛就会跳过下面的 flush，前端永远收不到终态帧（表现为「点了停止，界面一直转」），
+    # 并且 task 异常退出会让 done_callback 走异常收尾路径。这里只告警，继续收口。
+    try:
+        await workflow_run_crud_svr.finish(
+            run_id=run.run_id,
+            status=status,
+            success_count=success_count,
+            failed_count=failed_count,
+            execution_id=execution_id,
+            error_message=error_message,
+            duration_ms=duration_ms,
+            resumable=resumable,
+            checkpoint_step=checkpoint_step,
+            summary=run_summary,
+        )
+    except Exception as exc:  # noqa: BLE001 - 落库失败只告警，终态帧仍要推
+        logger.error(
+            f"[WorkflowRunner] 运行终态落库失败: run={run.run_id}, "
+            f"status={status}, {type(exc).__name__}: {exc}"
+        )
     # 推送终态帧（finish 已落库，此处只更新内存快照并广播）
     progress_data.success_count = success_count
     progress_data.failed_count = failed_count
@@ -490,32 +649,8 @@ async def run_workflow(
         error_message=error_message,
         duration_ms=duration_ms,
     )
-    await workflow_crud_svr.update_run_state(
-        id=workflow.id,
-        status=status.value,
-        last_run_at=datetime.now(),
-    )
-
-    # ---------- 结束通知（成功/停止/失败，受 notify_on_end 开关约束） ----------
-    if getattr(workflow, "notify_on_end", True):
-        if status == WorkflowRunStatusEnum.SUCCESS:
-            notify_phase = "success"
-        elif status == WorkflowRunStatusEnum.CANCELLED:
-            notify_phase = "cancelled"
-        else:
-            notify_phase = "failure"
-        notified = await _notify_run(
-            workflow=workflow,
-            mid=mid,
-            browser_id=target_browser_id,
-            run_id=run.run_id,
-            phase=notify_phase,
-            summary=summary,
-            error_message=error_message,
-            duration_ms=duration_ms,
-        )
-        if notified:
-            await workflow_run_crud_svr.mark_notified(run.run_id)
+    # 工作流卡片快照、结束通知、时长结算均由终态事件订阅者执行
+    # （见 docs/工作流运行状态机计划书.md §6.2 / §6.5）
 
     logger.info(
         f"[WorkflowRunner] 运行结束: workflow={workflow.workflow_id}, "

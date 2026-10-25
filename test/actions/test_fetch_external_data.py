@@ -9,6 +9,13 @@ RPC 协议已简化：
 - 请求端直接发送强类型参数模型的 JSON（含 mid 字段）作为消息体
 - 服务端返回 CommonResponseModel 序列化后的 dict: {"code": 0, "msg": "success", "data": ...}
 
+结果数据（ActionResult.data）为结构化的 FetchExternalDataResult：
+- RPC 模式：服务端 data 放在 .data，code 放在 .status_code
+- HTTP 模式：解析后的响应体放在 .data，并附带 status/headers/url 等元信息
+- output_vars 按该模型字段**顺序**取值（status_code → data → …），
+  抽奖动作 JSON 的 `['xxx_code', 'xxx_data']` 即依赖这一口径
+- 失败错误由基类统一出口补「[动作名(动作ID)]」前缀
+
 使用 unittest.mock 模拟 rpc_client.call 与 httpx.AsyncClient。
 """
 
@@ -39,8 +46,15 @@ def _make_httpx_response(
     json_data: Any | None = None,
     text: str = "",
     headers: dict[str, str] | None = None,
+    url: str = "https://api.example.com/data",
 ) -> httpx.Response:
-    """构造一个 httpx.Response 对象用于测试"""
+    """构造一个 httpx.Response 对象用于测试
+
+    必须带上 `request`：动作结果模型会读取 `response.url`（最终 URL），
+    裸构造的 Response 没有 request 时访问 `.url` 会抛
+    "The request instance has not been set"。
+    """
+    request = httpx.Request("GET", url)
     if json_data is not None:
         import json as _json
 
@@ -48,10 +62,14 @@ def _make_httpx_response(
         hdrs = {"content-type": "application/json"}
         if headers:
             hdrs.update(headers)
-        return httpx.Response(status_code=status_code, content=content, headers=hdrs)
+        return httpx.Response(
+            status_code=status_code, content=content, headers=hdrs, request=request
+        )
     content = text.encode("utf-8") if text else b""
     hdrs = headers or {"content-type": "text/plain"}
-    return httpx.Response(status_code=status_code, content=content, headers=hdrs)
+    return httpx.Response(
+        status_code=status_code, content=content, headers=hdrs, request=request
+    )
 
 
 def _make_rpc_success_response(data: Any) -> dict[str, Any]:
@@ -94,9 +112,10 @@ class TestFetchExternalDataRpcMode:
             result = await action.execute()
 
         assert result.success
-        assert isinstance(result.data, dict)
-        assert result.data["ok"] is True
-        assert result.data["items"] == [1, 2, 3]
+        # 结果数据是结构化的 FetchExternalDataResult，RPC 响应体在 .data 字段
+        payload_result = result.data
+        assert payload_result.data == {"ok": True, "items": [1, 2, 3]}
+        assert payload_result.is_json is True
         # 验证 RPC 调用参数：第一个是 routing_key，第二个是 payload dict
         mock_call.assert_awaited_once()
         call_args = mock_call.call_args.args
@@ -128,7 +147,8 @@ class TestFetchExternalDataRpcMode:
             result = await action.execute()
 
         assert not result.success
-        assert result.error == "内部 HTTP 请求超时"
+        # 失败错误由基类统一出口补「动作名(动作ID)」上下文前缀（_annotate_error_context）
+        assert result.error == "[获取外部数据(fetch_external_data)] 内部 HTTP 请求超时"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_rpc_exception(self):
@@ -155,7 +175,12 @@ class TestFetchExternalDataRpcMode:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_rpc_output_vars_merge(self):
-        """测试 RPC 模式 output_vars 变量合并 - data 直接是响应 data 字段"""
+        """测试 RPC 模式 output_vars 变量合并 - 按结果模型字段顺序取值
+
+        `output_vars` 按 `FetchExternalDataResult.model_dump()` 的字段**顺序**取值，
+        即第 1 个变量 = status_code、第 2 个 = data。抽奖动作 JSON 正是依赖这一口径：
+        `output_vars: ['others_code', 'others_data']` → (响应码, 响应数据)。
+        """
         rpc_resp = _make_rpc_success_response({"token": "abc123"})
         action = FetchExternalDataAction.new_action(
             mid=1,
@@ -165,7 +190,7 @@ class TestFetchExternalDataRpcMode:
                 method=HttpMethodEnum.GET,
                 method_name=RpcMethodName.GET_RESERVE_LOTTERY,
             ),
-            output_vars=["resp_data"],
+            output_vars=["resp_code", "resp_data"],
         )
 
         with patch(
@@ -175,9 +200,11 @@ class TestFetchExternalDataRpcMode:
             result = await action.execute()
 
         assert result.success
-        assert "resp_data" in result.variables
-        assert result.variables["resp_data"] == "abc123"
-        assert result.variables["last_output"] == {"token": "abc123"}
+        assert "resp_code" in result.variables
+        assert result.variables["resp_code"] == 0
+        assert result.variables["resp_data"] == {"token": "abc123"}
+        # last_output 始终是完整的结果模型
+        assert result.variables["last_output"].data == {"token": "abc123"}
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_rpc_typed_params_forwarded_per_method(self):
@@ -230,8 +257,12 @@ class TestFetchExternalDataRpcMode:
         assert "mid" not in payload
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_rpc_typed_params_none_field_uses_model_defaults(self):
-        """测试 RPC 模式下对应方法字段为 None 时，使用模型默认值构造参数"""
+    async def test_rpc_typed_params_none_field_sends_empty_body(self):
+        """测试 RPC 模式下对应方法字段为 None 时发送空 body
+
+        契约（2026-10 起）：RPA 端**不注入任何默认值**，未配置参数字段时发送
+        空 body `{}`，由 FastapiApp 端 handler 的 Pydantic 模型决定默认值。
+        """
         rpc_resp = _make_rpc_success_response({"ok": True})
         # 未配置 get_reserve_lottery_params（字段为 None）
         action = FetchExternalDataAction.new_action(
@@ -251,9 +282,8 @@ class TestFetchExternalDataRpcMode:
 
         assert result.success
         payload = mock_call.call_args.args[1]
-        # 应使用 GetReserveLotteryRpcParams 默认值，None 字段被排除
-        assert payload["page_num"] == 1
-        assert payload["page_size"] == 10
+        # 空 body：默认值由服务端模型决定，RPA 端不代为填充
+        assert payload == {}
         # HTTP 专属字段不应出现
         assert "headers" not in payload
         assert "body_json" not in payload
@@ -290,7 +320,9 @@ class TestFetchExternalDataRpcMode:
 
         assert result.success
         payload = mock_call.call_args.args[1]
-        # StrEnum 应被序列化为原始字符串值（如 'pubTime' 而非 enum 对象）
+        # StrEnum 应被序列化为原始字符串值（如 'pubTime' 而非 enum 对象）；
+        # exclude_none=True 只剔除未设置的 None 字段，模型默认值（时间快捷筛选）
+        # 会一并下发，由服务端模型校验
         assert payload == {
             "page_num": 1,
             "page_size": 50,
@@ -299,6 +331,8 @@ class TestFetchExternalDataRpcMode:
             "sort_order": "desc",
             "pub_time_start": 1700000000,
             "pub_time_end": 1800000000,
+            "created_at_preset": "30d",
+            "pub_time_preset": "7d",
         }
         assert isinstance(payload["page_num"], int)
         assert isinstance(payload["is_lot"], bool)
@@ -350,7 +384,10 @@ class TestFetchExternalDataHttpMode:
             result = await action.execute()
 
         assert result.success
-        assert result.data == {"ok": True}
+        # 结果数据是 FetchExternalDataResult，解析后的响应体在 .data
+        assert result.data.data == {"ok": True}
+        assert result.data.is_json is True
+        assert result.data.status_code == 200
         # RPC 不应被调用
         mock_rpc_call.assert_not_awaited()
         # HTTP 应被调用
@@ -387,9 +424,8 @@ class TestFetchExternalDataHttpMode:
             result = await action.execute()
 
         assert result.success
-        assert isinstance(result.data, dict)
-        assert result.data["ok"] is True
-        assert result.data["items"] == [1, 2, 3]
+        assert result.data.data == {"ok": True, "items": [1, 2, 3]}
+        assert result.data.url == "https://api.example.com/data"
         # 验证 httpx 请求参数
         mock_client.request.assert_awaited_once()
         call_args = mock_client.request.call_args
@@ -430,7 +466,8 @@ class TestFetchExternalDataHttpMode:
             result = await action.execute()
 
         assert result.success
-        assert result.data == {"id": 100}
+        assert result.data.data == {"id": 100}
+        assert result.data.status_code == 201
         kwargs = mock_client.request.call_args.kwargs
         assert kwargs["json"] == {"name": "test", "value": 42}
 
@@ -536,8 +573,8 @@ class TestFetchExternalDataHttpMode:
             result = await action.execute()
 
         assert result.success
-        assert isinstance(result.data, str)
-        assert result.data == "Hello, World!"
+        assert result.data.data == "Hello, World!"
+        assert result.data.is_json is False
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_http_request_error(self):
@@ -571,7 +608,7 @@ class TestFetchExternalDataHttpMode:
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_http_output_vars_merge(self):
-        """测试 HTTP 模式 output_vars 变量合并"""
+        """测试 HTTP 模式 output_vars 变量合并 - 按结果模型字段顺序取值"""
         action = FetchExternalDataAction.new_action(
             mid=1,
             page=None,
@@ -580,7 +617,7 @@ class TestFetchExternalDataHttpMode:
                 method=HttpMethodEnum.GET,
                 url="https://api.example.com/data",
             ),
-            output_vars=["resp_data"],
+            output_vars=["resp_code", "resp_data"],
         )
 
         mock_response = _make_httpx_response(
@@ -600,9 +637,10 @@ class TestFetchExternalDataHttpMode:
             result = await action.execute()
 
         assert result.success
-        assert "resp_data" in result.variables
-        assert result.variables["resp_data"] == "xyz"
-        assert result.variables["last_output"] == {"token": "xyz"}
+        assert "resp_code" in result.variables
+        assert result.variables["resp_code"] == 200
+        assert result.variables["resp_data"] == {"token": "xyz"}
+        assert result.variables["last_output"].data == {"token": "xyz"}
 
 
 # ========== 参数校验测试 ==========

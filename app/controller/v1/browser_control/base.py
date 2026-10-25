@@ -8,6 +8,7 @@ from app.models.router.all_routes import (
     browser_control_webrtc_router,
     browser_control_execution_router,
     browser_control_action_log_router,
+    browser_control_mcp_debug_router,
 )
 from app.utils.controller.router_path import gen_api_router
 
@@ -45,3 +46,8 @@ def new_execution_router(dependencies=None) -> APIRouter:
 def new_action_log_router(dependencies=None) -> APIRouter:
     """操作日志管理路由"""
     return gen_api_router(browser_control_action_log_router, dependencies)
+
+
+def new_mcp_debug_router(dependencies=None) -> APIRouter:
+    """MCP 调试路由（tag=MCP 调试，供 fastapi-mcp 自动生成工具）"""
+    return gen_api_router(browser_control_mcp_debug_router, dependencies)
