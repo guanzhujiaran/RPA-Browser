@@ -115,14 +115,20 @@ service 层 `app/services/execution/debug_service.py` 直接调用既有服务
 
 | 工具（operation_id） | 路由 | 作用 |
 | --- | --- | --- |
-| `rpa_list_actions` | `POST /debug/actions/list` | 按名称模糊搜索动作，拿 `action_id` |
-| `rpa_get_action` | `POST /debug/actions/get` | 导出动作全量定义（含 `steps`），DB 真值基线 |
-| `rpa_validate_steps` | `POST /debug/actions/validate` | 静态校验（`validate_python` + `PipelineBuilder.build`），不联网 |
-| `rpa_execute_action` | `POST /debug/actions/execute` | 执行已保存动作或内联 `steps`，默认校验拦截 |
-| `rpa_save_action` | `POST /debug/actions/save` | 落库（同名 upsert）+ 回读比对 |
-| `rpa_run_workflow` | `POST /debug/workflows/run-and-wait` | 运行工作流并等待终态（服务端轮询） |
-| `rpa_get_run_logs` | `POST /debug/runs/logs` | 步骤链路 + 失败定位（`steps[i]` 候选） |
-| `rpa_get_action_logs` | `POST /debug/action-logs/recent` | 某动作最近 N 条日志 |
+| `rpa_debug_actions_list` | `POST /debug/actions/list` | 按名称模糊搜索动作，拿 `action_id` |
+| `rpa_debug_action_get` | `POST /debug/actions/get` | 导出动作全量定义（含 `steps`），DB 真值基线 |
+| `rpa_debug_steps_validate` | `POST /debug/actions/validate` | 静态校验（`validate_python` + `PipelineBuilder.build`），不联网 |
+| `rpa_debug_action_execute` | `POST /debug/actions/execute` | 执行已保存动作或内联 `steps`，默认校验拦截 |
+| `rpa_debug_action_save` | `POST /debug/actions/save` | 落库（同名 upsert）+ 回读比对 |
+| `rpa_debug_workflow_run` | `POST /debug/workflows/run-and-wait` | 运行工作流并等待终态（服务端轮询） |
+| `rpa_debug_run_logs` | `POST /debug/runs/logs` | 步骤链路 + 失败定位（`steps[i]` 候选） |
+| `rpa_debug_action_logs` | `POST /debug/action-logs/recent` | 某动作最近 N 条日志 |
+
+> **命名约定**：调试专用工具统一 `rpa_debug_*` 前缀，与「前端同款接口镜像」的工具
+> （`rpa_actions_execute`、`rpa_workflows_execute_inline`、`rpa_session_create` 等）区分开，
+> 避免调用方在近义工具间选错。路径压不出资源段、或与调试工具近义的，在
+> `app/mcp/exposure.py` 的 `TOOL_NAME_OVERRIDES` 里显式改名 —— 只改 MCP 工具名，
+> 不动 `operationId`、路由与前端 SDK。
 
 ### 4. 调试闭环的语义约定
 
@@ -144,7 +150,7 @@ service 层 `app/services/execution/debug_service.py` 直接调用既有服务
 文件读写不放服务端（MCP 客户端侧本来就有文件工具）：
 
 - AI 用自身的文件工具读写 `action_*.json`；
-- 把 `steps` 传给 `rpa_validate_steps` 校验，把完整内容传给 `rpa_save_action` 落库。
+- 把 `steps` 传给 `rpa_debug_steps_validate` 校验，把完整内容传给 `rpa_debug_action_save` 落库。
 
 ### 5.1 实测踩到的两个硬约束（实现必须遵守）
 
@@ -218,10 +224,10 @@ MCP 工具调用会挂住，按 operation_id 排除；排除清单在 `--selftes
 
 **失败 traceback 入库**：`engine.py` 的 `except Exception` 分支把
 `traceback.format_exc()` 追加进 `result.logs`，随 `ActionLogRecord.logs`
-落库，`rpa_get_action_logs` / `rpa_get_run_logs` 直接可读。
+落库，`rpa_debug_action_logs` / `rpa_debug_run_logs` 直接可读。
 
 **MCP 读取侧零改动**：不加过滤维度，MCP 客户端按 `execution_id` 自行查询；
-`rpa_save_action` 的载荷（`ActionSavePayload`）已支持 `log_debug`，
+`rpa_debug_action_save` 的载荷（`ActionSavePayload`）已支持 `log_debug`，
 可用 MCP 直接给动作开调试模式。
 
 不做的事：
@@ -285,7 +291,7 @@ MCP 工具调用会挂住，按 operation_id 排除；排除清单在 `--selftes
 - **必须经网关访问**：MCP 客户端配的是网关 URL；绕过网关直连 RPA 端口等于绕过
   登录与登出校验（`x-bili-*` 是内网可信头）；
 - **网关 180s 超时**：`/api/v1/rpa` 代理对非 SSE 请求用 `req.setTimeout(180000)`，
-  而 `rpa_run_workflow` 最长等 300s —— 超过 3 分钟的等待会被网关断开。
+  而 `rpa_debug_workflow_run` 最长等 300s —— 超过 3 分钟的等待会被网关断开。
   需要更长时把 `/mcp` 加进网关的 `isSseRequest()`，或把
   `RPA_MCP_MAX_WAIT_SECONDS` 调到 180 以内；
 - prod 默认关闭，需显式 `RPA_MCP_ENABLED=true`；
@@ -306,8 +312,8 @@ MCP 工具调用会挂住，按 operation_id 排除；排除清单在 `--selftes
 4. 起服务后用 MCP 客户端（URL：`http://<gateway>/api/v1/rpa/mcp`）：
    - `list_custom_actions` / `list_workflows` 拿到本人真实数据（验证头注入与内部调用链路）；
    - `browser_launch_queue_status` 传**字符串** `browser_id` 能成功（验证 `int|str` 折叠）；
-   - `rpa_list_actions` → `rpa_get_action` 拿基线；
-   - 改错一个必填参数 → `rpa_validate_steps` 返回定位到 `steps[i]` 的问题；
-   - 修好后 `rpa_execute_action`（活跃浏览器）拿到结果；
-   - `rpa_run_workflow` + `rpa_get_run_logs` 拿到失败步骤与参数；
-   - `rpa_save_action`（先 dry_run）→ 落库 → 返回 `verified=true`。
+   - `rpa_debug_actions_list` → `rpa_debug_action_get` 拿基线；
+   - 改错一个必填参数 → `rpa_debug_steps_validate` 返回定位到 `steps[i]` 的问题；
+   - 修好后 `rpa_debug_action_execute`（活跃浏览器）拿到结果；
+   - `rpa_debug_workflow_run` + `rpa_debug_run_logs` 拿到失败步骤与参数；
+   - `rpa_debug_action_save`（先 dry_run）→ 落库 → 返回 `verified=true`。

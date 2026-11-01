@@ -37,6 +37,7 @@ router = new_fingerprint_router()
 
 @router.post(
     BrowserFingerprintRouterPath.gen_rand_fingerprint,
+    summary="生成随机浏览器指纹（不落库）",
     response_model=StandardResponse[BaseFingerprintBrowserInitParams],
     response_model_by_alias=False,
 )
@@ -53,7 +54,8 @@ async def gen_rand_fingerprint_router(
         params: 浏览器指纹创建参数，包括浏览器类型、操作系统、设备类型等配置
 
     Returns:
-        dict: 包含随机生成的浏览器指纹信息的字典，包括用户代理、屏幕分辨率、时区、语言等信息
+        BaseFingerprintBrowserInitParams: 随机生成的指纹参数（UA、屏幕分辨率、
+        时区、语言、WebGL 等；不含代理配置）
 
     Note:
         此接口仅生成临时指纹，不会持久化存储。如需保存指纹，请使用 upsert_fingerprint 接口
@@ -67,6 +69,7 @@ async def gen_rand_fingerprint_router(
 
 @router.post(
     BrowserFingerprintRouterPath.upsert_fingerprint,
+    summary="创建或更新浏览器指纹",
     response_model=StandardResponse[BrowserFingerprintCreateResp],
 )
 async def upsert_fingerprint_router(
@@ -104,6 +107,7 @@ async def upsert_fingerprint_router(
 
 @router.post(
     BrowserFingerprintRouterPath.read_fingerprint,
+    summary="读取浏览器指纹",
     response_model=StandardResponse[Union[BrowserFingerprintQueryResp, None]],
     response_model_by_alias=False,
 )
@@ -112,18 +116,16 @@ async def read_fingerprint_router(
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
     """
-    读取指定条件的浏览器指纹信息
+    读取指定浏览器指纹信息（按 query 的 browser_id 定位）
 
-    根据提供的查询条件从数据库中读取浏览器指纹信息。支持按指纹ID、用户ID等多种条件查询。
-    如果找到匹配的指纹信息则返回，否则返回None。
+    按浏览器 ID 读取属于当前用户的指纹配置。没有 body 参数；
+    `browser_id` 即指纹主键，同时用于归属校验（不属于当前用户直接报错）。
 
     Args:
-        params: 浏览器指纹查询参数，包括指纹ID等查询条件
-        auth_info: 认证信息，从请求头中自动获取
-        session: 数据库会话
+        browser_info: 浏览器认证信息（query browser_id，含当前用户 mid）
 
     Returns:
-        Union[BrowserFingerprintQueryResp, None]: 找到的浏览器指纹信息，如果未找到则返回None
+        Union[BrowserFingerprintQueryResp, None]: 找到的指纹信息，未找到为 None
 
     Note:
         只能查询属于当前用户的浏览器指纹信息
@@ -136,6 +138,7 @@ async def read_fingerprint_router(
 
 @router.post(
     BrowserFingerprintRouterPath.delete_fingerprint,
+    summary="删除浏览器指纹",
     response_model=StandardResponse[BrowserFingerprintDeleteResp],
 )
 async def delete_fingerprint_router(
@@ -174,7 +177,9 @@ async def delete_fingerprint_router(
 
 
 @router.post(
-    BrowserFingerprintRouterPath.count_fingerprint, response_model=StandardResponse[int]
+    BrowserFingerprintRouterPath.count_fingerprint,
+    summary="统计浏览器指纹数量",
+    response_model=StandardResponse[int],
 )
 async def count_fingerprint_router(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
@@ -201,6 +206,7 @@ async def count_fingerprint_router(
 
 @router.post(
     BrowserFingerprintRouterPath.list_fingerprint,
+    summary="分页查询浏览器指纹列表",
     response_model=StandardResponse[BasePaginationResp[UserBrowserInfo]],
     response_model_by_alias=False,
 )
@@ -234,6 +240,7 @@ async def list_fingerprint_router(
 
 @router.post(
     BrowserFingerprintRouterPath.rename_fingerprint,
+    summary="重命名浏览器指纹",
     response_model=StandardResponse[BrowserFingerprintRenameResp],
 )
 async def rename_fingerprint_router(

@@ -216,7 +216,13 @@ class WorkflowListRequest(BasePaginationReq):
 class WorkflowExecuteRequest(SQLModel):
     """执行工作流请求 - 支持内联步骤或引用已保存操作"""
 
-    browser_id: int = Field(default=1, description="浏览器ID")
+    browser_id: int = Field(
+        default=1,
+        description=(
+            "仅兼容旧调用保留，不参与决策：目标浏览器取 query 的 browser_id"
+            "（verify_browser_ownership 校验归属）"
+        ),
+    )
     action_id: int | None = Field(
         default=None, description="要执行的自定义操作ID（雪花 int，可选）"
     )
@@ -260,7 +266,10 @@ class WorkflowRunNowRequest(SQLModel):
     id: int = Field(description="工作流数据库ID")
     browser_id: int | None = Field(
         default=None,
-        description="运行目标浏览器ID，不传则使用工作流上配置的 browser_id",
+        description=(
+            "仅兼容旧调用保留，不参与决策：运行目标浏览器一律取 query 的 browser_id"
+            "（verify_browser_ownership 校验归属，缺失直接 422）"
+        ),
     )
 
 
@@ -300,6 +309,29 @@ class WorkflowSyncRequest(SQLModel):
     """同步工作流到上游最新版本请求"""
 
     id: int = Field(description="当前 Fork 副本的工作流 ID")
+
+
+class WorkflowIdRequest(SQLModel):
+    """按工作流数据库 ID 定位（详情 / 导出 / 删除共用）
+
+    单独建模型而不用裸 ``dict``：裸 dict 在 OpenAPI 里只能生成无 ``properties``
+    的 object，MCP 工具因此拿不到参数（调用只能发空 body）。
+    """
+
+    id: int = Field(description="工作流数据库 ID（雪花 int，字符串形式也接受）")
+
+
+class WorkflowDuplicateRequest(SQLModel):
+    """复制工作流请求"""
+
+    id: int = Field(description="被复制的工作流数据库 ID（雪花 int）")
+    new_name: str = Field(description="副本名称（必填，避免与原工作流同名混淆）")
+
+
+class WorkflowRunDetailRequest(SQLModel):
+    """按 run_id 获取运行记录详情请求"""
+
+    run_id: str = Field(description="运行 ID（run_id，运行记录与步骤日志的主键）")
 
 
 class WorkflowResourceRecordListRequest(BasePaginationReq):

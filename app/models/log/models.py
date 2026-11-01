@@ -88,6 +88,20 @@ class ActionLogByExecutionRequest(SQLModel):
     execution_id: str = Field(description="执行批次ID")
 
 
+class ActionLogGetRequest(SQLModel):
+    """单条日志详情请求"""
+
+    log_id: str = Field(description="日志唯一 ID（log_id，不是数据库主键 id）")
+
+
+class ActionLogStatsRequest(SQLModel):
+    """日志统计请求"""
+
+    days: int = Field(
+        default=7, ge=1, le=365, description="统计最近多少天（含今天，默认 7）"
+    )
+
+
 class ActionLogDeleteRequest(SQLModel):
     """按 log_id 批量删除"""
 

@@ -29,15 +29,17 @@ from app.mcp.exposure import (
 )
 
 #: 调试专用工具（``tag="MCP 调试"``）的期望集合，用于启动自检。
+#: 统一 ``rpa_debug_*`` 前缀：与前端同款接口的镜像工具（``rpa_actions_execute`` /
+#: ``rpa_workflows_execute_inline`` 等）区分开，避免调用方在近义工具间选错。
 EXPECTED_TOOLS: tuple[str, ...] = (
-    "rpa_list_actions",
-    "rpa_get_action",
-    "rpa_validate_steps",
-    "rpa_execute_action",
-    "rpa_save_action",
-    "rpa_run_workflow",
-    "rpa_get_run_logs",
-    "rpa_get_action_logs",
+    "rpa_debug_actions_list",
+    "rpa_debug_action_get",
+    "rpa_debug_steps_validate",
+    "rpa_debug_action_execute",
+    "rpa_debug_action_save",
+    "rpa_debug_workflow_run",
+    "rpa_debug_run_logs",
+    "rpa_debug_action_logs",
 )
 
 
@@ -60,8 +62,15 @@ def setup_mcp(app: FastAPI) -> FastApiMCP | None:
         source_app,
         name="rpa",
         description=(
-            "RPA 用户能力全集：自定义动作 / 工作流 / 浏览器会话与页面 / "
+            "RPA 用户能力全集：自定义动作 / 工作流 / 浏览器会话与页面 / 指纹与通知配置 / "
             "操作日志 / 动作调试（校验、试跑、落库回读）。\n\n"
+            "工具分两组，按前缀选：\n"
+            "- `rpa_debug_*`：动作调试主路径（列出/导出动作、静态校验、试跑、落库回读、"
+            "运行工作流并等终态、查步骤链路）。**要改动作或跑动作优先用这组**，"
+            "其中 `rpa_debug_action_execute` 支持内联 steps 且先做静态校验；\n"
+            "- 其余（`rpa_actions_*` / `rpa_workflows_*` / `rpa_session_*` / "
+            "`rpa_pages_*` / `rpa_custom_actions_*` 等）：与前端页面同款接口的镜像，"
+            "参数更贴近页面表单（如 `rpa_actions_execute` 只接受已保存的 action_id）。\n\n"
             "统一响应约定：`{\"code\": 0, \"msg\": \"success\", \"data\": ...}`，"
             "**code == 0 才表示成功**；非 0 时 msg 是失败原因（业务类错误同样返回 "
             "HTTP 200 + 非 0 code），常见值：1011=动作不存在、1012=工作流不存在、"

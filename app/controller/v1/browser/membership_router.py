@@ -526,9 +526,12 @@ def build_sign_in_calendar(
 # ============ API ============
 
 
-@router.post(BrowserMembershipRouterPath.get_account)
+@router.post(
+    BrowserMembershipRouterPath.get_account,
+    summary="获取时长账户概览",
+)
 async def get_membership_account(
-    req: EmptyRequest,
+    req: EmptyRequest = EmptyRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> StandardResponse[DurationAccountResponse]:
@@ -560,9 +563,12 @@ async def get_membership_account(
     return success_response(response)
 
 
-@router.post(BrowserMembershipRouterPath.sign_in)
+@router.post(
+    BrowserMembershipRouterPath.sign_in,
+    summary="每日签到",
+)
 async def sign_in(
-    req: EmptyRequest,
+    req: EmptyRequest = EmptyRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> StandardResponse[SignInResponse]:
@@ -589,9 +595,12 @@ async def sign_in(
     return success_response(response)
 
 
-@router.post(BrowserMembershipRouterPath.sign_in_overview)
+@router.post(
+    BrowserMembershipRouterPath.sign_in_overview,
+    summary="获取签到概览",
+)
 async def get_sign_in_overview(
-    req: EmptyRequest,
+    req: EmptyRequest = EmptyRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> StandardResponse[SignOverviewResponse]:
@@ -657,7 +666,10 @@ async def get_sign_in_overview(
     )
 
 
-@router.post(BrowserMembershipRouterPath.sign_in_calendar)
+@router.post(
+    BrowserMembershipRouterPath.sign_in_calendar,
+    summary="查询签到日历",
+)
 async def get_sign_in_calendar(
     req: SignInCalendarRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -684,7 +696,10 @@ async def get_sign_in_calendar(
     return success_response(response)
 
 
-@router.post(BrowserMembershipRouterPath.sign_in_makeup)
+@router.post(
+    BrowserMembershipRouterPath.sign_in_makeup,
+    summary="补签指定日期",
+)
 async def makeup_sign_in(
     req: SignMakeupRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -707,7 +722,10 @@ async def makeup_sign_in(
     return success_response(response)
 
 
-@router.post(BrowserMembershipRouterPath.sign_in_reward_exchange)
+@router.post(
+    BrowserMembershipRouterPath.sign_in_reward_exchange,
+    summary="兑换签到奖励档位",
+)
 async def exchange_sign_reward(
     req: SignRewardExchangeRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -736,7 +754,10 @@ async def exchange_sign_reward(
     return success_response(response)
 
 
-@router.post(BrowserMembershipRouterPath.redeem)
+@router.post(
+    BrowserMembershipRouterPath.redeem,
+    summary="兑换码兑换",
+)
 async def redeem_code(
     req: RedeemRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -759,7 +780,10 @@ async def redeem_code(
     return success_response(response)
 
 
-@router.post(BrowserMembershipRouterPath.ledger_list)
+@router.post(
+    BrowserMembershipRouterPath.ledger_list,
+    summary="查询时长流水",
+)
 async def list_duration_ledger(
     req: LedgerListRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -782,7 +806,10 @@ async def list_duration_ledger(
     )
 
 
-@router.post(BrowserMembershipRouterPath.usage_stats)
+@router.post(
+    BrowserMembershipRouterPath.usage_stats,
+    summary="查询使用时长统计",
+)
 async def list_usage_stats(
     req: UsageStatsRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -837,9 +864,12 @@ class PaymentConfirmResponse(SQLModel):
     granted: list[PaymentGrantedItem] = Field(default_factory=list)
 
 
-@router.post(BrowserMembershipRouterPath.payment_products)
+@router.post(
+    BrowserMembershipRouterPath.payment_products,
+    summary="查询可售支付商品",
+)
 async def list_payment_products(
-    req: EmptyRequest,
+    req: EmptyRequest = EmptyRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[PaymentProductsResponse]:
     """可售支付商品列表（实时拉取 Casdoor 并按命名约定解析规格；buy_url 空=未启用）"""
@@ -862,9 +892,12 @@ async def list_payment_products(
     )
 
 
-@router.post(BrowserMembershipRouterPath.payment_confirm)
+@router.post(
+    BrowserMembershipRouterPath.payment_confirm,
+    summary="支付对账确认",
+)
 async def confirm_payments(
-    req: EmptyRequest,
+    req: EmptyRequest = EmptyRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> StandardResponse[PaymentConfirmResponse]:
@@ -901,7 +934,10 @@ class PaymentNotifyRequest(SQLModel):
     )
 
 
-@router.post(BrowserMembershipRouterPath.payment_notify)
+@router.post(
+    BrowserMembershipRouterPath.payment_notify,
+    summary="支付完成通知",
+)
 async def notify_payment(
     req: PaymentNotifyRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),

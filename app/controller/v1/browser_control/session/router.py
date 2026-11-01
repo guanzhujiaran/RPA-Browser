@@ -7,7 +7,7 @@ from app.services.RPA_browser.session.live_service import live_service
 from app.services.RPA_browser.session.session_status_bus import (
     iter_session_status_events,
 )
-from fastapi import Depends, BackgroundTasks
+from fastapi import Depends
 from fastapi.responses import StreamingResponse
 import time
 from app.config import settings
@@ -37,25 +37,27 @@ router = new_session_router()
 
 @router.post(
     BrowserSessionRouterPath.create,
+    summary="创建浏览器会话",
     response_model=StandardResponse[CreateSessionResponse],
 )
 async def create_browser_session(
-    background_tasks: BackgroundTasks,
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
-    """
-    创建浏览器会话
+    """创建浏览器会话（幂等：已在运行则直接返回现有会话）
 
-    独立的会话创建接口，与心跳机制完全解耦。
-    如果浏览器未运行，将创建任务添加到后台任务中异步执行，立即返回响应。
+    独立的会话创建接口，与心跳机制完全解耦：
+    - 会话已存在且浏览器在跑 → 返回现有会话信息（browser_started=True）；
+    - 会话还挂在表里但浏览器已关闭 / 崩溃 → 先释放再重建；
+    - 未运行 → **同步**等待启动结果：内存不足时返回 `status="queued"` 与排队信息
+      （启动在后台队列中继续，前端轮询 /status 看进度），不会假报 running；
+    - 启动失败 → 返回业务错误码 + `success=false` 的 data。
 
     Args:
-        request: 会话创建参数请求
-        background_tasks: FastAPI 后台任务
+        browser_info: 浏览器认证信息（query browser_id，须属于当前用户）
 
     Returns:
-        CreateSessionResponse: 会话创建结果
+        CreateSessionResponse: 会话创建结果（含 status / queued / queue_position）
     """
     # 检查会话是否已存在
     session_key = f"{auth_info.mid}_{browser_info.browser_id}"
@@ -140,17 +142,18 @@ async def create_browser_session(
 
 @router.post(
     BrowserSessionRouterPath.status,
+    summary="获取浏览器会话状态",
     response_model=StandardResponse[BrowserSessionStatus],
 )
 async def browser_session_status(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
-    """
-    获取浏览器会话状态
+    """获取浏览器会话状态（只读，恒返回成功码）
 
-    提供统一的会话状态查询，包含所有相关的状态信息。
-    可以用来检查会话是否存在、浏览器是否运行、生命周期状态等。
+    统一会话状态查询：会话是否存在、浏览器是否运行、生命周期状态、排队阶段等。
+    「会话不存在 / 浏览器未运行」是正常状态，一律由 data 的
+    `session_exists / browser_running / lifecycle_state / status` 表达，**不是错误**。
 
     Returns:
         BrowserSessionStatus: 会话状态信息
@@ -227,6 +230,7 @@ async def browser_session_events(
 
 @router.post(
     BrowserSessionRouterPath.queue_status,
+    summary="查询浏览器启动排队状态",
     response_model=StandardResponse[BrowserLaunchQueueStatusResponse],
 )
 async def browser_launch_queue_status(
@@ -264,17 +268,18 @@ async def browser_launch_queue_status(
 
 @router.post(
     BrowserSessionRouterPath.close,
+    summary="关闭浏览器会话",
     response_model=StandardResponse[CloseSessionResponse],
 )
 async def close_browser_session(
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
-    """
-    手动关闭浏览器会话
+    """手动关闭浏览器会话，释放相关资源
 
-    主动关闭指定的浏览器会话，释放相关资源。
-    如果会话不存在，将返回错误响应。
+    - 仍在启动队列中排队 → 取消排队（避免「关掉又被拉起」）；
+    - 会话存在 → 释放浏览器进程与相关资源；
+    - 会话不存在且不在队列 → 返回 SESSION_NOT_FOUND 错误码。
 
     Returns:
         CloseSessionResponse: 会话关闭结果

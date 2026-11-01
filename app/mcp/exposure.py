@@ -338,12 +338,40 @@ _RESPONSE_SECTION_MARKER = "\n\n### Responses:"
 #: 自动生成的工具名里一定包含的路径片段（显式设置了 operation_id 的接口没有）
 _AUTOGEN_NAME_MARKER = "_api_v1_rpa"
 
+#: 工具名覆盖表：路径压出来的名字丢了资源段、或与调试工具近义时，在这里显式改名。
+#: 键 = :func:`_tool_name_from_path` 的产出，值 = 最终工具名。
+#: **只影响 MCP 工具名**，不改 operationId / 路由 / 前端 SDK。
+TOOL_NAME_OVERRIDES: Final[dict[str, str]] = {
+    # 会话类接口挂在 ``/browser/control/<动词>``，路径里没有资源段，
+    # 压出来是 ``rpa_create`` / ``rpa_status`` 这种「动词裸奔」的名字
+    "rpa_create": "rpa_session_create",
+    "rpa_status": "rpa_session_status",
+    "rpa_close": "rpa_session_close",
+    "rpa_queue_status": "rpa_session_queue_status",
+    # 与 ``rpa_workflows_run``（异步运行已保存的工作流、返回 run_id）区分：
+    # 本接口是**同步**执行内联 steps 或已保存动作的步骤
+    "rpa_workflows_execute": "rpa_workflows_execute_inline",
+    # 指纹组的路径是 ``/browser/<动词>_fingerprint``，压出来是「动作在前、资源在后」，
+    # 统一成正序，调用方才能按 ``rpa_<资源>_*`` 前缀聚合
+    "rpa_gen_rand_fingerprint": "rpa_fingerprint_gen_rand",
+    "rpa_upsert_fingerprint": "rpa_fingerprint_upsert",
+    "rpa_read_fingerprint": "rpa_fingerprint_read",
+    "rpa_delete_fingerprint": "rpa_fingerprint_delete",
+    "rpa_count_fingerprint": "rpa_fingerprint_count",
+    "rpa_list_fingerprint": "rpa_fingerprint_list",
+    "rpa_rename_fingerprint": "rpa_fingerprint_rename",
+    # 路径里的 ``{id}`` 占位符会被压成字面量 ``id``，工具名里没意义
+    "rpa_custom_actions_id_forks": "rpa_custom_actions_forks",
+    "rpa_workflows_id_forks": "rpa_workflows_forks",
+}
+
 
 def _tool_name_from_path(path: str, method: str) -> str:
     """按「资源/动作」把接口路径压成短工具名，如 `rpa_workflows_list`。
 
     去掉部署前缀（``/api/v1/rpa``）与固定前缀（``browser/control``），
-    路径分隔符与参数占位符统一成下划线。
+    路径分隔符与参数占位符统一成下划线；结果再由
+    :data:`TOOL_NAME_OVERRIDES` 修正含糊名。
     """
     raw = path.replace("/api/v1/rpa", "").strip("/")
     for prefix in ("browser/control/", "browser/"):
@@ -366,7 +394,9 @@ def shorten_tool_names(
     （实测中位 69 字符、最长 96），既把部署前缀 ``api/v1/rpa`` 泄进工具名，又挤占
     调用方上下文、逼近部分客户端的名字长度上限。
 
-    显式设置了 operation_id 的接口（``rpa_execute_action`` 等）保持原样。
+    显式设置了 operation_id 的接口（``rpa_debug_action_execute`` 等）保持原样；
+    路径压出来仍含糊的名字（``rpa_create`` / ``rpa_workflows_execute``）按
+    :data:`TOOL_NAME_OVERRIDES` 改成「资源 + 动作」形态。
 
     Returns:
         ``{旧名: 新名}`` 映射（供日志核对）。注意 **同步改写了 operation_map 的 key**：
@@ -383,13 +413,15 @@ def shorten_tool_names(
         method = str(detail.get("method", ""))
         if not path:
             continue
-        new = _tool_name_from_path(path, method)
+        generated = _tool_name_from_path(path, method)
+        new = TOOL_NAME_OVERRIDES.get(generated, generated)
         if new in taken:
             index = 2
             while f"{new}_{index}" in taken:
                 index += 1
             new = f"{new}_{index}"
-        if len(new) >= len(old):
+        # 覆盖表命中的名字即使不比旧名短也要用：可读性优先于长度
+        if new == generated and len(new) >= len(old):
             continue
         tool.name = new
         operation_map[new] = operation_map.pop(old)
@@ -440,30 +472,14 @@ def strip_generated_response_section(tools: Iterable[Any]) -> int:
     return removed
 
 
-def group_operations_by_resource(
-    operation_map: dict[str, dict[str, Any]],
-) -> dict[str, int]:
-    """按接口路径的资源段统计工具数（启动日志用）。"""
-    summary: dict[str, int] = {}
-    for detail in operation_map.values():
-        segments = [seg for seg in str(detail.get("path", "")).split("/") if seg]
-        if "control" in segments:
-            idx = segments.index("control")
-            resource = segments[idx + 1] if len(segments) > idx + 1 else "control"
-        else:
-            resource = segments[3] if len(segments) > 3 else "root"
-        summary[resource] = summary.get(resource, 0) + 1
-    return dict(sorted(summary.items(), key=lambda kv: -kv[1]))
-
-
 __all__ = [
     "ADMIN_DEPENDENCIES",
     "EXCLUDED_OPERATIONS",
+    "TOOL_NAME_OVERRIDES",
     "assert_no_admin_routes",
     "build_user_app",
     "find_admin_guarded_routes",
     "find_admin_paths",
-    "group_operations_by_resource",
     "group_operations_by_tag",
     "install_schema_compat",
     "shorten_tool_names",

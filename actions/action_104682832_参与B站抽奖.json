@@ -289,6 +289,7 @@
               "resource_type": "bili_lottery_others",
               "get_others_lot_dyn_list_params": {
                 "is_lot": true,
+                "exclude_official_lot": true,
                 "created_at_preset": "30d",
                 "pub_time_preset": "7d",
                 "page_num": 1,
@@ -315,6 +316,7 @@
               "resource_type": "bili_lottery_others",
               "get_others_lot_dyn_list_params": {
                 "is_lot": true,
+                "exclude_official_lot": true,
                 "created_at_preset": "30d",
                 "pub_time_preset": "7d",
                 "page_num": 1,
@@ -2073,7 +2075,7 @@
     }
   ],
   "is_composite": 0,
-  "description": "判断登录→取预约/官方/第三方抽奖数据→预约随机打乱、转发类按动态主键(dynId)从大到小→预约/转发/点赞/关注，纯DOM操作，记录已参与动态防重复，每轮循环结束均有固定等待，抄评论取评论区已加载的全部评论并剔除UP主评论与置顶评论后随机选一条，LLM评论生成时提供我的昵称/UP主昵称/动态正文/热门评论上下文（需在工作流中运行以启用去重）｜输入变量 reserve_only_grand / official_only_grand / others_only_grand：分类型只抽大奖（true=该类仅取大奖，false/缺省=该类全部有效抽奖）",
+  "description": "判断登录→取预约/官方/第三方抽奖数据→预约随机打乱、转发类按动态主键(dynId)从大到小→预约/转发/点赞/关注，纯DOM操作，记录已参与动态防重复，每轮循环结束均有固定等待，抄评论取评论区已加载的全部评论并剔除UP主评论与置顶评论后随机选一条，LLM评论生成时提供我的昵称/UP主昵称/动态正文/热门评论上下文（需在工作流中运行以启用去重）｜输入变量 reserve_only_grand / official_only_grand / others_only_grand：分类型只抽大奖（true=该类仅取大奖，false/缺省=该类全部有效抽奖）｜第三方抽奖取数固定排除官方抽奖数据（officialLotType 为预约/充电/官方抽奖的记录）",
   "icon_series": 0,
   "icon_id": 0,
   "input_vars": [

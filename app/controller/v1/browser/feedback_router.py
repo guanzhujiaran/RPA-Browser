@@ -37,6 +37,7 @@ router = new_feedback_router()
 
 @router.post(
     BrowserFeedbackRouterPath.feedback_submit,
+    summary="提交报错 / 反馈",
     response_model=StandardResponse[FeedbackSubmitResp],
 )
 async def feedback_submit_router(
@@ -73,6 +74,7 @@ async def feedback_submit_router(
 
 @router.post(
     BrowserFeedbackRouterPath.feedback_list,
+    summary="查询自己的反馈列表",
     response_model=StandardResponse[FeedbackListResp],
 )
 async def feedback_list_router(

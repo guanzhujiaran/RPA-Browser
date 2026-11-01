@@ -84,13 +84,11 @@ class TestGetWorkflowDetail:
         assert data["data"]["name"] == "fixture_workflow"
 
     async def test_get_workflow_detail_missing_id(self, client):
+        # 请求体是 WorkflowIdRequest(id 必填)：缺参在进入处理函数前就被 pydantic 拒绝
         response = await client.post(f"{PREFIX}/workflows/get", json={})
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == ResponseCode.BAD_REQUEST, (
-            f"Expected BAD_REQUEST, got {data['code']}: {data.get('message')}"
-        )
+        assert response.status_code == 422
+        assert "id" in str(response.json())
 
     async def test_get_workflow_detail_not_found(self, client):
         response = await client.post(f"{PREFIX}/workflows/get", json={"id": 999999})
@@ -154,13 +152,11 @@ class TestDeleteWorkflow:
         assert data["code"] == ResponseCode.SUCCESS
 
     async def test_delete_workflow_missing_id(self, client):
+        # 请求体是 WorkflowIdRequest(id 必填)：缺参在进入处理函数前就被 pydantic 拒绝
         response = await client.post(f"{PREFIX}/workflows/delete", json={})
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == ResponseCode.BAD_REQUEST, (
-            f"Expected BAD_REQUEST, got {data['code']}: {data.get('message')}"
-        )
+        assert response.status_code == 422
+        assert "id" in str(response.json())
 
     async def test_delete_workflow_not_found(self, client):
         response = await client.post(f"{PREFIX}/workflows/delete", json={"id": 999999})
@@ -197,24 +193,19 @@ class TestDuplicateWorkflow:
         assert data["code"] == ResponseCode.SUCCESS
 
     async def test_duplicate_workflow_missing_id(self, client):
+        # WorkflowDuplicateRequest：id / new_name 都必填，缺参在进入处理函数前被拒
         response = await client.post(
             f"{PREFIX}/workflows/duplicate", json={"new_name": "副本"}
         )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == ResponseCode.BAD_REQUEST, (
-            f"Expected BAD_REQUEST, got {data['code']}: {data.get('message')}"
-        )
+        assert response.status_code == 422
+        assert "id" in str(response.json())
 
     async def test_duplicate_workflow_missing_new_name(self, client):
         response = await client.post(f"{PREFIX}/workflows/duplicate", json={"id": 1})
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["code"] == ResponseCode.BAD_REQUEST, (
-            f"Expected BAD_REQUEST, got {data['code']}: {data.get('message')}"
-        )
+        assert response.status_code == 422
+        assert "new_name" in str(response.json())
 
     async def test_duplicate_workflow_not_found(self, client):
         response = await client.post(

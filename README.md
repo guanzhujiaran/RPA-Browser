@@ -110,7 +110,9 @@ puppeteer_Bili (网关)
 
 - MCP 端点：`http://<host>:<RPA_BROWSER_PORT>/api/v1/rpa/mcp`
 - 工具 = 用户级路由全集（动作 / 工作流 / 浏览器会话与页面 / 操作日志 / 动作调试 …），
-  共 94 个；其中 `rpa_*` 是调试专用工具（静态校验 / 试跑 / 日志定位 / 落库回读）
+  共 96 个；其中 `rpa_debug_*` 是调试专用工具（静态校验 / 试跑 / 日志定位 / 落库回读），
+  其余 `rpa_*` 是与前端页面同款接口的镜像（工具名映射见 `app/mcp/exposure.py` 的
+  `TOOL_NAME_OVERRIDES`）
 - SSE 与 WebRTC 信令类接口按 `operation_id` 排除（长连接不是请求-响应语义），清单见
   `app/mcp/exposure.py` 的 `EXCLUDED_OPERATIONS`，可用 `RPA_MCP_EXCLUDE_OPERATIONS` 追加
 - 开关：`RPA_MCP_ENABLED`（默认 dev 开、prod 关）
@@ -118,7 +120,7 @@ puppeteer_Bili (网关)
   请求带 `Cookie: bili_jwt=<token>`；网关校验（含登出黑名单）后清空并重写
   `x-bili-*` 再转发，RPA 侧只透传这些内网可信头，不解析 Cookie、不接受配置写死 mid。
   因此登出/封禁由网关直接挡掉；**RPA 端口必须只在内网可达**
-- 注意：网关对非 SSE 请求有 180s 超时，`rpa_run_workflow` 等待超过 3 分钟会被断开
+- 注意：网关对非 SSE 请求有 180s 超时，`rpa_debug_workflow_run` 等待超过 3 分钟会被断开
 
 ```bash
 # 离线自检（不联网）：打印开关/路径/工具清单 + 排除清单有效性校验

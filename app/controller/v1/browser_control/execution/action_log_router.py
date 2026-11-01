@@ -29,6 +29,8 @@ from app.models.log.models import (
     ActionLogByExecutionRequest,
     ActionLogDeleteRequest,
     ActionLogClearRequest,
+    ActionLogGetRequest,
+    ActionLogStatsRequest,
     ActionLogStatsResponse,
 )
 from app.models.base.base_sqlmodel import BasePaginationResp
@@ -93,14 +95,11 @@ async def list_action_logs(
 
 @router.post(BrowserControlRouterPath.action_logs_get, summary="获取单条日志详情")
 async def get_action_log(
-    request: dict,
+    request: ActionLogGetRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[ActionLogDetailResponse]:
-    """按 log_id 获取单条日志详情"""
-    log_id = request.get("log_id")
-    if not log_id:
-        return error_response(400, "缺少 log_id")
-    model = await action_log_crud_svr.get_by_log_id(auth.mid, log_id)
+    """按 log_id 获取单条日志详情（在列表项基础上补齐 params / result_data / variables / logs）。"""
+    model = await action_log_crud_svr.get_by_log_id(auth.mid, request.log_id)
     if not model:
         return error_response(ResponseCode.ACTION_LOG_NOT_FOUND, "日志不存在")
     return success_response(_to_detail(model))
@@ -156,14 +155,11 @@ async def clear_action_logs(
 
 @router.post(BrowserControlRouterPath.action_logs_stats, summary="操作日志统计")
 async def stats_action_logs(
-    request: dict | None = None,
+    request: ActionLogStatsRequest = ActionLogStatsRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[ActionLogStatsResponse]:
-    """按 action 聚合统计最近 N 天的执行情况（默认 7 天）"""
-    days = 7
-    if request and isinstance(request, dict):
-        days = int(request.get("days", 7) or 7)
-    data = await action_log_crud_svr.stats(auth.mid, days)
+    """按 action 聚合统计最近 N 天的执行情况（days 默认 7）"""
+    data = await action_log_crud_svr.stats(auth.mid, request.days)
     return success_response(ActionLogStatsResponse(**data))
 
 

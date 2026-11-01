@@ -18,6 +18,7 @@ from app.utils.depends.security_depends import verify_browser_ownership
 from app.utils.depends.vip_depends import is_vip_user
 from ..base import new_webrtc_router
 import loguru
+from app.models.runtime.browser_operation import ClosePageRequest, SwitchPageRequest
 from app.models.runtime.control import PagesListResponse
 
 router = new_webrtc_router()
@@ -25,6 +26,7 @@ router = new_webrtc_router()
 
 @router.post(
     "/pages/list",
+    summary="获取页面列表",
     response_model=StandardResponse[PagesListResponse],
 )
 async def get_pages_list(
@@ -33,13 +35,14 @@ async def get_pages_list(
     """
     获取浏览器所有页面列表
 
-    返回指定浏览器实例的所有页面信息，包括URL、标题等。
+    返回指定浏览器实例的全部页面信息（索引、URL、标题、是否当前活动页）。
+    会话不存在时返回空列表，不报错。
 
     Args:
-        browser_info: 浏览器认证信息
+        browser_info: 浏览器认证信息（query browser_id）
 
     Returns:
-        dict: 页面列表信息
+        PagesListResponse: 页面列表
     """
     browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
 
@@ -62,32 +65,27 @@ async def get_pages_list(
 
 @router.post(
     "/pages/switch",
+    summary="切换页面",
     response_model=StandardResponse[dict],
 )
 async def switch_page(
-    request: dict,
+    request: SwitchPageRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
-    """
-    切换到指定页面
+    """切换到指定索引的页面
 
-    将浏览器的当前活动页面切换到指定索引的页面。
+    把 `page_index` 指向的页面置为前台（bring_to_front）；索引越界或目标页已关闭时
+    返回 PAGE_NAVIGATION_FAILED，不做静默兜底。
+    与 `rpa_operation_switch_page` 语义相同（后者参数模型更宽松），二者任一皆可。
 
     Args:
-        request: 包含 page_index 的请求体
-        browser_info: 浏览器认证信息
+        request: {"page_index": <页面索引，0 基>}
+        browser_info: 浏览器认证信息（query browser_id）
 
     Returns:
-        dict: 切换结果
+        dict: 切换结果（含 page_index）
     """
     browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-    page_index = request.get("page_index")
-
-    if page_index is None:
-        return error_response(
-            code=ResponseCode.PAGE_NAVIGATION_FAILED,
-            msg="缺少 page_index 参数",
-        )
 
     try:
         # 🔑 内存不足时不阻塞在排队上，直接返回排队业务码
@@ -107,19 +105,29 @@ async def switch_page(
             is_vip=is_vip_user(browser_info.auth_info),
         )
 
-        # 验证浏览器是否可用
-        page = await entry.browser_session.get_current_page()
-        if not page or page.is_closed():
+        pages = entry.browser_session.all_pages
+        if not (0 <= request.page_index < len(pages)):
             return error_response(
-                code=ResponseCode.BROWSER_NOT_STARTED,
-                msg="浏览器已关闭，请重新启动",
+                code=ResponseCode.PAGE_NAVIGATION_FAILED,
+                msg=f"页面索引 {request.page_index} 超出范围（共 {len(pages)} 个页面）",
+            )
+
+        page = pages[request.page_index]
+        if page.is_closed():
+            return error_response(
+                code=ResponseCode.PAGE_NAVIGATION_FAILED,
+                msg=f"页面索引 {request.page_index} 已关闭，请重新获取页面列表",
             )
 
         # 切换页面
         await page.bring_to_front()
 
         return success_response(
-            data={"note": "如果使用 WebRTC 视频流，请重新调用 /webrtc/offer 接口"}
+            data={
+                "page_index": request.page_index,
+                "message": "页面切换成功",
+                "note": "如果使用 WebRTC 视频流，请重新调用 /webrtc/offer 接口",
+            }
         )
 
     except Exception as e:
@@ -132,32 +140,30 @@ async def switch_page(
 
 @router.post(
     "/pages/close",
+    summary="关闭页面",
     response_model=StandardResponse[dict],
 )
 async def close_page(
-    request: dict,
+    request: ClosePageRequest,
     browser_info: BrowserReqAuthInfo = Depends(verify_browser_ownership),
 ):
-    """
-    关闭指定页面
+    """关闭指定索引的页面
 
-    关闭指定索引的页面。如果关闭后没有页面了，会创建一个新的空白页面。
+    两种情形会被拒绝（返回 PAGE_CLOSED），**不会**自动补建空白页：
+    - 该页正被工作流占用（别名页 / open_page 创建）；
+    - 它是最后一个页面（关掉后浏览器就没有页面可用了）。
+
+    与 `rpa_operation_close_page` 语义相同，二者任一皆可。
 
     Args:
-        request: 包含 page_index 的请求体
-        browser_info: 浏览器认证信息
+        request: {"page_index": <页面索引，0 基>}
+        browser_info: 浏览器认证信息（query browser_id）
 
     Returns:
-        dict: 关闭结果
+        dict: 关闭结果（含 page_index）
     """
     browser_id, mid = browser_info.browser_id, browser_info.auth_info.mid
-    page_index = request.get("page_index")
-
-    if page_index is None:
-        return error_response(
-            code=ResponseCode.PAGE_CLOSED,
-            msg="缺少 page_index 参数",
-        )
+    page_index = request.page_index
 
     try:
         # 🔑 内存不足时不阻塞在排队上，直接返回排队业务码
@@ -179,7 +185,7 @@ async def close_page(
 
         # 工作流占用检查：别名页（工作流 open_page 创建）不允许手动关闭
         pages = session.browser_session.all_pages
-        if not isinstance(page_index, int) or not (0 <= page_index < len(pages)):
+        if not 0 <= page_index < len(pages):
             return error_response(
                 code=ResponseCode.PAGE_CLOSED,
                 msg=f"页面索引 {page_index} 超出范围",

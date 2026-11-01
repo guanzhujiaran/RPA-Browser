@@ -163,7 +163,7 @@ class DebugRunData(BaseModel):
     workflow_id: str = Field(description="工作流雪花 ID")
     status: str = Field(default="running", description="终态：success/failed/interrupted/cancelled")
     finished: bool = Field(default=False, description="是否已到终态（false=等待超时）")
-    execution_id: str = Field(default="", description="执行批次 ID，可喂给 rpa_get_run_logs")
+    execution_id: str = Field(default="", description="执行批次 ID，可喂给 rpa_debug_run_logs")
     total: int = Field(default=0, description="总步骤数")
     success_count: int = Field(default=0, description="成功步骤数")
     failed_count: int = Field(default=0, description="失败步骤数")

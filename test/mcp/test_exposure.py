@@ -247,13 +247,13 @@ def test_shorten_tool_names_rewrites_only_autogen_names() -> None:
         "create_or_update_user_default_settings_api_v1_rpa_browser_"
         "default_settings_create_or_update_post"
     )
-    tools = [_NamedTool(old), _NamedTool("rpa_execute_action", "已经是短名")]
+    tools = [_NamedTool(old), _NamedTool("rpa_debug_action_execute", "已经是短名")]
     operation_map = {
         old: {
             "path": "/api/v1/rpa/browser/default_settings/create_or_update",
             "method": "post",
         },
-        "rpa_execute_action": {
+        "rpa_debug_action_execute": {
             "path": "/api/v1/rpa/browser/control/debug/execute",
             "method": "post",
         },
@@ -262,12 +262,40 @@ def test_shorten_tool_names_rewrites_only_autogen_names() -> None:
     renamed = shorten_tool_names(tools, operation_map)
 
     assert tools[0].name == "rpa_default_settings_create_or_update"
-    assert tools[1].name == "rpa_execute_action"
+    assert tools[1].name == "rpa_debug_action_execute"
     assert renamed == {old: "rpa_default_settings_create_or_update"}
     # key 必须同步：call_tool 按工具名索引 operation_map
     assert "rpa_default_settings_create_or_update" in operation_map
     assert old not in operation_map
-    assert "rpa_execute_action" in operation_map
+    assert "rpa_debug_action_execute" in operation_map
+
+
+def test_shorten_tool_names_applies_name_overrides() -> None:
+    """控制类接口压出的「动词裸奔」名字按覆盖表补上资源段。"""
+    old = "create_browser_session_api_v1_rpa_browser_control_create_post"
+    tools = [_NamedTool(old)]
+    operation_map = {
+        old: {"path": "/api/v1/rpa/browser/control/create", "method": "post"}
+    }
+
+    renamed = shorten_tool_names(tools, operation_map)
+
+    assert tools[0].name == "rpa_session_create"
+    assert renamed == {old: "rpa_session_create"}
+    assert "rpa_session_create" in operation_map
+
+
+def test_shorten_tool_names_keeps_override_even_if_longer() -> None:
+    """覆盖名比路径名更长时也要生效：可读性优先于长度。"""
+    old = "queue_api_v1_rpa"
+    tools = [_NamedTool(old)]
+    operation_map = {
+        old: {"path": "/api/v1/rpa/browser/control/queue_status", "method": "post"}
+    }
+
+    shorten_tool_names(tools, operation_map)
+
+    assert tools[0].name == "rpa_session_queue_status"
 
 
 def test_shorten_tool_names_disambiguates_collisions() -> None:

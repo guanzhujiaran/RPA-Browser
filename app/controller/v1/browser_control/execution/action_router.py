@@ -89,7 +89,9 @@ def _upstream_sync_kwargs(
 async def list_registered_actions() -> StandardResponse[List[ActionMetadataResponse]]:
     """获取系统预注册操作列表（公开，只读）
 
-    返回精简版 Action 元数据，仅包含 action_id 和 json_schema
+    返回每个内置动作的元数据：`action_id`（内置动作名）、`action_type`、`name`、
+    图标（`icon_series` / `icon_id`）、参数定义 `json_schema`，
+    以及变量契约 `input_variables` / `output_variables`。
     """
     response_actions = []
     for action_type in BuiltinActionType:
@@ -650,9 +652,10 @@ async def fork_custom_action(
     request: ActionForkRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[ActionForkResponse]:
-    """Fork 自定义操作（仅允许 Fork 公开的操作）
+    """Fork 自定义操作（公开的动作 + 自己的动作都可以 Fork）
 
-    类似 GitHub 的 Fork 功能，允许用户复制公开的社区操作到自己的空间，并可以选择重命名。
+    类似 GitHub 的 Fork 功能：把动作（含其依赖树）复制一份到自己的空间，可重命名。
+    `action_id` 既可以是公开的社区动作，也可以是自己已拥有的动作（效果等同建副本）。
 
     Args:
         request: {"action_id": <操作action_id>, "new_name": <新名称（可选）>,

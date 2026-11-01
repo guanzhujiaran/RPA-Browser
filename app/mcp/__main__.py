@@ -14,14 +14,17 @@ from __future__ import annotations
 import json
 import sys
 
+from fastapi import FastAPI
 from fastapi_mcp import FastApiMCP
 
 from app.mcp.config import AUTH_HEADER_NAMES, mcp_settings
 from app.mcp.exposure import (
     EXCLUDED_OPERATIONS,
     build_user_app,
-    group_operations_by_resource,
+    group_operations_by_tag,
     install_schema_compat,
+    shorten_tool_names,
+    strip_generated_response_section,
 )
 from app.mcp.mount import EXPECTED_TOOLS
 from app.mcp.validator import static_validation_available, validate_steps
@@ -34,16 +37,32 @@ def _dump(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
-def _build_probe(excluded: tuple[str, ...]) -> FastApiMCP:
-    """按挂载时的同一套配置生成工具（不挂载，仅用于自检）。"""
+def _build_probe(
+    app: FastAPI,
+    excluded: tuple[str, ...],
+    *,
+    shorten: bool = False,
+) -> FastApiMCP:
+    """按挂载时的同一套配置生成工具（不挂载，仅用于自检）。
+
+    Args:
+        app: 用户能力子应用（``build_user_app()``）
+        excluded: 要排除的 operationId
+        shorten: 是否同步「裁描述 + 收敛工具名」，让自检输出与线上工具名一致。
+            校验排除清单时必须用**未缩短**的名字（排除项写的是 operationId）。
+    """
     install_schema_compat()
-    return FastApiMCP(
-        build_user_app(),
+    mcp = FastApiMCP(
+        app,
         name="selftest",
         describe_all_responses=False,
         exclude_operations=list(excluded),
         headers=list(AUTH_HEADER_NAMES),
     )
+    if shorten:
+        strip_generated_response_section(mcp.tools)
+        shorten_tool_names(mcp.tools, mcp.operation_map)
+    return mcp
 
 
 def run_selftest() -> int:
@@ -61,24 +80,37 @@ def run_selftest() -> int:
     excluded = (*EXCLUDED_OPERATIONS, *mcp_settings.excluded_operation_ids)
     print("\n[tools]")
     try:
-        full = _build_probe(())
-        generated = _build_probe(excluded)
+        source_app = build_user_app()
+        full = _build_probe(source_app, ())
+        exposed = _build_probe(source_app, excluded, shorten=True)
         full_names = {tool.name for tool in full.tools}
-        names = {tool.name for tool in generated.tools}
+        names = {tool.name for tool in exposed.tools}
 
         print(f"  full     = {len(full_names)}")
         print(f"  exposed  = {len(names)}")
-        print(f"  excluded = {len(full_names - names)}")
-        print(f"  by source= {group_operations_by_resource(generated.operation_map)}")
+        print(f"  excluded = {len(excluded)}")
+        print(f"  by tag   = {group_operations_by_tag(source_app, exposed.operation_map)}")
 
         unknown = [name for name in excluded if name not in full_names]
         print(f"  unknown_excluded = {unknown or '无'}")
-        leaked = [name for name in EXCLUDED_OPERATIONS if name in names]
+        # 排除项写的是 operationId（full 的名字），泄漏判定必须按 path 比对，
+        # 否则工具名收敛后两者永远对不上
+        excluded_paths = {
+            str((full.operation_map.get(name) or {}).get("path", ""))
+            for name in EXCLUDED_OPERATIONS
+        }
+        leaked = sorted(
+            {
+                str(detail.get("path", ""))
+                for detail in exposed.operation_map.values()
+            }
+            & excluded_paths
+        )
         print(f"  leaked           = {leaked or '无'}")
         admin_leaks = sorted(
             {
                 str(detail.get("path", ""))
-                for detail in generated.operation_map.values()
+                for detail in exposed.operation_map.values()
                 if "admin" in [seg for seg in str(detail.get("path", "")).split("/") if seg]
             }
         )

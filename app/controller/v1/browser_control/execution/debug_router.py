@@ -95,14 +95,14 @@ def _build_auth_headers(auth_info: AuthInfo) -> dict[str, str]:
 
 @router.post(
     BrowserControlRouterPath.debug_actions_list,
-    operation_id="rpa_list_actions",
+    operation_id="rpa_debug_actions_list",
     summary="列出当前用户的自定义动作",
 )
 async def list_debug_actions(
     request: ListActionsRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[DebugActionListData]:
-    """按名称模糊搜索动作，返回 action_id / name / steps_count。
+    """按名称模糊搜索动作，返回 action_id / name / steps_count / is_enabled / is_public / updated_at。
 
     调试任何动作的第一步：先拿到 action_id（复合动作为雪花 int）。
     """
@@ -117,7 +117,7 @@ async def list_debug_actions(
 
 @router.post(
     BrowserControlRouterPath.debug_actions_get,
-    operation_id="rpa_get_action",
+    operation_id="rpa_debug_action_get",
     summary="导出动作全量定义（含 steps）",
 )
 async def get_debug_action(
@@ -134,14 +134,14 @@ async def get_debug_action(
 
 @router.post(
     BrowserControlRouterPath.debug_action_logs_recent,
-    operation_id="rpa_get_action_logs",
+    operation_id="rpa_debug_action_logs",
     summary="查动作最近的执行日志",
 )
 async def recent_action_logs(
     request: RecentActionLogsRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[RecentActionLogsData]:
-    """查某动作最近 N 条执行日志；返回的 execution_id 可喂给 rpa_get_run_logs。"""
+    """查某动作最近 N 条执行日志；返回的 execution_id 可喂给 rpa_debug_run_logs。"""
     data = await debug_service.recent_action_logs(
         auth.mid, action_id=request.action_id, limit=request.limit
     )
@@ -153,7 +153,7 @@ async def recent_action_logs(
 
 @router.post(
     BrowserControlRouterPath.debug_actions_validate,
-    operation_id="rpa_validate_steps",
+    operation_id="rpa_debug_steps_validate",
     summary="静态校验步骤（不联网、不开浏览器）",
 )
 async def validate_debug_steps(
@@ -179,7 +179,7 @@ async def validate_debug_steps(
 
 @router.post(
     BrowserControlRouterPath.debug_actions_execute,
-    operation_id="rpa_execute_action",
+    operation_id="rpa_debug_action_execute",
     summary="执行动作或内联步骤（默认先静态校验）",
 )
 async def execute_debug_action(
@@ -215,7 +215,7 @@ async def execute_debug_action(
 
 @router.post(
     BrowserControlRouterPath.debug_actions_save,
-    operation_id="rpa_save_action",
+    operation_id="rpa_debug_action_save",
     summary="落库动作定义（同名 upsert）并回读校验",
 )
 async def save_debug_action(
@@ -245,7 +245,7 @@ async def save_debug_action(
 
 @router.post(
     BrowserControlRouterPath.debug_workflows_run_and_wait,
-    operation_id="rpa_run_workflow",
+    operation_id="rpa_debug_workflow_run",
     summary="运行工作流并等待终态",
 )
 async def run_debug_workflow(
@@ -254,7 +254,7 @@ async def run_debug_workflow(
 ) -> StandardResponse[DebugRunData]:
     """启动一次工作流运行，服务端轮询运行记录直到终态或超时。
 
-    返回 ``execution_id`` 后即可用 ``rpa_get_run_logs`` 看步骤明细。
+    返回 ``execution_id`` 后即可用 ``rpa_debug_run_logs`` 看步骤明细。
     """
     try:
         data = await debug_service.run_workflow_and_wait(
@@ -271,7 +271,7 @@ async def run_debug_workflow(
 
 @router.post(
     BrowserControlRouterPath.debug_runs_logs,
-    operation_id="rpa_get_run_logs",
+    operation_id="rpa_debug_run_logs",
     summary="按运行/执行批次查步骤链路并定位失败步骤",
 )
 async def get_debug_run_logs(

@@ -321,12 +321,13 @@ class TestFetchExternalDataRpcMode:
         assert result.success
         payload = mock_call.call_args.args[1]
         # StrEnum 应被序列化为原始字符串值（如 'pubTime' 而非 enum 对象）；
-        # exclude_none=True 只剔除未设置的 None 字段，模型默认值（时间快捷筛选）
-        # 会一并下发，由服务端模型校验
+        # exclude_none=True 只剔除未设置的 None 字段，模型默认值（时间快捷筛选 /
+        # 排除官方抽奖）会一并下发，由服务端模型校验
         assert payload == {
             "page_num": 1,
             "page_size": 50,
             "is_lot": True,
+            "exclude_official_lot": True,
             "sort_by": "pubTime",
             "sort_order": "desc",
             "pub_time_start": 1700000000,

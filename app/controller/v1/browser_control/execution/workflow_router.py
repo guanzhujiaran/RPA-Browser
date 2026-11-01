@@ -55,9 +55,12 @@ from app.models.workflow.models import (
     WorkflowDetailResponse,
     WorkflowListItemResponse,
     WorkflowCreateResponse,
+    WorkflowDuplicateRequest,
     WorkflowDuplicateResponse,
     WorkflowForkRequest,
     WorkflowForkResponse,
+    WorkflowIdRequest,
+    WorkflowRunDetailRequest,
     WorkflowSyncRequest,
     WorkflowSyncResponse,
     WorkflowStepExecuteRequest,
@@ -250,20 +253,17 @@ async def import_workflow(
 
 @router.post(BrowserControlRouterPath.workflows_export, summary="导出工作流为 JSON")
 async def export_workflow(
-    request: dict,
+    request: WorkflowIdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowCreateRequest]:
-    """导出工作流
+    """导出工作流为 JSON
 
     返回体与「创建 / 导入」请求体字段完全一致，可直接保存为 .json 后再由导入接口还原。
 
     Args:
-        request: {"id": <工作流ID>}
+        request: {"id": <工作流数据库 ID>}
     """
-    workflow_id = request.get("id")
-    if not workflow_id:
-        return error_response(400, "缺少工作流ID")
-
+    workflow_id = request.id
     model = await workflow_crud_svr.get_by_id(workflow_id)
     if not model or str(model.mid) != str(auth.mid):
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
@@ -379,19 +379,15 @@ async def list_workflows(
 
 @router.post(BrowserControlRouterPath.workflows_get, summary="获取工作流详情")
 async def get_workflow_detail(
-    request: dict,
+    request: WorkflowIdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDetailResponse]:
-    """获取工作流详情
+    """按工作流数据库 ID 获取详情（触发配置 / 关联动作 / 上游同步状态）。
 
     Args:
-        request: {"id": <工作流ID>}
+        request: {"id": <工作流数据库 ID>}；`workflow_id`（雪花）不是本接口主键
     """
-    workflow_id = request.get("id")
-    if not workflow_id:
-        return error_response(400, "缺少工作流ID")
-
-    model = await workflow_crud_svr.get_by_id(workflow_id)
+    model = await workflow_crud_svr.get_by_id(request.id)
     if not model or str(model.mid) != str(auth.mid):
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
 
@@ -561,18 +557,15 @@ async def update_workflow(
 
 @router.post(BrowserControlRouterPath.workflows_delete, summary="删除工作流")
 async def delete_workflow(
-    request: dict,
+    request: WorkflowIdRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[dict]:
-    """删除工作流
+    """删除工作流（同时摘掉它的定时任务，避免删除后仍被 cron 拉起）。
 
     Args:
-        request: {"id": <工作流ID>}
+        request: {"id": <工作流数据库 ID>}
     """
-    workflow_id = request.get("id")
-    if not workflow_id:
-        return error_response(400, "缺少工作流ID")
-
+    workflow_id = request.id
     model = await workflow_crud_svr.get_by_id(workflow_id)
     if not model or str(model.mid) != str(auth.mid):
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在或无权限")
@@ -589,21 +582,16 @@ async def delete_workflow(
 
 @router.post(BrowserControlRouterPath.workflows_duplicate, summary="复制工作流")
 async def duplicate_workflow(
-    request: dict,
+    request: WorkflowDuplicateRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowDuplicateResponse]:
-    """复制工作流
+    """复制工作流（副本始终为私有，不继承公开状态）。
 
     Args:
-        request: {"id": <工作流ID>, "new_name": <新名称>}
+        request: {"id": <原工作流数据库 ID>, "new_name": <副本名称，必填>}
     """
-    workflow_id = request.get("id")
-    new_name = request.get("new_name")
-
-    if not workflow_id:
-        return error_response(400, "缺少工作流ID")
-    if not new_name:
-        return error_response(400, "缺少新名称")
+    workflow_id = request.id
+    new_name = request.new_name
 
     # 获取原工作流
     original = await workflow_crud_svr.get_by_id(workflow_id)
@@ -824,9 +812,11 @@ async def execute_workflow_step(
     request: WorkflowStepExecuteRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowStepExecuteResponse]:
-    """单步执行工作流
+    """单步执行步骤列表中的指定一项（调试用）
 
-    执行工作流中的指定步骤，用于调试和逐步执行
+    与「运行工作流」无关：调用方把整份 `steps` 传进来，本接口只执行
+    `steps[step_index]` 这一项，不读数据库里的工作流定义、也不写运行记录。
+    目标浏览器取自 body 的 `browser_id`（数字字符串）与 `page_index`。
     """
     try:
         if request.step_index < 0 or request.step_index >= len(request.steps):
@@ -895,8 +885,10 @@ async def run_saved_workflow(
     """立即运行一次已保存的工作流
 
     工作流是调度外壳：此处按工作流引用的动作顺序执行其步骤，并写入运行记录。
-    目标浏览器以 **query 的 browser_id 为准**（由 verify_browser_ownership 校验归属），
-    body 中的 browser_id 仅作兼容保留、不参与决策；未指定浏览器时回落到工作流配置的 browser_id。
+
+    目标浏览器**必须**通过 query 的 `browser_id` 指定（由 verify_browser_ownership
+    校验归属，缺失直接 422）；body 里的 `browser_id` 仅为兼容旧调用保留，不参与决策，
+    也不会回落到工作流配置的浏览器。
 
     执行是**异步**的：本接口立即返回 ``run_id``（``status=running``），真正的执行在
     后台 task 中进行；前端凭 run_id 轮询运行记录或调用停止接口。
@@ -1300,9 +1292,9 @@ async def delete_workflow_resources(
     """删除「已处理资源」记录（下次取数会被重新捞起）。
 
     支持三种用法：
-      - 列表页勾选：传 `ids`；
+      - 列表页勾选：传 `ids`（记录主键）；
       - 单条/条件清理：传 `resource_type` + `resource_id`（精确）等；
-      - 清理某一轮运行的误记：传 `run_id`。
+      - 清理某一轮执行的误记：传 `execution_id`（执行批次 ID，**不是** run_id）。
 
     `dry_run=true` 只返回将删除的条数，供前端二次确认。
     """
@@ -1348,19 +1340,15 @@ async def delete_workflow_resources(
     BrowserControlRouterPath.workflows_runs_get, summary="获取工作流运行记录详情"
 )
 async def get_workflow_run(
-    request: dict,
+    request: WorkflowRunDetailRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[WorkflowRunLogDetailResponse]:
-    """按 run_id 获取运行记录详情
+    """按 run_id 获取运行记录详情（返回体与运行记录列表项同构）。
 
     Args:
         request: {"run_id": "<运行ID>"}
     """
-    run_id = request.get("run_id")
-    if not run_id:
-        return error_response(400, "缺少 run_id")
-
-    model = await workflow_run_crud_svr.get_by_run_id(run_id, auth.mid)
+    model = await workflow_run_crud_svr.get_by_run_id(request.run_id, auth.mid)
     if not model:
         return error_response(ResponseCode.WORKFLOW_RUN_NOT_FOUND, "运行记录不存在")
     return success_response(

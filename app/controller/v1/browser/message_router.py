@@ -32,6 +32,7 @@ router = new_notify_router()
 
 @router.post(
     NotifyRouterPath.upsert_notify_config,
+    summary="创建或更新推送通知配置",
     response_model=StandardResponse[NotificationConfigUpsertResp],
 )
 async def upsert_notify_config_router(
@@ -91,6 +92,7 @@ async def upsert_notify_config_router(
 
 @router.post(
     NotifyRouterPath.read_notify_config,
+    summary="读取推送通知配置",
     response_model=StandardResponse[NotificationConfig | None],
 )
 async def read_notify_config_router(
@@ -128,6 +130,7 @@ async def read_notify_config_router(
 
 @router.post(
     NotifyRouterPath.delete_notify_config,
+    summary="删除推送通知配置",
     response_model=StandardResponse[NotificationConfigDeleteResp],
 )
 async def delete_notify_config_router(

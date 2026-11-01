@@ -48,9 +48,12 @@ class GetSettingsRequest(SQLModel):
     pass
 
 
-@router.post(UserBrowserDefaultSettingRouterPath.get_settings)
+@router.post(
+    UserBrowserDefaultSettingRouterPath.get_settings,
+    summary="获取用户默认设置",
+)
 async def get_user_default_settings(
-    req: GetSettingsRequest,
+    req: GetSettingsRequest = GetSettingsRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> StandardResponse[UserBrowserDefaultSettingResponse | None]:
@@ -71,7 +74,10 @@ async def get_user_default_settings(
     return success_response(UserBrowserDefaultSettingResponse(**response_data))
 
 
-@router.post(UserBrowserDefaultSettingRouterPath.create_or_update_settings)
+@router.post(
+    UserBrowserDefaultSettingRouterPath.create_or_update_settings,
+    summary="创建或更新用户默认设置",
+)
 async def create_or_update_user_default_settings(
     request: UserBrowserDefaultSettingRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
@@ -96,9 +102,12 @@ class DeleteSettingsRequest(SQLModel):
     pass
 
 
-@router.post(UserBrowserDefaultSettingRouterPath.delete_settings)
+@router.post(
+    UserBrowserDefaultSettingRouterPath.delete_settings,
+    summary="删除用户默认设置",
+)
 async def delete_user_default_settings(
-    req: DeleteSettingsRequest,
+    req: DeleteSettingsRequest = DeleteSettingsRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> StandardResponse[bool]:
@@ -119,7 +128,10 @@ class ApplySettingsRequest(VerifyBrowserDependsReq):
     pass
 
 
-@router.post(UserBrowserDefaultSettingRouterPath.apply_settings)
+@router.post(
+    UserBrowserDefaultSettingRouterPath.apply_settings,
+    summary="把默认设置应用到浏览器实例",
+)
 async def apply_default_settings_to_browser(
     browser_auth: BrowserReqAuthInfo = Depends(verify_browser_ownership),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
@@ -150,7 +162,10 @@ class GetServerDefaultsRequest(SQLModel):
     pass
 
 
-@router.post(UserBrowserDefaultSettingRouterPath.get_server_user_setting_defaults)
+@router.post(
+    UserBrowserDefaultSettingRouterPath.get_server_user_setting_defaults,
+    summary="获取服务端默认设置",
+)
 async def get_server_default_settings() -> StandardResponse[
     UserBrowserDefaultSettingResponse
 ]:
