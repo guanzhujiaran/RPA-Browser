@@ -362,8 +362,11 @@ class WorkflowRunRecord(SQLModel, table=True):
     """工作流运行记录 - 一次运行的聚合视图
 
     步骤级明细仍落在 ActionLogRecord（source=workflow + workflow_id，
-    由 ExecutionEngine.execute_steps 自动写入，可经 execution_id 下钻）；
+    由 ExecutionEngine.execute_steps 自动写入，按 execution_id 下钻，其值恒等于本表 run_id）；
     本表只记录「一次运行」的汇总，不依赖 action 的 log_enabled 配置。
+
+    执行批次ID 不再单独存列：工作流运行里 `execution_id == run_id`，重复落库只会
+    产生两份同值数据（历史上确实冗余存过一列，已随迁移删除）。
     """
 
     __table_args__ = (
@@ -398,12 +401,6 @@ class WorkflowRunRecord(SQLModel, table=True):
     total: int = Field(default=0, description="步骤总数")
     success_count: int = Field(default=0, description="成功步骤数")
     failed_count: int = Field(default=0, description="失败步骤数")
-    execution_id: str = Field(
-        default="",
-        max_length=64,
-        index=True,
-        description="关联执行批次ID，可下钻 ActionLogRecord 步骤日志",
-    )
     error_message: str | None = Field(
         default=None, max_length=2000, description="失败原因"
     )

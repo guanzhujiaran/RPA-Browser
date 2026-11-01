@@ -86,11 +86,14 @@ class WorkflowResourceRecord(BaseSQLModel, table=True):
         index=True,
         description="执行浏览器ID（雪花 int，工作流绑定浏览器，去重按浏览器隔离）",
     )
-    run_id: str | None = Field(
+    execution_id: str | None = Field(
         default=None,
         max_length=64,
         index=True,
-        description="最近一次处理该资源的工作流运行ID（WorkflowRunRecord.run_id）",
+        description=(
+            "最近一次处理该资源的执行批次ID（工作流运行场景 = WorkflowRunRecord.run_id），"
+            "与 ActionLogRecord.execution_id 同名同值，可直接下钻步骤日志"
+        ),
     )
     resource_type: str = Field(
         max_length=64,

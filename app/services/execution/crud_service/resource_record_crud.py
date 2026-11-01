@@ -5,7 +5,10 @@
     - filter_pending：在给定 id 列表中剔除已成功项（取数后做差集）；
     - upsert_result / bulk_upsert：处理完成后幂等回写结果（依赖唯一约束）；
     - reset：清空记录，使其可被重新处理；
-    - list_history：分页查询处理记录。
+    - list_history / list_records：分页查询处理记录。
+
+执行批次标识统一叫 `execution_id`（工作流运行场景下等于 WorkflowRunRecord.run_id），
+与 ActionLogRecord.execution_id 同名同值，可直接按该字段下钻步骤日志。
 
 去重作用域：mid + workflow_id + resource_type + resource_id（按工作流隔离）。
 仅 status=success 参与去重；failed/skipped 不影响下次捞取。
@@ -110,7 +113,7 @@ class ResourceRecordService:
         success: bool,
         *,
         status: ResourceProcessStatus | None = None,
-        run_id: str | None = None,
+        execution_id: str | None = None,
         fail_reason: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
@@ -131,7 +134,7 @@ class ResourceRecordService:
             [resource_id],
             success,
             status=status,
-            run_id=run_id,
+            execution_id=execution_id,
             fail_reason=fail_reason,
             extra=extra,
         )
@@ -146,7 +149,7 @@ class ResourceRecordService:
         success: bool,
         *,
         status: ResourceProcessStatus | None = None,
-        run_id: str | None = None,
+        execution_id: str | None = None,
         fail_reason: str | None = None,
         extra_map: dict[str, dict[str, Any]] | None = None,
         extra: dict[str, Any] | None = None,
@@ -176,7 +179,7 @@ class ResourceRecordService:
                     "browser_id": int(browser_id or 0),
                     "resource_type": resource_type,
                     "resource_id": raw,
-                    "run_id": run_id,
+                    "execution_id": execution_id,
                     "status": status,
                     # 只有 success 才丢弃原因：skipped 是「终态跳过」，原因（如
                     # 「已点赞，视为已参与」「活动已结束」）恰恰是排查误记的唯一线索，
@@ -199,7 +202,7 @@ class ResourceRecordService:
 
         stmt = mysql_insert(WorkflowResourceRecord).values(rows)
         stmt = stmt.on_duplicate_key_update(
-            run_id=stmt.inserted.run_id,
+            execution_id=stmt.inserted.execution_id,
             status=stmt.inserted.status,
             fail_reason=stmt.inserted.fail_reason,
             extra=stmt.inserted.extra,
@@ -246,7 +249,7 @@ class ResourceRecordService:
         resource_type: str | None = None,
         status: ResourceProcessStatus | None = None,
         resource_id: str | None = None,
-        run_id: str | None = None,
+        execution_id: str | None = None,
         dry_run: bool = False,
     ) -> int:
         """删除已处理资源记录（使这些资源重新参与取数），返回删除条数。
@@ -260,7 +263,7 @@ class ResourceRecordService:
 
         Args:
             ids: 记录主键（列表页勾选删除）。
-            run_id: 所属运行ID（清理「某一轮运行」写入的记录）。
+            execution_id: 执行批次ID（清理「某一轮运行」写入的记录）。
             resource_id: 业务主键，**精确匹配**（与列表页的模糊搜索语义不同）。
         """
         conditions = [
@@ -285,13 +288,13 @@ class ResourceRecordService:
             conditions.append(
                 WorkflowResourceRecord.resource_id == _norm_id(resource_id)
             )
-        if run_id:
-            conditions.append(WorkflowResourceRecord.run_id == run_id)
+        if execution_id:
+            conditions.append(WorkflowResourceRecord.execution_id == execution_id)
 
         if len(conditions) <= 2:
             raise ValueError(
                 "缺少删除条件：除工作流外至少指定 ids / browser_id / resource_type / "
-                "status / resource_id / run_id 之一"
+                "status / resource_id / execution_id 之一"
             )
 
         async with DatabaseSessionManager.async_session() as session:
@@ -383,8 +386,8 @@ class ResourceRecordService:
             conditions.append(
                 WorkflowResourceRecord.resource_id.like(f"%{resource_id}%")  # type: ignore[attr-defined]
             )
-        if run_id:
-            conditions.append(WorkflowResourceRecord.run_id == run_id)
+        if execution_id:
+            conditions.append(WorkflowResourceRecord.execution_id == execution_id)
         if process_count_min is not None:
             conditions.append(
                 WorkflowResourceRecord.process_count >= int(process_count_min)
@@ -440,7 +443,7 @@ class ResourceRecordService:
         resource_type: str | None = None,
         status: ResourceProcessStatus | None = None,
         resource_id: str | None = None,
-        run_id: str | None = None,
+        execution_id: str | None = None,
         process_count_min: int | None = None,
         process_count_max: int | None = None,
         processed_from: datetime | None = None,
@@ -467,8 +470,8 @@ class ResourceRecordService:
             conditions.append(
                 WorkflowResourceRecord.resource_id.like(f"%{resource_id}%")  # type: ignore[attr-defined]
             )
-        if run_id:
-            conditions.append(WorkflowResourceRecord.run_id == run_id)
+        if execution_id:
+            conditions.append(WorkflowResourceRecord.execution_id == execution_id)
         if process_count_min is not None:
             conditions.append(
                 WorkflowResourceRecord.process_count >= int(process_count_min)

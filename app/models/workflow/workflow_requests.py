@@ -318,7 +318,10 @@ class WorkflowResourceRecordListRequest(BasePaginationReq):
     resource_id: str | None = Field(
         default=None, description="业务主键，支持模糊匹配（LIKE %keyword%）"
     )
-    run_id: str | None = Field(default=None, description="所属运行ID（精确）")
+    execution_id: str | None = Field(
+        default=None,
+        description="执行批次ID（精确；= 工作流运行 run_id，与操作日志 execution_id 同名同值）",
+    )
     # 处理次数区间
     process_count_min: int | None = Field(default=None, description="处理次数下限（含）")
     process_count_max: int | None = Field(default=None, description="处理次数上限（含）")
@@ -381,8 +384,8 @@ class WorkflowResourceRecordDeleteRequest(SQLModel):
     resource_id: str | None = Field(
         default=None, description="按业务主键精确匹配（非模糊）"
     )
-    run_id: str | None = Field(
-        default=None, description="按所属运行ID过滤（清理某一轮运行写入的记录）"
+    execution_id: str | None = Field(
+        default=None, description="按执行批次ID过滤（清理某一轮运行写入的记录）"
     )
     dry_run: bool = Field(
         default=False, description="true=只统计将删除的条数，不实际删除"

@@ -1,25 +1,26 @@
-"""RPA-Browser 主库单条基线（2026-10-30 二次合并）
+"""RPA-Browser 主库单条基线（2026-11-01 三次合并）
 
 RPA-Browser 主库（`BiliRPADB`）基线：**全量建表 DDL**，由
 `alembic revision --autogenerate` 对空库生成，代表「当前模型」定义出的完整结构。
 
-2026-10-30 二次合并：在 2026-10-21 基线之上又累积了 4 条增量
-（`20261021_wf_run_queue` 排队字段、`20261025_log_debug` 调试三态、
-`20261030_proxy_bypass` 代理绕过、`20261030_log_page_snapshot` 报错页面快照），
-再次合并为单条基线。生成流程与验收见 docs/alembic基线合并计划书.md：备份旧链 →
-空库 autogenerate → 与真实库做 information_schema 表/列/索引逐项 diff（差异必须为空）→
+2026-11-01 三次合并：在 `20261030_rpa_baseline` 之上又累积了 4 条增量
+（`20261031_wf_notify_channels` 运行通知 2×2 通道、`20261031_rpa_feedback_report`
+报错反馈表、`20261101_action_content_hash` 动作内容指纹、
+`20261101_unify_execution_id` 执行批次标识统一），再次合并为单条基线。
+
+生成流程与验收见 docs/alembic基线合并计划书.md §4.3：备份旧链 → 空库 autogenerate →
+与真实库做 information_schema 表/列/索引逐项 diff（差异必须为空）→
 `alembic stamp` 真实库 → 临时库上 `downgrade base` / `upgrade head` 可重复执行。
 
-本次合并顺带修正了旧链遗留的两处库与模型不一致：
-- `compositeactionmodel.action_type` 枚举补齐 `PARALLEL`；
-- `compositeactionmodel.log_record_page_snapshot` 由可空改为 NOT NULL（与模型一致）。
+增量脚本里的数据回填（`userworkflow` 通知列从旧开关复制）随合并消失：服务尚未上线，
+空库无存量行；真实库早已执行过旧脚本，数据不受影响。
 
 用法：`alembic upgrade head` 即可从零建出全部表，无需任何手工 DDL。
 之后所有结构演进都从本条 autogenerate 增量追加。
 
-Revision ID: 20261030_rpa_baseline
+Revision ID: 20261101_rpa_baseline
 Revises:
-Create Date: 2026-10-30 23:28:12.184011
+Create Date: 2026-11-01 18:55:30.572557
 
 """
 from typing import Sequence, Union
@@ -30,7 +31,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = '20261030_rpa_baseline'
+revision: str = '20261101_rpa_baseline'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -139,6 +140,7 @@ def upgrade() -> None:
     sa.Column('action_id', sa.BIGINT(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=200), nullable=False),
     sa.Column('version', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
+    sa.Column('content_hash', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('action_type', sa.Enum('CLICK', 'INPUT', 'WAIT', 'SCROLL', 'NAVIGATE', 'SCREENSHOT', 'LLM', 'HOVER', 'NEW_PAGE', 'GET_TEXT', 'GET_WINDOW', 'FETCH_EXTERNAL_DATA', 'MARK_RESOURCE_RESULT', 'RANDOM_PICK', 'PRINT', 'SHUFFLE_LIST', 'SORT_LIST', 'BILI_RESERVE', 'PICK_LINE', 'NOTIFY', 'OPEN_PAGE', 'CLOSE_PAGE', 'LOOP', 'COMPOSITE', 'IF_ELSE', 'PARALLEL', name='builtinactiontype'), nullable=False),
     sa.Column('parameters_schema', sa.JSON(), nullable=True),
     sa.Column('steps', sa.JSON(), nullable=True),
@@ -149,6 +151,7 @@ def upgrade() -> None:
     sa.Column('input_vars', sa.JSON(), nullable=True),
     sa.Column('output_vars', sa.JSON(), nullable=True),
     sa.Column('forked_from_id', sa.Integer(), nullable=True),
+    sa.Column('last_synced_hash', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('timeout', sa.Integer(), nullable=False),
     sa.Column('retry_on_error', sa.Boolean(), nullable=False),
     sa.Column('retry_times', sa.Integer(), nullable=False),
@@ -422,6 +425,24 @@ def upgrade() -> None:
     op.create_index(op.f('ix_rpa_user_ban_mid'), 'rpa_user_ban', ['mid'], unique=False)
     op.create_index(op.f('ix_rpa_user_ban_scope'), 'rpa_user_ban', ['scope'], unique=False)
     op.create_index(op.f('ix_rpa_user_ban_status'), 'rpa_user_ban', ['status'], unique=False)
+    op.create_table('rpaerrorreport',
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.Column('report_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
+    sa.Column('mid', sa.BIGINT(), nullable=False),
+    sa.Column('category', sqlmodel.sql.sqltypes.AutoString(length=32), nullable=False),
+    sa.Column('title', sqlmodel.sql.sqltypes.AutoString(length=256), nullable=False),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.Column('context', sa.Text(), nullable=True),
+    sa.Column('status', sqlmodel.sql.sqltypes.AutoString(length=32), nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.PrimaryKeyConstraint('id'),
+    sqlite_autoincrement=True
+    )
+    op.create_index(op.f('ix_rpaerrorreport_created_at'), 'rpaerrorreport', ['created_at'], unique=False)
+    op.create_index(op.f('ix_rpaerrorreport_mid'), 'rpaerrorreport', ['mid'], unique=False)
+    op.create_index(op.f('ix_rpaerrorreport_report_id'), 'rpaerrorreport', ['report_id'], unique=True)
+    op.create_index(op.f('ix_rpaerrorreport_status'), 'rpaerrorreport', ['status'], unique=False)
     op.create_table('signinrecord',
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -559,6 +580,10 @@ def upgrade() -> None:
     sa.Column('last_run_at', sa.DateTime(), nullable=True),
     sa.Column('last_run_status', sqlmodel.sql.sqltypes.AutoString(length=20), nullable=True),
     sa.Column('next_run_at', sa.DateTime(), nullable=True),
+    sa.Column('notify_inbox_on_start', sa.Boolean(), nullable=False),
+    sa.Column('notify_inbox_on_end', sa.Boolean(), nullable=False),
+    sa.Column('notify_push_on_start', sa.Boolean(), nullable=False),
+    sa.Column('notify_push_on_end', sa.Boolean(), nullable=False),
     sa.Column('notify_on_start', sa.Boolean(), nullable=False),
     sa.Column('notify_on_end', sa.Boolean(), nullable=False),
     sa.Column('log_enabled', sa.Boolean(), nullable=True),
@@ -616,7 +641,7 @@ def upgrade() -> None:
     sa.Column('mid', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
     sa.Column('workflow_id', sa.BIGINT(), nullable=False),
     sa.Column('browser_id', sa.BIGINT(), nullable=False),
-    sa.Column('run_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
+    sa.Column('execution_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=True),
     sa.Column('resource_type', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('resource_id', sqlmodel.sql.sqltypes.AutoString(length=128), nullable=False),
     sa.Column('status', sa.Enum('SUCCESS', 'FAILED', 'SKIPPED', name='resourceprocessstatus'), nullable=False),
@@ -632,9 +657,9 @@ def upgrade() -> None:
     op.create_index('idx_wf_resource_run_time', 'workflowresourcerecord', ['workflow_id', 'updated_at'], unique=False)
     op.create_index(op.f('ix_workflowresourcerecord_browser_id'), 'workflowresourcerecord', ['browser_id'], unique=False)
     op.create_index(op.f('ix_workflowresourcerecord_created_at'), 'workflowresourcerecord', ['created_at'], unique=False)
+    op.create_index(op.f('ix_workflowresourcerecord_execution_id'), 'workflowresourcerecord', ['execution_id'], unique=False)
     op.create_index(op.f('ix_workflowresourcerecord_last_processed_at'), 'workflowresourcerecord', ['last_processed_at'], unique=False)
     op.create_index(op.f('ix_workflowresourcerecord_mid'), 'workflowresourcerecord', ['mid'], unique=False)
-    op.create_index(op.f('ix_workflowresourcerecord_run_id'), 'workflowresourcerecord', ['run_id'], unique=False)
     op.create_index(op.f('ix_workflowresourcerecord_status'), 'workflowresourcerecord', ['status'], unique=False)
     op.create_index(op.f('ix_workflowresourcerecord_workflow_id'), 'workflowresourcerecord', ['workflow_id'], unique=False)
     op.create_table('workflowrunrecord',
@@ -648,7 +673,6 @@ def upgrade() -> None:
     sa.Column('total', sa.Integer(), nullable=False),
     sa.Column('success_count', sa.Integer(), nullable=False),
     sa.Column('failed_count', sa.Integer(), nullable=False),
-    sa.Column('execution_id', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
     sa.Column('error_message', sqlmodel.sql.sqltypes.AutoString(length=2000), nullable=True),
     sa.Column('duration_ms', sa.Float(), nullable=False),
     sa.Column('started_at', sa.DateTime(), nullable=False),
@@ -676,7 +700,6 @@ def upgrade() -> None:
     op.create_index('idx_workflow_run_status_trigger', 'workflowrunrecord', ['status', 'trigger_source'], unique=False)
     op.create_index('idx_workflow_run_workflow_started', 'workflowrunrecord', ['workflow_id', 'started_at'], unique=False)
     op.create_index(op.f('ix_workflowrunrecord_browser_id'), 'workflowrunrecord', ['browser_id'], unique=False)
-    op.create_index(op.f('ix_workflowrunrecord_execution_id'), 'workflowrunrecord', ['execution_id'], unique=False)
     op.create_index(op.f('ix_workflowrunrecord_mid'), 'workflowrunrecord', ['mid'], unique=False)
     op.create_index(op.f('ix_workflowrunrecord_run_id'), 'workflowrunrecord', ['run_id'], unique=True)
     op.create_index(op.f('ix_workflowrunrecord_started_at'), 'workflowrunrecord', ['started_at'], unique=False)
@@ -701,7 +724,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_workflowrunrecord_started_at'), table_name='workflowrunrecord')
     op.drop_index(op.f('ix_workflowrunrecord_run_id'), table_name='workflowrunrecord')
     op.drop_index(op.f('ix_workflowrunrecord_mid'), table_name='workflowrunrecord')
-    op.drop_index(op.f('ix_workflowrunrecord_execution_id'), table_name='workflowrunrecord')
     op.drop_index(op.f('ix_workflowrunrecord_browser_id'), table_name='workflowrunrecord')
     op.drop_index('idx_workflow_run_workflow_started', table_name='workflowrunrecord')
     op.drop_index('idx_workflow_run_status_trigger', table_name='workflowrunrecord')
@@ -710,9 +732,9 @@ def downgrade() -> None:
     op.drop_table('workflowrunrecord')
     op.drop_index(op.f('ix_workflowresourcerecord_workflow_id'), table_name='workflowresourcerecord')
     op.drop_index(op.f('ix_workflowresourcerecord_status'), table_name='workflowresourcerecord')
-    op.drop_index(op.f('ix_workflowresourcerecord_run_id'), table_name='workflowresourcerecord')
     op.drop_index(op.f('ix_workflowresourcerecord_mid'), table_name='workflowresourcerecord')
     op.drop_index(op.f('ix_workflowresourcerecord_last_processed_at'), table_name='workflowresourcerecord')
+    op.drop_index(op.f('ix_workflowresourcerecord_execution_id'), table_name='workflowresourcerecord')
     op.drop_index(op.f('ix_workflowresourcerecord_created_at'), table_name='workflowresourcerecord')
     op.drop_index(op.f('ix_workflowresourcerecord_browser_id'), table_name='workflowresourcerecord')
     op.drop_index('idx_wf_resource_run_time', table_name='workflowresourcerecord')
@@ -750,6 +772,11 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_signinrecord_mid'), table_name='signinrecord')
     op.drop_index(op.f('ix_signinrecord_created_at'), table_name='signinrecord')
     op.drop_table('signinrecord')
+    op.drop_index(op.f('ix_rpaerrorreport_status'), table_name='rpaerrorreport')
+    op.drop_index(op.f('ix_rpaerrorreport_report_id'), table_name='rpaerrorreport')
+    op.drop_index(op.f('ix_rpaerrorreport_mid'), table_name='rpaerrorreport')
+    op.drop_index(op.f('ix_rpaerrorreport_created_at'), table_name='rpaerrorreport')
+    op.drop_table('rpaerrorreport')
     op.drop_index(op.f('ix_rpa_user_ban_status'), table_name='rpa_user_ban')
     op.drop_index(op.f('ix_rpa_user_ban_scope'), table_name='rpa_user_ban')
     op.drop_index(op.f('ix_rpa_user_ban_mid'), table_name='rpa_user_ban')

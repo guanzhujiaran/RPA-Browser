@@ -401,7 +401,8 @@ class DebugService:
             workflow_id=str(model.workflow_id),
             status=str(run.status),
             finished=finished,
-            execution_id=run.execution_id or "",
+            # 执行批次ID 恒等于 run_id（不再单独落库），对外仍以 execution_id 暴露
+            execution_id=run.run_id,
             total=run.total,
             success_count=run.success_count,
             failed_count=run.failed_count,
@@ -428,11 +429,8 @@ class DebugService:
             run = await workflow_run_crud_svr.get_by_run_id(run_id, mid)
             if run is None:
                 raise DebugServiceError(f"运行记录不存在: {run_id}")
-            resolved_execution_id = run.execution_id or ""
-            if not resolved_execution_id:
-                raise DebugServiceError(
-                    f"运行 {run_id} 尚无 execution_id（可能刚启动或未开启步骤日志）"
-                )
+            # 执行批次ID 恒等于 run_id：有运行记录就一定能定位到步骤日志
+            resolved_execution_id = run.run_id
         if not resolved_execution_id:
             raise DebugServiceError("需要提供 run_id 或 execution_id")
 

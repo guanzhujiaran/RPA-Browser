@@ -1,6 +1,7 @@
 # RPA Alembic 版本合并（单条基线重建）计划书（v1）
 
-> 状态：**已实施**（2026-10-21；2026-10-30 二次合并为 `20261030_rpa_baseline`，见 §4.2）
+> 状态：**已实施**（2026-10-21；2026-10-30 二次合并为 `20261030_rpa_baseline`，见 §4.2；
+> 2026-11-01 三次合并为 `20261101_rpa_baseline`，见 §4.3）
 > 结果：`alembic/versions` 只剩 `20261030_rpa_baseline.py` 一条；空库 `upgrade head` 建出 28 张表，
 > 与旧链回放结果结构比对「实质差异为空」；`downgrade base` → `upgrade head` 可重复执行；
 > `check_schemas()` 通过。
@@ -118,6 +119,28 @@ uv run alembic upgrade head
 |---|---|---|
 | `compositeactionmodel.action_type` | 枚举缺 `PARALLEL`（`check_schemas` 只比对类型大类，查不出枚举标签缺失） | 补齐 `PARALLEL` |
 | `compositeactionmodel.log_record_page_snapshot` | 手写增量建为可空 | 改为 `NOT NULL`（与模型 `bool = False` 一致） |
+
+### 4.3 三次合并（2026-11-01）
+
+在 `20261030_rpa_baseline` 之上又累积了 4 条增量，按同一流程（§2）第三次合并为单条基线
+`20261101_rpa_baseline`（替代 `20261030_rpa_baseline`）：
+
+| 被合并的增量 | 内容 |
+|---|---|
+| `20261031_wf_notify_channels` | `userworkflow` 通知「通道 × 时机」4 列 + 存量回填 |
+| `20261031_rpa_feedback_report` | 新建 `rpaerrorreport` 表（报错 / 反馈） |
+| `20261101_action_content_hash` | `compositeactionmodel` 增 `content_hash` / `last_synced_hash` |
+| `20261101_unify_execution_id` | 资源记录 `run_id` → `execution_id`；运行记录删冗余 `execution_id` 列 |
+
+要点：
+
+- 4 条增量都是纯结构变更（唯一的数据回填是 `userworkflow` 通知列从旧开关复制），合并进基线后
+  对空库无意义；真实库早已执行过旧脚本，不受影响；
+- 新基线由**空库 autogenerate** 生成，不是手工拼接，保证与当前模型逐字段一致；
+- 真实库结构未变，仅移动版本指针：`alembic stamp 20261101_rpa_baseline --purge`；
+- 临时空库上 `upgrade head` → `downgrade base` → `upgrade head` 可重复执行；
+- 与真实库做 information_schema 逐项 diff（表清单 / 列类型与可空性 / 索引），差异 0 项；
+  `alembic check` 报「No new upgrade operations detected」。
 
 ## 6. 已知非实质差异（可接受）
 

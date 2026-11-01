@@ -101,8 +101,8 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 action_name=self.metadata.name,
             )
 
-        # 工作流运行里 execution_id 即运行记录 run_id（workflow_runner 用同一个值），
-        # 只沿用 execution_id 一个名字，避免两套标识混淆；落库时写入 run_id 列
+        # 执行批次标识全链路统一叫 execution_id（工作流运行场景下等于 run_id），
+        # 落库列名同样是 execution_id，与 ActionLogRecord 同名，可直接按值下钻步骤日志
         execution_id = self.exec_meta.get("execution_id")
         effective_status = p.status or (
             ResourceProcessStatus.SUCCESS
@@ -118,7 +118,7 @@ class MarkResourceResultAction(BaseAction[MarkResourceResultParams]):
                 resource_id,
                 bool(p.success),
                 status=p.status,
-                run_id=str(execution_id) if execution_id else None,
+                execution_id=str(execution_id) if execution_id else None,
                 fail_reason=p.fail_reason,
                 extra=p.extra,
             )

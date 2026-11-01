@@ -382,7 +382,6 @@ class WorkflowRunCrudService:
                     status=status,
                     success_count=success_count,
                     failed_count=failed_count,
-                    execution_id=execution_id,
                     error_message=(error_message or None),
                     duration_ms=duration_ms,
                     finished_at=datetime.now(),
@@ -779,7 +778,9 @@ class WorkflowRunCrudService:
             "total": model.total,
             "success_count": model.success_count,
             "failed_count": model.failed_count,
-            "execution_id": model.execution_id,
+            # 执行批次ID 不再单独落库：工作流运行场景下它恒等于 run_id，
+            # 对外仍以 execution_id 字段暴露，与操作日志 / 已处理数据同名同值
+            "execution_id": model.run_id,
             "error_message": model.error_message,
             "duration_ms": model.duration_ms,
             "started_at": model.started_at,

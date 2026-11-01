@@ -148,6 +148,7 @@ class WorkflowRunLogItemResponse(SQLModel):
     total: int = 0
     success_count: int = 0
     failed_count: int = 0
+    #: 执行批次ID（工作流运行场景恒等于 run_id，供按值下钻 ActionLogRecord 步骤日志）
     execution_id: str = ""
     error_message: str | None = None
     duration_ms: float = 0.0
@@ -174,7 +175,7 @@ class WorkflowRunLogItemResponse(SQLModel):
 
 
 class WorkflowRunLogDetailResponse(WorkflowRunLogItemResponse):
-    """工作流运行记录详情（携带 execution_id 供下钻步骤日志）"""
+    """工作流运行记录详情（携带 execution_id = run_id，供下钻步骤日志）"""
 
 
 class WorkflowRunStopResponse(SQLModel):
@@ -271,7 +272,7 @@ class WorkflowResourceRecordItemResponse(SQLModel):
     status: str
     process_count: int = 1
     fail_reason: str | None = None
-    run_id: str | None = None
+    execution_id: str | None = None
     extra: dict[str, Any] | None = None
     first_processed_at: datetime | None = None
     last_processed_at: datetime | None = None

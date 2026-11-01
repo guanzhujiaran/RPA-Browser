@@ -628,7 +628,6 @@ async def run_workflow(
             status=status,
             success_count=success_count,
             failed_count=failed_count,
-            execution_id=execution_id,
             error_message=error_message,
             duration_ms=duration_ms,
             resumable=resumable,

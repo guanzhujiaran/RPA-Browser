@@ -1168,7 +1168,7 @@ async def list_workflow_resources(
         resource_type=request.resource_type,
         status=status_filter,
         resource_id=request.resource_id,
-        run_id=request.run_id,
+        execution_id=request.execution_id,
         process_count_min=request.process_count_min,
         process_count_max=request.process_count_max,
         processed_from=request.processed_from,
@@ -1184,7 +1184,7 @@ async def list_workflow_resources(
             status=str(row.status),
             process_count=row.process_count,
             fail_reason=row.fail_reason,
-            run_id=row.run_id,
+            execution_id=row.execution_id,
             extra=row.extra,
             first_processed_at=row.first_processed_at,
             last_processed_at=row.last_processed_at,
@@ -1221,7 +1221,7 @@ def _resource_item_response(
         status=str(row.status),
         process_count=row.process_count,
         fail_reason=row.fail_reason,
-        run_id=row.run_id,
+        execution_id=row.execution_id,
         extra=row.extra,
         first_processed_at=row.first_processed_at,
         last_processed_at=row.last_processed_at,
@@ -1326,7 +1326,7 @@ async def delete_workflow_resources(
             resource_type=request.resource_type,
             status=status,
             resource_id=request.resource_id,
-            run_id=request.run_id,
+            execution_id=request.execution_id,
             dry_run=request.dry_run,
         )
     except ValueError as exc:
@@ -1335,7 +1335,7 @@ async def delete_workflow_resources(
     logger.info(
         f"[WorkflowRouter] 删除资源记录: workflow={request.workflow_id}, "
         f"ids={request.ids}, type={request.resource_type}, status={status}, "
-        f"run={request.run_id}, dry_run={request.dry_run}, count={deleted}"
+        f"execution={request.execution_id}, dry_run={request.dry_run}, count={deleted}"
     )
     return success_response(
         WorkflowResourceRecordDeleteResponse(

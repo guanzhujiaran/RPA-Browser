@@ -91,8 +91,8 @@ class RunWorkflowRequest(BaseModel):
 class RunLogsRequest(BaseModel):
     """按运行 / 执行批次查步骤日志。"""
 
-    run_id: str | None = Field(default=None, description="运行 ID（自动取其 execution_id）")
-    execution_id: str | None = Field(default=None, description="执行批次 ID")
+    run_id: str | None = Field(default=None, description="运行 ID（与 execution_id 同值）")
+    execution_id: str | None = Field(default=None, description="执行批次 ID（工作流运行里 = run_id）")
     max_items: int = Field(default=200, ge=1, le=2000, description="最多拉取的日志条数")
     only_failed: bool = Field(default=False, description="只返回失败步骤")
     detail_limit: int = Field(default=10, ge=0, le=50, description="失败项下钻详情的条数上限")
