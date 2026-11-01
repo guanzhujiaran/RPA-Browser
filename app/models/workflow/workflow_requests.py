@@ -14,13 +14,68 @@ from app.models.base.base_sqlmodel import BasePaginationReq
 from app.models.workflow.enums import FilterType, SortBy, SortOrder
 from dataclasses import dataclass
 from datetime import datetime
-from pydantic import Field
+from pydantic import Field, model_validator
 from sqlmodel import SQLModel
-from typing import Any
+from typing import Any, Self
 from app.models.workflow.step_models import WorkflowStepRequest
 
 
-class WorkflowCreateRequest(SQLModel):
+class WorkflowNotifyMatrixRequest(SQLModel):
+    """运行通知「通道 × 时机」矩阵入参（见 docs/通知动作与运行告警计划书.md §E）
+
+    新字段 ``notify_{inbox,push}_on_{start,end}`` 是唯一语义来源；旧字段
+    ``notify_on_start`` / ``notify_on_end`` 已废弃，仅在对应新字段**未显式传入**时
+    按「双通道」展开——用 ``model_fields_set`` 判定，不把默认值误当用户意图。
+    """
+
+    notify_on_start: bool | None = Field(
+        default=None,
+        description=(
+            "【已废弃】通道混合的开始通知开关；请改用 notify_inbox_on_start / "
+            "notify_push_on_start（仅在对应新字段未传时按双通道展开）"
+        ),
+    )
+    notify_on_end: bool | None = Field(
+        default=None,
+        description=(
+            "【已废弃】通道混合的结束通知开关；请改用 notify_inbox_on_end / "
+            "notify_push_on_end（仅在对应新字段未传时按双通道展开）"
+        ),
+    )
+    notify_inbox_on_start: bool | None = Field(
+        default=None, description="站内通知：开始执行时是否发送"
+    )
+    notify_inbox_on_end: bool | None = Field(
+        default=None, description="站内通知：结束时（成功/失败/停止）是否发送"
+    )
+    notify_push_on_start: bool | None = Field(
+        default=None, description="站外推送：开始执行时是否发送"
+    )
+    notify_push_on_end: bool | None = Field(
+        default=None, description="站外推送：结束时（成功/失败/停止）是否发送"
+    )
+
+    @model_validator(mode="after")
+    def _expand_deprecated_notify_flags(self) -> Self:
+        """旧字段兼容：按双通道展开到对应时机，新字段显式传入时以新字段为准"""
+        provided = self.model_fields_set
+        for legacy, inbox, push in (
+            ("notify_on_start", "notify_inbox_on_start", "notify_push_on_start"),
+            ("notify_on_end", "notify_inbox_on_end", "notify_push_on_end"),
+        ):
+            if legacy not in provided:
+                continue
+            value = getattr(self, legacy)
+            if value is None:
+                continue
+            if inbox not in provided:
+                setattr(self, inbox, value)
+            if push not in provided:
+                setattr(self, push, value)
+        return self
+
+
+class WorkflowCreateRequest(WorkflowNotifyMatrixRequest):
     """创建工作流请求 - 工作流是调度外壳，只引用已有动作"""
 
     name: str = Field(description="工作流显示名称（必填）")
@@ -38,11 +93,17 @@ class WorkflowCreateRequest(SQLModel):
         default_factory=dict, description="触发配置，cron 触发时为 {cron: 表达式}"
     )
     is_public: bool = Field(default=False, description="是否公开给所有用户")
-    notify_on_start: bool = Field(
-        default=False, description="开始执行时是否发送通知"
+    notify_inbox_on_start: bool = Field(
+        default=False, description="站内通知：开始执行时是否发送"
     )
-    notify_on_end: bool = Field(
-        default=True, description="结束时是否发送通知（成功/失败）"
+    notify_inbox_on_end: bool = Field(
+        default=True, description="站内通知：结束时（成功/失败/停止）是否发送"
+    )
+    notify_push_on_start: bool = Field(
+        default=False, description="站外推送：开始执行时是否发送"
+    )
+    notify_push_on_end: bool = Field(
+        default=True, description="站外推送：结束时（成功/失败/停止）是否发送"
     )
     log_enabled: bool | None = Field(
         default=None,
@@ -76,7 +137,7 @@ class WorkflowCreateRequest(SQLModel):
     )
 
 
-class WorkflowUpdateRequest(SQLModel):
+class WorkflowUpdateRequest(WorkflowNotifyMatrixRequest):
     """更新工作流请求"""
 
     id: int = Field(description="工作流数据库ID")
@@ -92,11 +153,17 @@ class WorkflowUpdateRequest(SQLModel):
     trigger_config: dict | None = Field(default=None, description="触发配置")
     is_public: bool | None = Field(default=None, description="是否公开")
     is_enabled: bool | None = Field(default=None, description="是否启用")
-    notify_on_start: bool | None = Field(
-        default=None, description="开始执行时是否发送通知（不传表示不修改）"
+    notify_inbox_on_start: bool | None = Field(
+        default=None, description="站内通知：开始执行时是否发送（不传表示不修改）"
     )
-    notify_on_end: bool | None = Field(
-        default=None, description="结束时是否发送通知（不传表示不修改）"
+    notify_inbox_on_end: bool | None = Field(
+        default=None, description="站内通知：结束时是否发送（不传表示不修改）"
+    )
+    notify_push_on_start: bool | None = Field(
+        default=None, description="站外推送：开始执行时是否发送（不传表示不修改）"
+    )
+    notify_push_on_end: bool | None = Field(
+        default=None, description="站外推送：结束时是否发送（不传表示不修改）"
     )
     log_enabled: bool | None = Field(
         default=None, description="执行时是否记录步骤级操作日志（不传表示不修改）"

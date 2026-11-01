@@ -4,7 +4,6 @@ Core 模块 - 浏览器信息模型
 定义用户浏览器信息、默认设置等数据库模型。
 """
 
-from app.config import settings
 from pydantic import computed_field
 from sqlalchemy import BIGINT, UniqueConstraint
 from sqlmodel import Field, SQLModel
@@ -16,6 +15,7 @@ from app.models.core.browser.fingerprint import (
     BrowserEnum,
 )
 from app.models.base.base_sqlmodel import BaseSQLModel
+from app.models.base.blank import BlankStringToNoneModel
 
 
 class UserBrowserUserId(BaseSQLModel):
@@ -45,7 +45,11 @@ class UserBrowserInfoBase(UserBrowserUserId, BaseBrowserId):
 
 
 class UserBrowserServerSideDefaultSetting(UserBrowserInfoBase):
-    default_proxy_server: str | None = settings.default_proxy_server
+    # 项目默认代理（环境变量 default_proxy_server）只作为启动时的**运行时兜底**
+    # （见 app/utils/http/proxy_utils.resolve_browser_proxy_server），绝不参与落库：
+    # 它随部署环境变化（dev 里是 127.0.0.1:3128），一旦被写进指纹/默认设置就固化了。
+    # 因此这里的默认值必须是 None —— 只有用户显式配置的代理才会被保存。
+    default_proxy_server: str | None = None
     default_platform: PlatformEnum | None = PlatformEnum.windows
     default_browser: BrowserEnum | None = BrowserEnum.chrome
     default_lang: str | None = "zh-CN"
@@ -121,8 +125,8 @@ class UserBrowserInfo(UserBrowserInfoWithoutPlugin, table=True):
 # ============ UserBrowserDefaultSetting 请求/响应模型 ============
 
 
-class UserBrowserDefaultSettingRequest(SQLModel):
-    """用户浏览器默认设置请求模型"""
+class UserBrowserDefaultSettingRequest(BlankStringToNoneModel):
+    """用户浏览器默认设置请求模型（空字符串统一按「未提供」处理，不会以 '' 落库）"""
 
     default_proxy_server: str | None = None
 

@@ -3,10 +3,9 @@
 
 测试流程：
 1. 创建复合操作（CompositeActionModel）并入库
-2. 可选：创建插件（UserPlugin）并关联
-3. 从数据库读取操作
-4. 通过 ExecutionEngine 执行
-5. 验证执行结果
+2. 从数据库读取操作
+3. 通过 ExecutionEngine 执行
+4. 验证执行结果
 """
 
 from app.models.execution.action_params import create_workflow_step
@@ -23,13 +22,10 @@ import pytest
 import uuid
 from playwright.async_api import Page
 from app.models.database.workflow.models import (
-    UserPlugin,
     BuiltinActionType,
 )
-from app.models.execution.action_params import PluginConfig
 from app.services.execution.crud_service import (
     action_crud_svr,
-    plugin_crud_svr,
     workflow_crud_svr,
 )
 from app.services.execution.engine import ExecutionEngine
@@ -46,7 +42,6 @@ class TestExecutionEngineDatabaseWorkflow:
         self.page = page
         self.mid = 12345678
         self.test_action_ids: list[str] = []
-        self.test_plugin_ids: list[str] = []
         yield
         # 清理测试数据
         for action_id in self.test_action_ids:
@@ -62,17 +57,10 @@ class TestExecutionEngineDatabaseWorkflow:
                     )
                     if action := result.first():
                         await action_crud_svr.delete(action.id)
-        for plugin_id in self.test_plugin_ids:
-            with suppress(Exception):
-                plugin = await plugin_crud_svr.get_by_plugin_id(plugin_id)
-                if plugin:
-                    await plugin_crud_svr.delete(plugin.id)
 
     async def _execute_workflow_from_db(
         self,
         req: WorkflowExecutionRequest,
-        *,
-        plugins=None,
     ):
         """辅助方法：从 DB 加载步骤并执行工作流，替代旧的 execute_workflow_with_session"""
         from app.models.execution.action_params import (
@@ -95,18 +83,19 @@ class TestExecutionEngineDatabaseWorkflow:
             steps=normalized_steps,
             session_id="test_session",
             browser_id="test_browser",
-            plugins=plugins or [],
+            page=self.page,
         )
 
     async def _create_custom_action(
         self, name: str, steps: list, **kwargs
     ) -> CompositeActionModel:
-        """创建自定义操作并入库"""
-        action_id = f"ca_{uuid.uuid4().hex[:12]}"
+        """创建自定义操作并入库
 
+        ``action_id`` 由 CRUD 层生成雪花 int，调用方不再自行传
+        （历史实现手写 ``ca_xxx`` 字符串，接口已改为雪花 int）。
+        """
         action = await action_crud_svr.create(
-            mid=str(self.mid),
-            action_id=action_id,
+            mid=self.mid,
             name=name,
             action_type=BuiltinActionType.COMPOSITE,
             steps=steps,
@@ -115,26 +104,8 @@ class TestExecutionEngineDatabaseWorkflow:
             is_public=kwargs.get("is_public", False),
         )
 
-        self.test_action_ids.append(action_id)
+        self.test_action_ids.append(action.action_id)
         return action
-
-    async def _create_plugin(
-        self, name: str, hook_type: str, custom_action_id: str
-    ) -> UserPlugin:
-        """创建插件并关联到自定义操作"""
-        plugin_id = f"plugin_{uuid.uuid4().hex[:8]}"
-
-        plugin = await plugin_crud_svr.create(
-            mid=self.mid,
-            plugin_id=plugin_id,
-            name=name,
-            hook_type=hook_type,
-            custom_action_id=custom_action_id,
-            description=f"测试插件: {name}",
-        )
-
-        self.test_plugin_ids.append(plugin_id)
-        return plugin
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_execute_composite_action_from_db(self):
@@ -164,10 +135,11 @@ class TestExecutionEngineDatabaseWorkflow:
                 action_id=action.action_id,
                 params={},
                 input_data={},
-                output=[],
+                output_vars=[],
             ),
             session_id="test_session",
             browser_id="test_browser",
+            page=self.page,
         )
 
         assert result.success
@@ -215,18 +187,16 @@ class TestExecutionEngineDatabaseWorkflow:
                 mid=self.mid,
                 browser_id=1,
                 action_id=action.action_id,
-                params={
+                # 模板 {{user_name}} 走变量池替换（input_data 不会注入作用域）
+                variables={
                     "user_name": "testuser",
                     "user_pass": "secret123",
                 },
-                input_data={
-                    "user_name": "testuser",
-                    "user_pass": "secret123",
-                },
-                output=[],
+                output_vars=[],
             ),
             session_id="test_session",
             browser_id="test_browser",
+            page=self.page,
         )
 
         assert result.success
@@ -235,91 +205,6 @@ class TestExecutionEngineDatabaseWorkflow:
         # 验证输入值已正确填入
         username_value = await self.page.input_value("#username")
         assert "testuser" in username_value
-
-    @pytest.mark.asyncio(loop_scope="session")
-    async def test_execute_workflow_with_plugin(self):
-        """测试：执行带插件的工作流
-
-        流程：
-        1. 创建基础自定义操作
-        2. 创建插件
-        3. 执行工作流（带插件参数）
-        4. 验证插件在钩子点被执行
-        """
-        base_action = await self._create_custom_action(
-            name="基础操作",
-            steps=[
-                {"action_id": "navigate", "params": {"url": "https://example.com"}},
-            ],
-        )
-
-        plugin_action = await self._create_custom_action(
-            name="截图插件操作",
-            steps=[
-                {"action_id": "screenshot", "params": {}},
-            ],
-        )
-
-        plugin = await self._create_plugin(
-            name="截图插件",
-            hook_type="after_action",
-            custom_action_id=plugin_action.action_id,
-        )
-
-        # 创建工作流并关联插件
-        workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
-        await workflow_crud_svr.create(
-            mid=int(self.mid),
-            workflow_id=workflow_id,
-            name="带插件的工作流",
-            custom_action_id=base_action.action_id,
-            enabled_plugins=[
-                PluginConfig(
-                    plugin_id=plugin.plugin_id,
-                    config_params={},
-                    hook_type=plugin.hook_type,
-                    priority=plugin.priority,
-                )
-            ],
-        )
-
-        # 获取工作流插件
-        plugins = await workflow_crud_svr.get_enabled_plugins(workflow_id)
-
-        req = WorkflowExecutionRequest(
-            mid=self.mid,
-            browser_id=1,
-            action_id=base_action.action_id,
-            variables={},
-            input_data={},
-            output=[],
-        )
-
-        # 从 action_model 获取 steps
-        action_model = await action_crud_svr.get_by_action_id(base_action.action_id)
-        from app.models.execution.action_params import (
-            _ensure_action_type,
-            workflow_step_adapter,
-        )
-
-        normalized_steps = []
-        for s in action_model.steps:
-            if isinstance(s, dict):
-                s = workflow_step_adapter.validate_python(_ensure_action_type(s))
-            normalized_steps.append(s)
-
-        result = await execution_engine.execute_steps(
-            req,
-            steps=normalized_steps,
-            session_id="test_session",
-            browser_id="test_browser",
-            page=self.page,
-            plugins=plugins,
-        )
-
-        # 验证工作流执行成功
-        assert len(result) > 0
-        assert result[-1].success
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_execute_workflow_with_custom_actions(self):
@@ -370,7 +255,7 @@ class TestExecutionEngineDatabaseWorkflow:
                 browser_id=1,
                 action_id=workflow_action.action_id,
                 input_data={},
-                output=[],
+                output_vars=[],
                 variables={},
             ),
         )
@@ -415,10 +300,11 @@ class TestExecutionEngineDatabaseWorkflow:
                 action_id=outer_action.action_id,
                 params={},
                 input_data={},
-                output=[],
+                output_vars=[],
             ),
             session_id="test_session",
             browser_id="test_browser",
+            page=self.page,
         )
 
         assert result.success
@@ -450,7 +336,7 @@ class TestExecutionEngineDatabaseWorkflow:
                 browser_id=1,
                 action_id=failed_action.action_id,
                 input_data={},
-                output=[],
+                output_vars=[],
                 variables={},
             ),
         )
@@ -501,13 +387,18 @@ class TestExecutionEngineDatabaseWorkflow:
                 browser_id=1,
                 action_id=loop_action.action_id,
                 input_data={},
-                output=[],
+                output_vars=[],
                 variables={},
             ),
         )
 
-        assert len(results) == 3
-        assert all(r.success for r in results)
+        # 顶层只返回「循环这一步」的聚合结果（循环体内 3 轮由 loop 自己汇总），
+        # 不再把每一轮的结果摊平到顶层
+        assert len(results) == 1
+        loop_result = results[0]
+        assert loop_result.success
+        assert loop_result.data["iterations"] == 3
+        assert loop_result.data["failed_steps"] == 0
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_execute_condition_branch_in_workflow(self):
@@ -570,7 +461,7 @@ class TestExecutionEngineDatabaseWorkflow:
                 browser_id=1,
                 action_id=condition_action.action_id,
                 input_data={},
-                output=[],
+                output_vars=[],
                 variables={"should_click_true": True},
             ),
         )
@@ -609,10 +500,11 @@ class TestExecutionEngineDatabaseWorkflow:
                 action_id=action.action_id,
                 params={},
                 input_data={},
-                output=[],
+                output_vars=[],
             ),
             session_id="test_session",
             browser_id="test_browser",
+            page=self.page,
         )
 
         assert result.success

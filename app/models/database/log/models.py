@@ -90,6 +90,11 @@ class ActionLogRecord(SQLModel, table=True):
     variables: dict | None = Field(
         default=None, sa_column=Column(JSON), description="变量池快照"
     )
+    page_snapshot: dict | None = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="报错时的页面关键元素快照（可交互元素摘要，站点无关，仅失败时按需采集）",
+    )
     logs: List[str] = Field(
         default_factory=list, sa_column=Column(JSON), description="执行过程日志"
     )

@@ -51,7 +51,13 @@ class ForkAutoSyncService:
 
     @staticmethod
     async def _find_action_candidates() -> list[_SyncCandidate]:
-        """扫描开启了自动同步且上游有新版本的自定义操作 Fork 副本"""
+        """扫描开启了自动同步且上游有新版本的自定义操作 Fork 副本
+
+        判定口径为**内容指纹**而非时间戳（docs/动作版本与内容指纹计划书.md §3.5）：
+        上游 ``content_hash`` 与副本 ``last_synced_hash`` 不等即视为有新版本。
+        上游 hash 为空（存量未回填）时不会命中——此时依赖回填脚本先补齐，
+        避免"每轮扫描都命中但同步后 hash 仍然为空"的死循环。
+        """
         upstream = aliased(CompositeActionModel)
         stmt = (
             select(
@@ -64,8 +70,9 @@ class ForkAutoSyncService:
                 CompositeActionModel.forked_from_id.is_not(None),
                 CompositeActionModel.auto_sync_upstream == true(),
                 upstream.is_public == true(),
-                upstream.updated_at
-                > func.coalesce(CompositeActionModel.last_synced_at, _EPOCH),
+                upstream.content_hash != "",
+                upstream.content_hash
+                != func.coalesce(CompositeActionModel.last_synced_hash, ""),
             )
             .limit(_SCAN_BATCH_LIMIT)
         )

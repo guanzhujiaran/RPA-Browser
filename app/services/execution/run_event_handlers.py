@@ -93,7 +93,11 @@ async def settle_run_billing(event: WorkflowRunStatusChanged) -> None:
 
 
 async def notify_run_finished(event: WorkflowRunStatusChanged) -> None:
-    """终态时发送结束通知（成功 / 取消 / 失败），受 ``notify_on_end`` 开关约束。
+    """终态时发送结束通知（成功 / 取消 / 失败），受「结束」时机的通道开关约束。
+
+    开关是「通道 × 时机」矩阵的结束列（站内 / 站外各自独立，见
+    ``app/models/workflow/notify_flags.py``）；两者全关时 ``_notify_run``
+    内部直接返回，这里不再单独判断，避免开关口径分叉。
 
     通知正文需要的步骤数、耗时、失败原因全部来自事件摘要，无需再读执行期对象。
     """
@@ -110,7 +114,7 @@ async def notify_run_finished(event: WorkflowRunStatusChanged) -> None:
         return
 
     workflow = await workflow_crud_svr.get_by_workflow_id(record.workflow_id)
-    if workflow is None or not getattr(workflow, "notify_on_end", True):
+    if workflow is None:
         return
 
     if event.to_status.value == "success":

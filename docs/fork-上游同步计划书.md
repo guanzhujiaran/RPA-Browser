@@ -32,6 +32,11 @@ Fork（`CompositeActionModel` / `UserWorkflow`）目前只有**手动**同步上
 
 ### 2.1 核心判定口径（时间戳快照）
 
+> **已升级（2026-11-01）**：Action 侧的判定口径已由「时间戳比较」替换为
+> 「内容指纹比较」，以修复"上游只改图标/改名也报有新版本"的误报。
+> 详见 `docs/动作版本与内容指纹计划书.md` §3.5 / §7。
+> 本节保留为历史口径与 Workflow（`UserWorkflow`）当前实现的说明。
+
 - Fork 创建时：`last_synced_at = 上游.updated_at`（快照语义，表示"此版本同步自哪个上游版本"）。
 - 同步成功时：`last_synced_at = 上游.updated_at`。
 - **`need_sync` = `forked_from_id != None` 且上游存在且 `is_public` 且 `上游.updated_at > last_synced_at`**
@@ -40,6 +45,10 @@ Fork（`CompositeActionModel` / `UserWorkflow`）目前只有**手动**同步上
 
 时间戳判定的前提已满足：`ActionCrudService.update` / `sync_from_upstream` / workflow 更新路径
 都会刷新 `updated_at`（`models.py:79`），即上游任何内容变更都会推进 `updated_at`。
+
+> **Action 现行口径**：`has_upstream_update =
+> forked_from_id 非空 且 上游存在且 is_public 且 上游.content_hash 与 副本.last_synced_hash 不等`
+> （任一侧为空则视为"未知版本"→ 报可同步）。`last_synced_at` 退化为纯展示字段。
 
 ### 2.2 本地修改检测（粗粒度）
 

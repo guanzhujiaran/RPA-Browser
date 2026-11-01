@@ -592,6 +592,12 @@ class LiveService:
                 self._notify_session_status(mid, browser_id)
                 return entry
 
+            # 浏览器已被手动关闭 / 崩溃：entry 还挂在表里，但底层 browser_session
+            # 已经 closed。这里不直接返回它，交给第三阶段（持锁）清理后重建。
+            logger.warning(
+                f"会话存在但浏览器已关闭（手动关闭/崩溃），将清理后重建: {session_key}"
+            )
+
         # 🔑 第二阶段：如果不需要创建，抛出异常
         if not is_create_browser:
             raise BrowserNotStartedException()
@@ -613,6 +619,23 @@ class LiveService:
                     )
                     self._notify_session_status(mid, browser_id)
                     return entry
+
+                # 死会话：必须 force_close 掉（浏览器进程 + 池内对象 + 条目），
+                # 否则 pool.get_session() 会把同一个已关闭的对象再交回来，
+                # 第五阶段必然再次抛「浏览器在创建过程中被关闭」，重试只是重复失败。
+                logger.warning(f"清理已关闭的会话后重建: {session_key}")
+                with contextlib.suppress(Exception):
+                    await entry.browser_session.close()
+                self._browser_sessions.pop(session_key, None)
+                with contextlib.suppress(Exception):
+                    await pool.release_session(
+                        BrowserSessionRemoveParams(
+                            mid=mid,
+                            browser_id=browser_id,
+                            force_close=True,
+                        )
+                    )
+                self._forget_session_status(mid, browser_id)
 
             # 🔑 第四阶段：委托给 PlaywrightSessionPool 创建会话
             session_params = SessionCreateParams(

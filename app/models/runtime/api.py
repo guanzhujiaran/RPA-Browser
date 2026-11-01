@@ -6,8 +6,9 @@ Runtime 模块 - 浏览器 API 模型
 
 from typing import List
 from pydantic import field_validator
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 from app.models.base.base_sqlmodel import BasePaginationReq
+from app.models.base.blank import BlankStringToNoneModel
 from app.models.core.browser.fingerprint import (
     Int32,
     BaseBrowserId,
@@ -18,6 +19,7 @@ from app.models.core.browser.fingerprint import (
     BrowserEnum,
 )
 from app.models.database.browser.info import UserBrowserInfoWithoutPlugin
+from app.utils.http.proxy_utils import normalize_proxy_bypass
 from botright.modules.proxy_manager import SplitError
 
 
@@ -55,14 +57,13 @@ def _canonical_enum_value(value, enum_cls, field_name: str):
     )
 
 
-class BrowserFingerprintEditableParams(SQLModel):
+class BrowserFingerprintEditableParams(BlankStringToNoneModel):
     """用户可编辑的浏览器指纹字段（update / upsert 共用）。
 
-    统一做一层入参归一，避免前端表单的「未填写」值（空字符串）直接落库：
-    - 空白字符串 → None（未提供）。ENUM 列写入 '' 会直接报 1265 Data truncated；
-      同时空串也会把指纹生成器填好的默认值冲掉，故统一按「未提供」处理；
-    - 平台/浏览器额外做大小写无关的枚举校验。
+    入参归一由 BlankStringToNoneModel 统一完成：前端表单的空白字符串一律按「未提供」（None）处理，
+    避免 ENUM 列写入 '' 报 1265、避免空串冲掉指纹生成器填好的默认值。
     服务层配合使用 exclude_none，即可保证「未提供」的字段不覆盖生成值/原有值。
+    平台/浏览器额外做大小写无关的枚举校验。
     """
 
     fingerprint_int: Int32 | None = None
@@ -77,26 +78,8 @@ class BrowserFingerprintEditableParams(SQLModel):
     accept_lang: str | None = None
     timezone: str | None = None
     proxy_server: str | None = None
+    proxy_bypass: str | None = None
     custom_name: str | None = None
-
-    @field_validator(
-        "fingerprint_platform_version",
-        "fingerprint_brand_version",
-        "fingerprint_gpu_vendor",
-        "fingerprint_gpu_renderer",
-        "lang",
-        "accept_lang",
-        "timezone",
-        "proxy_server",
-        "custom_name",
-        mode="before",
-    )
-    @classmethod
-    def blank_string_to_none(cls, v):
-        """空白字符串按「未提供」处理，确保不会以空字符串形态落库。"""
-        if isinstance(v, str):
-            return v if v.strip() else None
-        return v
 
     @field_validator("fingerprint_platform", mode="before")
     @classmethod
@@ -108,6 +91,12 @@ class BrowserFingerprintEditableParams(SQLModel):
     def normalize_browser(cls, v):
         return _canonical_enum_value(v, BrowserEnum, "fingerprint_browser")
 
+    @field_validator("proxy_bypass", mode="before")
+    @classmethod
+    def normalize_bypass(cls, v):
+        """归一化代理绕过列表（分号/空格 → 逗号），非法规则直接报 400。"""
+        return normalize_proxy_bypass(v)
+
 
 class BrowserFingerprintUpdateParams(BaseBrowserId, BrowserFingerprintEditableParams):
     """更新浏览器指纹参数"""
@@ -117,6 +106,13 @@ class BrowserFingerprintUpsertParams(
     BaseBrowserIdOptional, BrowserFingerprintEditableParams
 ):
     """创建或更新浏览器指纹参数 (upsert)"""
+
+    # 覆盖基类字段以补出参文档（MCP 工具 schema 直接用这份 description）：
+    # 不传 = 新建一个浏览器；传 = 更新该浏览器的指纹
+    browser_id: int | str | None = Field(
+        default=None,
+        description="浏览器 id（雪花 id）；不传表示新建浏览器，传入表示更新该浏览器指纹",
+    )
 
     @field_validator("proxy_server", mode="before")
     @classmethod
@@ -172,8 +168,8 @@ class BrowserFingerprintListParams(BasePaginationReq):
     ...
 
 
-class BrowserFingerprintRenameParams(SQLModel):
-    """重命名浏览器指纹参数"""
+class BrowserFingerprintRenameParams(BlankStringToNoneModel):
+    """重命名浏览器指纹参数（空白名按「未提供」处理）"""
 
     custom_name: str | None = None
 

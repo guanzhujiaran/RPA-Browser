@@ -10,6 +10,10 @@
    自身「接收系统通知」开关约束。
 
 两条通道相互独立且均为弱依赖，任一失败只告警，绝不抛出打断执行。
+
+是否投递由「通道 × 时机」2×2 矩阵决定（``notify_inbox_on_*`` / ``notify_push_on_*``，
+见 ``app/models/workflow/notify_flags.py`` 与 docs/通知动作与运行告警计划书.md §E）：
+``start`` 时机取「开始」列，其余（success / cancelled / failure）取「结束」列。
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from loguru import logger
 
 from app.models.database.workflow.models import UserWorkflow
 from app.models.runtime.workflow_progress import render_loop_summaries
+from app.models.workflow.notify_flags import NotifyChannel, NotifyChannelFlags
 from app.services.RPA_browser.browser import BrowserService
 from app.services.message import push_msg
 from app.services.mq.rpc_notify import publish_notify
@@ -82,7 +87,7 @@ async def _notify_run(
     error_message: str | None = None,
     duration_ms: float | None = None,
 ) -> bool:
-    """工作流运行通知（开始 / 成功 / 失败三态），双通道投递。
+    """工作流运行通知（开始 / 成功 / 失败三态），双通道按开关投递。
 
     标题携带 ``run_id`` 后缀：站内通知在 be-message 侧按 ``(target_value, title)``
     幂等判重，带上运行唯一标识才能区分不同运行、不被误吞。
@@ -90,6 +95,16 @@ async def _notify_run(
     Returns:
         True 表示**外部推送**已发出（用于标记 run 记录 notified；站内通知不计入）。
     """
+    # 「通道 × 时机」矩阵：start 取「开始」列，终态取「结束」列；空集直接跳过
+    channels = NotifyChannelFlags.from_model(workflow).channels(
+        is_start=phase == "start"
+    )
+    if not channels:
+        logger.debug(
+            f"[WorkflowRunner] 通知开关全关，跳过: run={run_id}, phase={phase}"
+        )
+        return False
+
     external_sent = False
     try:
         if phase == "start":
@@ -113,36 +128,40 @@ async def _notify_run(
         # 通道一：外部推送（未配置渠道时静默跳过）
         # 只读全局 NotificationConfig（browser_id=None），不再按浏览器覆盖；
         # 携带 mid，由 be-message 投递侧按用户「外部推送总开关」统一拦截。
-        try:
-            async with DatabaseSessionManager.async_session() as session:
-                config = await BrowserService(mid).get_notification_config(session)
-            if config:
-                await push_msg.send(
-                    title=title,
-                    content=content,
-                    conf=config,
-                    subject=subject,
-                    mid=mid,
+        if NotifyChannel.PUSH in channels:
+            try:
+                async with DatabaseSessionManager.async_session() as session:
+                    config = await BrowserService(mid).get_notification_config(
+                        session
+                    )
+                if config:
+                    await push_msg.send(
+                        title=title,
+                        content=content,
+                        conf=config,
+                        subject=subject,
+                        mid=mid,
+                    )
+                    external_sent = True
+                else:
+                    logger.info(
+                        f"[WorkflowRunner] 未配置外部推送，跳过: run={run_id}"
+                    )
+            except Exception as exc:  # noqa: BLE001 - 通知失败绝不影响业务
+                logger.warning(
+                    f"[WorkflowRunner] 外部推送异常: run={run_id}, error={exc}"
                 )
-                external_sent = True
-            else:
-                logger.info(
-                    f"[WorkflowRunner] 未配置外部推送，跳过: run={run_id}"
-                )
-        except Exception as exc:  # noqa: BLE001 - 通知失败绝不影响业务
-            logger.warning(
-                f"[WorkflowRunner] 外部推送异常: run={run_id}, error={exc}"
-            )
 
         # 通道二：站内系统通知（be-message，无需配置；弱依赖静默降级）
-        try:
-            await publish_notify(
-                mid, title, content, jump_url=_WORKFLOW_PAGE_URL
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                f"[WorkflowRunner] 站内通知异常: run={run_id}, error={exc}"
-            )
+        if NotifyChannel.INBOX in channels:
+            try:
+                await publish_notify(
+                    mid, title, content, jump_url=_WORKFLOW_PAGE_URL
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"[WorkflowRunner] 站内通知异常: run={run_id}, error={exc}"
+                )
     except Exception as exc:  # noqa: BLE001 - 兜底，通知链路绝不向上抛
         logger.warning(f"[WorkflowRunner] 发送运行通知异常: run={run_id}, error={exc}")
 

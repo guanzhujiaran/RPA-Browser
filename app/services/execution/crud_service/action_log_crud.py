@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from loguru import logger
-from sqlalchemy import Integer, delete as sa_delete
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.orm import load_only
 from sqlmodel import func, select
 
@@ -197,6 +197,33 @@ class ActionLogCrudService:
             return result.first()
 
     @staticmethod
+    async def list_by_execution(
+        mid: int | str, execution_id: str
+    ) -> List[ActionLogRecord]:
+        """按执行批次拉取完整链路（按写入顺序升序）
+
+        只加载轻量字段（load_only），大 JSON 列不在链路视图里下发；
+        完整字段按 log_id 走单条详情接口。
+
+        不在 SQL 侧 `ORDER BY id`：该查询若带上 params/result_data/
+        variables/logs 等 JSON 大列，这些列会进入 filesort 排序元组，
+        单行体量超过 sort_buffer_size(128K) 直接抛 1038。改为取出后按 id 在
+        Python 侧排序，语义不变。
+        """
+        async with DatabaseSessionManager.async_session() as session:
+            result = await session.exec(
+                select(ActionLogRecord)
+                .options(load_only(*_SUMMARY_LOAD))
+                .where(
+                    ActionLogRecord.mid == str(mid),
+                    ActionLogRecord.execution_id == execution_id,
+                )
+            )
+            rows = list(result.all())
+        rows.sort(key=lambda r: r.id or 0)
+        return rows
+
+    @staticmethod
     async def delete_by_log_ids(mid: int | str, log_ids: List[str]) -> int:
         if not log_ids:
             return 0
@@ -229,11 +256,7 @@ class ActionLogCrudService:
                     ActionLogRecord.action_id,
                     ActionLogRecord.action_name,
                     func.count(ActionLogRecord.id),
-                    # type_=Integer：success 是 Boolean 列，其「0/1 → False/True」
-                    # 结果处理器会被 SUM 聚合继承——总和 10 经 bool() 变成 True，
-                    # int(True)=1，导致每组的 success 恒为 1、failed 虚高。
-                    # 显式声明 Integer 结果类型可阻断该处理器。
-                    func.sum(ActionLogRecord.success, type_=Integer),
+                    func.sum(ActionLogRecord.success),
                     func.avg(ActionLogRecord.execution_time),
                 )
                 .where(

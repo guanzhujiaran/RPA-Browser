@@ -7,6 +7,8 @@
 （采集「是否启用 / 采集哪些字段」已直接落到 action 的基础配置上，无独立配置接口。）
 """
 
+from typing import List
+
 from bili_common.models.response import (
     StandardResponse,
     success_response,
@@ -110,33 +112,12 @@ async def get_action_log(
 async def list_action_logs_by_execution(
     request: ActionLogByExecutionRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
-) -> StandardResponse[BasePaginationResp[ActionLogItemResponse]]:
-    """按 execution_id 分页拉取一次执行的步骤链路（按写入顺序，便于还原调用树）
-
-    单次运行可达数千条步骤日志，因此强制分页：`total` 为该批次总条数，
-    `items` 只回当前页（字段与 `action-logs/list` 的轻量项一致）。
-    """
+) -> StandardResponse[List[ActionLogItemResponse]]:
+    """按 execution_id 拉取一次执行的完整链路（按写入顺序，便于还原调用树）"""
     if not request.execution_id:
         return error_response(400, "缺少 execution_id")
-    skip = (request.page - 1) * request.per_page
-    total = await action_log_crud_svr.count(
-        auth.mid, execution_id=request.execution_id
-    )
-    rows = await action_log_crud_svr.list(
-        auth.mid,
-        skip=skip,
-        limit=request.per_page,
-        order_desc=False,  # 升序 = 写入顺序，前端据此还原调用树
-        execution_id=request.execution_id,
-    )
-    return success_response(
-        BasePaginationResp[ActionLogItemResponse](
-            page=request.page,
-            per_page=request.per_page,
-            total=total,
-            items=[_to_item(r) for r in rows],
-        )
-    )
+    rows = await action_log_crud_svr.list_by_execution(auth.mid, request.execution_id)
+    return success_response([_to_item(r) for r in rows])
 
 
 @router.post(BrowserControlRouterPath.action_logs_delete, summary="批量删除日志")

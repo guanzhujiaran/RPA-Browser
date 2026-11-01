@@ -45,8 +45,24 @@ class WorkflowDetailResponse(UpstreamSyncFields):
     last_run_at: datetime | None = None
     last_run_status: str | None = None
     next_run_at: datetime | None = None
-    notify_on_start: bool = False
-    notify_on_end: bool = True
+    notify_inbox_on_start: bool = Field(
+        default=False, description="站内通知：开始执行时是否发送"
+    )
+    notify_inbox_on_end: bool = Field(
+        default=True, description="站内通知：结束时（成功/失败/停止）是否发送"
+    )
+    notify_push_on_start: bool = Field(
+        default=False, description="站外推送：开始执行时是否发送"
+    )
+    notify_push_on_end: bool = Field(
+        default=True, description="站外推送：结束时（成功/失败/停止）是否发送"
+    )
+    notify_on_start: bool = Field(
+        default=False, description="【已废弃】开始通知（通道混合，= 两通道取或）"
+    )
+    notify_on_end: bool = Field(
+        default=True, description="【已废弃】结束通知（通道混合，= 两通道取或）"
+    )
     log_enabled: bool | None = None
     log_debug: bool | None = None
     resume_on_restart: bool = False
@@ -85,8 +101,24 @@ class WorkflowListItemResponse(UpstreamSyncFields):
     last_run_at: datetime | None = None
     last_run_status: str | None = None
     next_run_at: datetime | None = None
-    notify_on_start: bool = False
-    notify_on_end: bool = True
+    notify_inbox_on_start: bool = Field(
+        default=False, description="站内通知：开始执行时是否发送"
+    )
+    notify_inbox_on_end: bool = Field(
+        default=True, description="站内通知：结束时（成功/失败/停止）是否发送"
+    )
+    notify_push_on_start: bool = Field(
+        default=False, description="站外推送：开始执行时是否发送"
+    )
+    notify_push_on_end: bool = Field(
+        default=True, description="站外推送：结束时（成功/失败/停止）是否发送"
+    )
+    notify_on_start: bool = Field(
+        default=False, description="【已废弃】开始通知（通道混合，= 两通道取或）"
+    )
+    notify_on_end: bool = Field(
+        default=True, description="【已废弃】结束通知（通道混合，= 两通道取或）"
+    )
     log_enabled: bool | None = None
     log_debug: bool | None = None
     resume_on_restart: bool = False

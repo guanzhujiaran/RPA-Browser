@@ -1,7 +1,10 @@
-"""
-测试 Action 管理接口 - 使用真实数据库操作
-使用 httpx.AsyncClient 进行异步测试
-参考: https://fastapi.org.cn/advanced/async-tests/
+"""Action 管理接口测试 - 使用真实数据库操作
+
+契约要点（与 app/controller/.../action_router.py 对齐）：
+- 动作主键统一为雪花 ``action_id``（int）；get/update/delete/fork 均以它定位，
+  创建响应也不再返回数据库自增主键 ``id``；
+- 「资源不存在」走业务码 ``ACTION_NOT_FOUND``（HTTP 仍 200），不再用 404；
+- Fork 端点路径是 ``/custom_actions/fork``（下划线，历史路径）。
 """
 
 import pytest
@@ -47,7 +50,9 @@ class TestCreateCompositeAction:
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
         assert data["data"]["name"] == "测试操作"
-        assert data["data"]["action_id"].startswith("ca_")
+        # action_id 已是雪花 int，不再有 "ca_" 前缀
+        assert isinstance(data["data"]["action_id"], int)
+        assert data["data"]["action_id"] > 0
         assert data["data"]["timeout"] == 60000
         assert data["data"]["retry_on_error"] is True
         assert data["data"]["retry_times"] == 3
@@ -83,36 +88,39 @@ class TestListCompositeActions:
 @pytest.mark.anyio
 class TestGetCompositeAction:
     async def test_get_custom_action_after_create(self, client, created_action):
-        db_id, action_id = created_action
+        action_id = created_action
 
-        response = await client.post(f"{PREFIX}/custom-actions/get", json={"id": db_id})
+        response = await client.post(
+            f"{PREFIX}/custom-actions/get", json={"action_id": action_id}
+        )
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
         assert data["data"]["name"] == "fixture_action"
+        assert data["data"]["action_id"] == action_id
         assert data["data"]["input_vars"] == []
         assert data["data"]["output_vars"] == []
 
     async def test_get_custom_action_not_found(self, client):
         response = await client.post(
-            f"{PREFIX}/custom-actions/get", json={"id": 999999}
+            f"{PREFIX}/custom-actions/get", json={"action_id": 999999}
         )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.ACTION_NOT_FOUND, (
+            f"Expected ACTION_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
 @pytest.mark.anyio
 class TestUpdateCompositeAction:
     async def test_update_custom_action_success(self, client, created_action):
-        db_id, action_id = created_action
+        action_id = created_action
 
         request_data = {
-            "id": db_id,
+            "action_id": action_id,
             "name": "更新后的操作",
             "description": "更新后的描述",
             "steps": [{"action_id": "input", "params": {"value": "hello"}}],
@@ -141,23 +149,23 @@ class TestUpdateCompositeAction:
     async def test_update_custom_action_not_found(self, client):
         response = await client.post(
             f"{PREFIX}/custom-actions/update",
-            json={"id": 999999, "name": "不存在的操作"},
+            json={"action_id": 999999, "name": "不存在的操作"},
         )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.ACTION_NOT_FOUND, (
+            f"Expected ACTION_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
 @pytest.mark.anyio
 class TestDeleteCompositeAction:
     async def test_delete_custom_action_success(self, client, created_action):
-        db_id, action_id = created_action
+        action_id = created_action
 
         response = await client.post(
-            f"{PREFIX}/custom-actions/delete", json={"id": db_id}
+            f"{PREFIX}/custom-actions/delete", json={"action_id": action_id}
         )
 
         assert response.status_code == 200
@@ -166,23 +174,24 @@ class TestDeleteCompositeAction:
 
     async def test_delete_custom_action_not_found(self, client):
         response = await client.post(
-            f"{PREFIX}/custom-actions/delete", json={"id": 999999}
+            f"{PREFIX}/custom-actions/delete", json={"action_id": 999999}
         )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.ACTION_NOT_FOUND, (
+            f"Expected ACTION_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
 @pytest.mark.anyio
 class TestForkCompositeAction:
     async def test_fork_custom_action_success(self, client, created_public_action):
-        db_id, action_id = created_public_action
+        action_id = created_public_action
 
         response = await client.post(
-            f"{PREFIX}/custom_actions/fork", json={"id": db_id, "new_name": "我的 Fork"}
+            f"{PREFIX}/custom_actions/fork",
+            json={"action_id": action_id, "new_name": "我的 Fork"},
         )
 
         assert response.status_code == 200
@@ -192,11 +201,11 @@ class TestForkCompositeAction:
 
     async def test_fork_custom_action_not_found(self, client):
         response = await client.post(
-            f"{PREFIX}/custom_actions/fork", json={"id": 999999}
+            f"{PREFIX}/custom_actions/fork", json={"action_id": 999999}
         )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.ACTION_NOT_FOUND, (
+            f"Expected ACTION_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )

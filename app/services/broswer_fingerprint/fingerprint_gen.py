@@ -11,6 +11,7 @@ from app.models.database.browser.info import UserBrowserServerSideDefaultSetting
 from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
     browser_exec_info_helper,
 )
+from app.utils.http.proxy_utils import normalize_proxy_server
 from app.utils.http.rand_headers_gen import (
     desktop_fingerprint_generator,
     mobile_fingerprint_generator,
@@ -94,11 +95,12 @@ def _apply_user_settings(
         or default_browser_setting.default_viewport_height
         or rand_fingerprint.screen.availHeight
     )
-    proxy_server = (
-        user_default_settings
-        and user_default_settings.default_proxy_server
-        or default_browser_setting.default_proxy_server
-        or ""
+    # 代理只认用户显式配置的默认设置，绝不把「项目默认代理」（settings.default_proxy_server）
+    # 写进指纹：它随环境变量变化，落库后就固化了。未显式配置时存 None，
+    # 真正生效的兜底在启动时做（app/utils/http/proxy_utils.resolve_browser_proxy_server）。
+    # 归一化（去 http:// 协议前缀）与启动路径保持同一口径，避免空串/带协议的值落库。
+    proxy_server = normalize_proxy_server(
+        user_default_settings and user_default_settings.default_proxy_server
     )
 
     return {

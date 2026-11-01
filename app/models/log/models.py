@@ -82,16 +82,10 @@ class ActionLogDetailResponse(ActionLogItemResponse):
     logs: List[str] = Field(default_factory=list)
 
 
-class ActionLogByExecutionRequest(BasePaginationReq):
-    """按执行批次查询步骤链路（分页）
-
-    一次长循环运行的步骤日志可达数千条，全量返回既拖慢响应也撑爆前端渲染，
-    因此与 `action-logs/list` 用同一套 `page` / `per_page` 口径分页。
-    """
+class ActionLogByExecutionRequest(SQLModel):
+    """按执行批次查询完整链路"""
 
     execution_id: str = Field(description="执行批次ID")
-    page: int = Field(default=1, ge=1, description="页码，从 1 开始")
-    per_page: int = Field(default=50, ge=1, le=500, description="每页数量（默认 50）")
 
 
 class ActionLogDeleteRequest(SQLModel):
@@ -103,18 +97,38 @@ class ActionLogDeleteRequest(SQLModel):
 
 
 class ActionLogClearRequest(SQLModel):
-    """按条件批量清理日志"""
+    """按条件批量清理日志（所有条件为 AND；全部留空等于全清，慎用）"""
 
-    action_id: str | None = None
-    execution_id: str | None = None
-    workflow_id: str | None = None
-    browser_id: str | None = None
-    source: ActionLogSourceEnum | None = None
-    status: ActionLogStatusEnum | None = None
-    success: bool | None = None
-    keyword: str | None = None
-    started_after: datetime | None = None
-    started_before: datetime | None = None
+    action_id: str | None = Field(
+        default=None, description="只清理该操作的日志（内置动作名或复合动作雪花 id）"
+    )
+    execution_id: str | None = Field(
+        default=None, description="只清理该次执行的日志（运行唯一 id）"
+    )
+    workflow_id: str | None = Field(
+        default=None, description="只清理该工作流的日志（雪花 id）"
+    )
+    browser_id: str | None = Field(
+        default=None, description="只清理该浏览器的日志（雪花 id）"
+    )
+    source: ActionLogSourceEnum | None = Field(
+        default=None, description="只清理该来源的日志（手动调试 / 工作流执行）"
+    )
+    status: ActionLogStatusEnum | None = Field(
+        default=None, description="只清理该状态的日志（成功 / 失败 / 跳过）"
+    )
+    success: bool | None = Field(
+        default=None, description="按执行结果过滤：true 只清成功，false 只清失败"
+    )
+    keyword: str | None = Field(
+        default=None, description="按关键字模糊匹配错误信息 / 动作名"
+    )
+    started_after: datetime | None = Field(
+        default=None, description="只清理开始时间不早于该时刻（ISO8601）的日志"
+    )
+    started_before: datetime | None = Field(
+        default=None, description="只清理开始时间不晚于该时刻（ISO8601）的日志"
+    )
 
 
 class ActionLogStatsResponse(SQLModel):

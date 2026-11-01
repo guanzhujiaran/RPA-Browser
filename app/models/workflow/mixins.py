@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from pydantic import Field
 from sqlmodel import SQLModel
 
 
@@ -23,3 +24,10 @@ class UpstreamSyncFields(SQLModel):
     last_synced_at: int | None = None
     auto_sync_upstream: bool = False
     local_steps_modified: bool = False
+    # 上游版本号与内容指纹（仅 Action 侧填充，Workflow 侧保持 None/空）
+    upstream_version: str | None = Field(
+        default=None, description="上游当前声明的语义化版本（非 Fork 或上游不可用时为 None）"
+    )
+    upstream_content_hash: str = Field(
+        default="", description="上游当前内容指纹（空=未计算或非 Fork）"
+    )

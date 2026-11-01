@@ -9,6 +9,11 @@
   一元（not - +）、二元（+ - * / % **）
 - list / tuple 字面量
 
+JSON / JS 风格字面量：``true`` / ``false`` / ``null`` 与 Python 的
+``True`` / ``False`` / ``None`` 等价（工作流 JSON 由前端编辑器手写，
+写成小写是常态）。这是表达式语言本身的兼容能力，与具体站点/业务无关。
+小写字面量优先于同名变量，避免变量池里的脏值把布尔字面量覆盖成真值。
+
 使用方：``control_flow``（策略层条件评估）、``pipeline``（IfElseStep 条件评估）。
 """
 
@@ -19,6 +24,14 @@ import operator
 from typing import Any
 
 from loguru import logger
+
+
+#: JSON / JS 风格布尔与空值字面量（大小写不敏感地写成小写时按字面量解析）
+_NAME_LITERALS: dict[str, Any] = {
+    "true": True,
+    "false": False,
+    "null": None,
+}
 
 
 def safe_evaluate_condition(condition: str | None, variables: dict) -> bool:
@@ -44,6 +57,11 @@ def _eval_ast_node(node: ast.AST, variables: dict) -> Any:
         case ast.Constant(value):
             return value
         case ast.Name(id):
+            # JSON / JS 风格字面量优先：`share_closed == true` 这类写法在未做别名时
+            # 会被当成未定义变量 → 表达式恒 False，静默走错分支（曾导致抽奖动作
+            # 永远记 failed、去重永远不生效）。
+            if id in _NAME_LITERALS:
+                return _NAME_LITERALS[id]
             if id in variables:
                 return variables[id]
             raise NameError(f"变量 '{id}' 未定义")

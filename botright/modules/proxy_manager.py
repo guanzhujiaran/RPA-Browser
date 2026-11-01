@@ -58,9 +58,9 @@ class ProxyManager(AsyncObject):
                 else f"{self.ip}:{self.port}"
             )
             self.plain_proxy = f"http://{self.proxy}"
-            self._phttpx = httpx.AsyncClient(
-                proxies={"all://": self.plain_proxy}, verify=False
-            )
+            # httpx>=0.28 移除了 `proxies` 关键字（旧的 {"all://": ...} 写法会抛
+            # TypeError），统一改用 `proxy`；单个代理地址即可覆盖所有协议。
+            self._phttpx = httpx.AsyncClient(proxy=self.plain_proxy, verify=False)
             self.http_proxy = {"http": self.plain_proxy, "https": self.plain_proxy}
 
             if self.username:
@@ -121,7 +121,12 @@ class ProxyManager(AsyncObject):
         Args:
             httpx_client (httpx.AsyncClient): The HTTPX client to use for proxy checks.
         """
+        # 双栈域名优先：本项目浏览器常走「IPv6 出口代理池」，而 api.ipify.org /
+        # ip-api.com 等只有 A 记录（IPv4），经 IPv6 出口代理拨号必然失败，会把
+        # 可用代理误判为 ProxyCheckError。api64.ipify.org 同时有 A/AAAA 记录，
+        # 返回结构仍是 {"ip": "..."}，与下游解析一致；其余保持原顺序做兜底。
         get_ip_apis = [
+            "https://api64.ipify.org/?format=json",
             "https://api.ipify.org/?format=json",
             "https://api.myip.com/",
             "https://get.geojs.io/v1/ip.json",

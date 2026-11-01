@@ -39,6 +39,7 @@ class ActionSavePayload(BaseModel):
     log_record_params: bool = Field(default=True, description="记录入参")
     log_record_result: bool = Field(default=True, description="记录结果")
     log_record_variables: bool = Field(default=False, description="记录变量池")
+    log_record_page_snapshot: bool = Field(default=False, description="记录报错时的页面快照")
     log_only_on_error: bool = Field(default=False, description="仅失败时记录")
     log_max_payload_length: int = Field(default=4000, description="大字段截断长度")
     log_retention_days: int = Field(default=30, description="日志保留天数")

@@ -25,9 +25,29 @@ from playwright.async_api import Route as PlaywrightRoute
 
 from ..modules import Faker, ProxyManager
 from . import ElementHandle, Frame, JSHandle, Page, Request, Route, new_page
+from .launch_args import build_launch_args
 
 if TYPE_CHECKING:
     from botright import Botright
+
+
+def _build_proxy_option(
+    proxy: ProxyManager, proxy_bypass: str | None
+) -> dict[str, str] | None:
+    """组装 playwright 的 ``proxy`` 选项，绕过列表交给 driver 拼 ``--proxy-bypass-list``。
+
+    driver 只认 ``proxy.bypass``（逗号分隔），会自己渲染成
+    ``--proxy-bypass-list=a;b;<-loopback>``；在这里手动往 args 塞同名开关会与 driver
+    那份重复/互相覆盖，所以绕过列表统一从这里下发。
+
+    没有代理（直连）时绕过列表无意义，且 playwright 要求 ``proxy.server`` 必须存在，
+    因此直接返回 ``None``，避免「只配了绕过列表」导致启动报错。
+    """
+    if not proxy.browser_proxy:
+        return None
+    if not proxy_bypass:
+        return proxy.browser_proxy
+    return {**proxy.browser_proxy, "bypass": proxy_bypass}
 
 
 async def new_browser(
@@ -35,6 +55,7 @@ async def new_browser(
     proxy: ProxyManager,
     faker: Faker,
     flags: List[str],
+    proxy_bypass: str | None = None,
     **launch_arguments,
 ) -> BrowserContext:
     """
@@ -45,6 +66,7 @@ async def new_browser(
         proxy (ProxyManager): An instance of ProxyManager for configuring proxy settings.
         faker (Faker): An instance of Faker for generating fake user agent and other details.
         flags (List[str]): The command line flags to pass into the Browser Instance.
+        proxy_bypass (str | None): Comma-separated hosts that must bypass the proxy.
         # browser_path (str): The path to the real browser executable.
         # headless (bool, optional): Whether to run the browser in headless mode. Defaults to False.
         # mask_fingerprint (bool, optional): Whether to mask the browser fingerprint. Defaults to True.
@@ -55,6 +77,15 @@ async def new_browser(
     Returns:
         BrowserContext: A new browser context with the specified configurations.
     """
+    # flags 由内置 flags + 指纹参数 + UA 多来源拼装，这里统一收敛：
+    # 每个开关只设置一次，driver 会重复注入的同名开关改为由 ignore_default_args 抑制 driver 那份
+    args, ignore_default_args = build_launch_args(
+        flags,
+        headless=bool(botright.headless),
+        use_playwright_proxy=bool(proxy.browser_proxy),
+    )
+    proxy_option = _build_proxy_option(proxy, proxy_bypass)
+
     if botright.mask_fingerprint:
         fingerprint = faker.fingerprint
         parsed_launch_arguments = {
@@ -77,11 +108,11 @@ async def new_browser(
                 "height": fingerprint.screen.availHeight,
             },
             "color_scheme": "dark",
-            "proxy": proxy.browser_proxy,
+            "proxy": proxy_option,
             "http_credentials": {"username": proxy.username, "password": proxy.password}
             if proxy.username
             else None,
-            "ignore_default_args": ["--enable-automation"],
+            "ignore_default_args": ignore_default_args,
             **launch_arguments,
         }  # self.faker.locale
     else:
@@ -95,17 +126,18 @@ async def new_browser(
             },
             "ignore_https_errors": True,
             "color_scheme": "dark",
-            "proxy": proxy.browser_proxy,
+            "proxy": proxy_option,
             "http_credentials": {"username": proxy.username, "password": proxy.password}
             if proxy.username
             else None,
-            "ignore_default_args": ["--enable-automation"],
+            "ignore_default_args": ignore_default_args,
             **launch_arguments,
         }  # self.faker.locale
+
     _browser = await botright.playwright.chromium.launch_persistent_context(
         headless=botright.headless,
         executable_path=botright.browser["path"],
-        args=flags,
+        args=args,
         chromium_sandbox=True,
         **parsed_launch_arguments,
     )

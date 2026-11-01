@@ -74,6 +74,9 @@ def _upstream_sync_kwargs(
         ),
         "auto_sync_upstream": model.auto_sync_upstream,
         "local_steps_modified": model.local_steps_modified,
+        # 上游版本号 / 内容指纹：前端可展示「上游 v1.3.0 · 你的副本 v1.1.0」
+        "upstream_version": flag.upstream_version if flag else None,
+        "upstream_content_hash": flag.upstream_content_hash if flag else "",
     }
 
 
@@ -131,6 +134,7 @@ async def create_custom_action(
         name=request.name,
         mid=auth.mid,
         description=request.description,
+        version=request.version,
         steps=request.steps,
         tags=request.tags or [],
         input_vars=input_vars_dicts,
@@ -147,6 +151,7 @@ async def create_custom_action(
         log_record_params=request.log_record_params,
         log_record_result=request.log_record_result,
         log_record_variables=request.log_record_variables,
+        log_record_page_snapshot=request.log_record_page_snapshot,
         log_only_on_error=request.log_only_on_error,
         log_max_payload_length=request.log_max_payload_length,
         log_retention_days=request.log_retention_days,
@@ -169,6 +174,7 @@ async def create_custom_action(
             action_id=model.action_id,
             name=model.name,
             version=model.version,
+            content_hash=model.content_hash,
             action_type=model.action_type,
             description=model.description,
             icon_series=model.icon_series,
@@ -190,6 +196,7 @@ async def create_custom_action(
             log_record_params=model.log_record_params,
             log_record_result=model.log_record_result,
             log_record_variables=model.log_record_variables,
+            log_record_page_snapshot=model.log_record_page_snapshot,
             log_only_on_error=model.log_only_on_error,
             log_max_payload_length=model.log_max_payload_length,
             log_retention_days=model.log_retention_days,
@@ -255,6 +262,7 @@ async def export_custom_action(
     return success_response(
         CompositeActionCreateRequest(
             name=model.name,
+            version=model.version,
             action_type=model.action_type,
             description=model.description,
             icon_series=model.icon_series,
@@ -274,6 +282,7 @@ async def export_custom_action(
             log_record_params=model.log_record_params,
             log_record_result=model.log_record_result,
             log_record_variables=model.log_record_variables,
+            log_record_page_snapshot=model.log_record_page_snapshot,
             log_only_on_error=model.log_only_on_error,
             log_max_payload_length=model.log_max_payload_length,
             log_retention_days=model.log_retention_days,
@@ -326,6 +335,8 @@ async def list_custom_actions(
             id=model.id,
             action_id=model.action_id,
             name=model.name,
+            version=model.version,
+            content_hash=model.content_hash,
             action_type=model.action_type,
             description=model.description,
             icon_series=model.icon_series,
@@ -361,7 +372,7 @@ async def get_custom_action(
     request: CompositeActionGetRequest,
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[CompositeActionDetailResponse]:
-    """获取自定义操作详情，steps 中引用的 ca_ 操作会自动附加完整信息并校验权限"""
+    """获取自定义操作详情，steps 中引用的其它复合动作会自动附加完整信息并校验权限"""
     action_id = request.action_id
     if not action_id:
         return error_response(400, "缺少操作action_id")
@@ -379,7 +390,7 @@ async def get_custom_action(
         for var in (model.input_vars or [])
     ]
 
-    # 解析 steps 并校验所有引用的 ca_ 操作的权限，同时获取完整详情
+    # 解析 steps 并校验所有引用的其它复合动作的权限，同时获取完整详情
     steps_data = _convert_steps(model.steps)
     try:
         ca_ids = ActionCrudService._collect_ca_action_ids(steps_data)
@@ -416,6 +427,7 @@ async def get_custom_action(
             action_id=model.action_id,
             name=model.name,
             version=model.version,
+            content_hash=model.content_hash,
             action_type=model.action_type,
             description=model.description,
             icon_series=model.icon_series,
@@ -439,6 +451,7 @@ async def get_custom_action(
             log_record_params=model.log_record_params,
             log_record_result=model.log_record_result,
             log_record_variables=model.log_record_variables,
+            log_record_page_snapshot=model.log_record_page_snapshot,
             log_only_on_error=model.log_only_on_error,
             log_max_payload_length=model.log_max_payload_length,
             log_retention_days=model.log_retention_days,
@@ -481,6 +494,7 @@ async def update_custom_action(
         id=existing.id,
         name=request.name,
         description=request.description,
+        version=request.version,
         parameters_schema=request.parameters_schema,
         steps=request.steps,
         tags=request.tags,
@@ -498,6 +512,7 @@ async def update_custom_action(
         log_record_params=request.log_record_params,
         log_record_result=request.log_record_result,
         log_record_variables=request.log_record_variables,
+        log_record_page_snapshot=request.log_record_page_snapshot,
         log_only_on_error=request.log_only_on_error,
         log_max_payload_length=request.log_max_payload_length,
         log_retention_days=request.log_retention_days,
@@ -527,6 +542,7 @@ async def update_custom_action(
             action_id=model.action_id,
             name=model.name,
             version=model.version,
+            content_hash=model.content_hash,
             action_type=model.action_type,
             description=model.description,
             icon_series=model.icon_series,
@@ -548,6 +564,7 @@ async def update_custom_action(
             log_record_params=model.log_record_params,
             log_record_result=model.log_record_result,
             log_record_variables=model.log_record_variables,
+            log_record_page_snapshot=model.log_record_page_snapshot,
             log_only_on_error=model.log_only_on_error,
             log_max_payload_length=model.log_max_payload_length,
             log_retention_days=model.log_retention_days,

@@ -13,7 +13,10 @@ from app.models.database.notify.models import NotificationConfigBase
 class NotificationConfigCreate(NotificationConfigBase):
     """通知配置创建模型，用于API请求"""
 
-    browser_id: str | None = None
+    browser_id: str | None = Field(
+        default=None,
+        description="按浏览器覆盖配置时传入的浏览器 id；留空表示用户全局配置",
+    )
     # mid 由服务端从鉴权信息（x-bili-mid）注入，不需要客户端提供；
     # 这里覆盖基类的必填声明（`NotificationConfigBase.mid: str` 无默认值），
     # 否则前端提交配置时会因缺少 mid 被 FastAPI 校验拦成 422。

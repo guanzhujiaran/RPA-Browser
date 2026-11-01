@@ -8,6 +8,7 @@ class RouterTag(StrEnumAutoDoc):
     browser_notification = "通知配置管理"  # 通知渠道配置
     browser_default_settings = "浏览器默认设置管理"  # 用户浏览器默认设置管理
     duration_membership = "时长与会员权益"  # 时长余额、签到、兑换码、月卡、使用统计
+    browser_feedback = "报错反馈"  # 用户提交报错 / 反馈给服主
 
     # === 浏览器运行时管理 ===
     browser_control = "浏览器实时控制"  # 运行时操作控制

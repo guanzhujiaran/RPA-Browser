@@ -22,8 +22,10 @@ from app.mcp.config import AUTH_HEADER_NAMES, mcp_settings
 from app.mcp.exposure import (
     EXCLUDED_OPERATIONS,
     build_user_app,
-    group_operations_by_resource,
+    group_operations_by_tag,
     install_schema_compat,
+    shorten_tool_names,
+    strip_generated_response_section,
 )
 
 #: 调试专用工具（``tag="MCP 调试"``）的期望集合，用于启动自检。
@@ -59,13 +61,25 @@ def setup_mcp(app: FastAPI) -> FastApiMCP | None:
         name="rpa",
         description=(
             "RPA 用户能力全集：自定义动作 / 工作流 / 浏览器会话与页面 / "
-            "操作日志 / 动作调试（校验、试跑、落库回读）"
+            "操作日志 / 动作调试（校验、试跑、落库回读）。\n\n"
+            "统一响应约定：`{\"code\": 0, \"msg\": \"success\", \"data\": ...}`，"
+            "**code == 0 才表示成功**；非 0 时 msg 是失败原因（业务类错误同样返回 "
+            "HTTP 200 + 非 0 code），常见值：1011=动作不存在、1012=工作流不存在、"
+            "403=无权访问该资源。"
         ),
         describe_all_responses=False,
         exclude_operations=list(excluded),
         # 透传网关注入的可信身份头（内网口径；MCP 客户端本身不经过这层）
         headers=list(AUTH_HEADER_NAMES),
     )
+    # 裁掉 fastapi-mcp 自动追加的 `### Responses` 段（占掉约一半描述，且示例是
+    # 与真实约定相反的占位值 code=1），再挂载端点
+    stripped = strip_generated_response_section(mcp.tools)
+
+    # 自动生成的长名（中位 69 字符，带 api/v1/rpa 前缀）收敛成 rpa_<资源>_<动作>；
+    # 显式 operation_id 的调试工具保持不变。改名会同步 operation_map 的 key
+    renamed = shorten_tool_names(mcp.tools, mcp.operation_map)
+
     # MCP 端点挂在主应用上（对外唯一入口），工具内部调用走 source_app
     mcp.mount_http(app, mount_path=mount_path)
 
@@ -79,10 +93,11 @@ def setup_mcp(app: FastAPI) -> FastApiMCP | None:
             if "admin" in [seg for seg in str(detail.get("path", "")).split("/") if seg]
         }
     )
-    groups = group_operations_by_resource(mcp.operation_map)
+    groups = group_operations_by_tag(source_app, mcp.operation_map)
     logger.info(
         f"[MCP] 已挂载 {mount_path}，工具 {len(tool_names)} 个（排除 {len(excluded)} 个），"
-        f"鉴权=网关注入 {list(AUTH_HEADER_NAMES)}，按资源分布: {groups}"
+        f"已裁剪 {stripped} 个工具的描述噪音、规范化 {len(renamed)} 个工具名，"
+        f"鉴权=网关注入 {list(AUTH_HEADER_NAMES)}，按业务分类: {groups}"
     )
     if missing:
         logger.warning(f"[MCP] 预期调试工具缺失（检查 operation_id）: {missing}")

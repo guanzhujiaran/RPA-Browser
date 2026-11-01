@@ -3,6 +3,7 @@
 """
 
 from sqlalchemy import or_, and_, true, update
+from dataclasses import dataclass
 from typing import Any, Dict, List
 from datetime import datetime
 from sqlmodel import select, delete
@@ -20,8 +21,31 @@ from app.models.execution.action_params import (
     normalize_composite_action_id,
 )
 from app.models.common.exceptions.base_exception import NameAlreadyExistsException
+from app.utils.action_content_hash import compute_content_hash_from_fields
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.snow_flake_gen import generate_action_id
+
+
+@dataclass(slots=True, frozen=True)
+class _UpstreamSnapshot:
+    """上游动作的判定快照（避免用裸 tuple/Dict 在服务内部传递）"""
+
+    updated_at: datetime
+    is_public: bool
+    version: str
+    content_hash: str
+
+
+def _has_upstream_update(local_synced_hash: str, upstream_content_hash: str) -> bool:
+    """按内容指纹判断上游是否有新版本
+
+    任一侧为空表示「未知版本」（存量未回填 / 上游从未计算），按旧口径处理为
+    "可同步"，让存量 Fork 首次同步一次即进入稳定判定。
+    详见 docs/动作版本与内容指纹计划书.md §3.5。
+    """
+    if not upstream_content_hash:
+        return True
+    return (local_synced_hash or "") != upstream_content_hash
 
 
 class ActionCrudService:
@@ -327,6 +351,7 @@ class ActionCrudService:
         input_vars: list[Dict] | None = None,
         output_vars: list[str] | None = None,
         is_public: bool = False,
+        version: str = "1.0.0",
         icon_series: int = 0,
         icon_id: int = 0,
         timeout: int = 30000,
@@ -338,6 +363,7 @@ class ActionCrudService:
         log_record_params: bool = True,
         log_record_result: bool = True,
         log_record_variables: bool = False,
+        log_record_page_snapshot: bool = False,
         log_only_on_error: bool = False,
         log_max_payload_length: int = 4000,
         log_retention_days: int = 30,
@@ -360,6 +386,14 @@ class ActionCrudService:
             return s
 
         normalized_steps = [_normalize_step(s) for s in (steps or [])]
+        # 语义内容指纹：必须在归一化之后计算，保证与落库内容同源
+        # （docs/动作版本与内容指纹计划书.md §3.3）
+        content_hash = compute_content_hash_from_fields(
+            steps=normalized_steps,
+            parameters_schema=parameters_schema or [],
+            input_vars=input_vars or [],
+            output_vars=output_vars or [],
+        )
 
         async with DatabaseSessionManager.async_session() as session:
             existing = await session.exec(
@@ -375,6 +409,8 @@ class ActionCrudService:
             model = CompositeActionModel(
                 action_id=new_action_id,
                 name=name,
+                version=version,
+                content_hash=content_hash,
                 action_type=action_type,
                 description=description,
                 icon_series=icon_series,
@@ -396,6 +432,7 @@ class ActionCrudService:
                 log_record_params=log_record_params,
                 log_record_result=log_record_result,
                 log_record_variables=log_record_variables,
+                log_record_page_snapshot=log_record_page_snapshot,
                 log_only_on_error=log_only_on_error,
                 log_max_payload_length=log_max_payload_length,
                 log_retention_days=log_retention_days,
@@ -561,13 +598,16 @@ class ActionCrudService:
         icon_series: int | None = None,
         icon_id: int | None = None,
         log_enabled: bool | None = None,
+        log_debug: bool | None = None,
         log_record_params: bool | None = None,
         log_record_result: bool | None = None,
         log_record_variables: bool | None = None,
+        log_record_page_snapshot: bool | None = None,
         log_only_on_error: bool | None = None,
         log_max_payload_length: int | None = None,
         log_retention_days: int | None = None,
         auto_sync_upstream: bool | None = None,
+        version: str | None = None,
     ) -> CompositeActionModel | None:
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
@@ -629,6 +669,8 @@ class ActionCrudService:
                 model.log_record_result = log_record_result
             if log_record_variables is not None:
                 model.log_record_variables = log_record_variables
+            if log_record_page_snapshot is not None:
+                model.log_record_page_snapshot = log_record_page_snapshot
             if log_only_on_error is not None:
                 model.log_only_on_error = log_only_on_error
             if log_max_payload_length is not None:
@@ -637,6 +679,21 @@ class ActionCrudService:
                 model.log_retention_days = log_retention_days
             if auto_sync_upstream is not None:
                 model.auto_sync_upstream = auto_sync_upstream
+            if version is not None:
+                model.version = version
+
+            # 语义内容指纹：任一参与字段被显式覆盖即按落库内容重算
+            # （展示/可见性/运行时策略字段的变化不算新版本，见计划书 §3.2）
+            if any(
+                value is not None
+                for value in (steps, parameters_schema, input_vars, output_vars)
+            ):
+                model.content_hash = compute_content_hash_from_fields(
+                    steps=model.steps,
+                    parameters_schema=model.parameters_schema,
+                    input_vars=model.input_vars,
+                    output_vars=model.output_vars,
+                )
 
             model.updated_at = datetime.now()
             await session.commit()
@@ -869,6 +926,11 @@ class ActionCrudService:
                     name=final_name,
                     action_type=original.action_type,
                     description=f"Forked from: {original.name}",
+                    # 版本与指纹继承上游：steps 中的复合动作引用被改写为用户视角的
+                    # action_id，字节不同但语义等价，重算会永久误报"有新版本"
+                    # （docs/动作版本与内容指纹计划书.md §3.4）
+                    version=original.version,
+                    content_hash=original.content_hash,
                     mid=target_mid,
                     original_mid=original.original_mid,
                     icon_series=original.icon_series,
@@ -889,6 +951,7 @@ class ActionCrudService:
                     forked_from_id=original.id,
                     # 上游同步快照：记录"此副本同步自上游哪个版本"（docs/fork-上游同步计划书.md）
                     last_synced_at=original.updated_at,
+                    last_synced_hash=original.content_hash,
                     auto_sync_upstream=auto_sync_upstream if is_top_level else False,
                     local_steps_modified=False,
                     log_enabled=original.log_enabled,
@@ -896,6 +959,7 @@ class ActionCrudService:
                     log_record_params=original.log_record_params,
                     log_record_result=original.log_record_result,
                     log_record_variables=original.log_record_variables,
+                    log_record_page_snapshot=original.log_record_page_snapshot,
                     log_only_on_error=original.log_only_on_error,
                     log_max_payload_length=original.log_max_payload_length,
                     log_retention_days=original.log_retention_days,
@@ -1089,13 +1153,18 @@ class ActionCrudService:
                 fork_model.log_record_params = upstream.log_record_params
                 fork_model.log_record_result = upstream.log_record_result
                 fork_model.log_record_variables = upstream.log_record_variables
+                fork_model.log_record_page_snapshot = upstream.log_record_page_snapshot
                 fork_model.log_only_on_error = upstream.log_only_on_error
                 fork_model.log_max_payload_length = upstream.log_max_payload_length
                 fork_model.log_retention_days = upstream.log_retention_days
                 fork_model.description = f"Forked from: {upstream.name}"
+                # 版本与指纹继承上游（steps 中的引用 ID 已改写，不能重算）
+                fork_model.version = upstream.version
+                fork_model.content_hash = upstream.content_hash
                 fork_model.updated_at = datetime.now()
                 # 同步快照前移：副本已与上游当前版本一致，本地修改标记随之清零
                 fork_model.last_synced_at = upstream.updated_at
+                fork_model.last_synced_hash = upstream.content_hash
                 fork_model.local_steps_modified = False
                 if had_local_edit:
                     local_overwritten = True
@@ -1199,6 +1268,8 @@ class ActionCrudService:
                     name=final_name,
                     action_type=upstream_child.action_type,
                     description=f"Forked from: {upstream_child.name}",
+                    version=upstream_child.version,
+                    content_hash=upstream_child.content_hash,
                     mid=mid,
                     original_mid=upstream_child.original_mid,
                     icon_series=upstream_child.icon_series,
@@ -1220,6 +1291,7 @@ class ActionCrudService:
                     # 上游同步快照：新建副本即与上游当前版本一致；
                     # 嵌套副本不开启自动同步，由顶层副本的同步递归覆盖
                     last_synced_at=upstream_child.updated_at,
+                    last_synced_hash=upstream_child.content_hash,
                     auto_sync_upstream=False,
                     local_steps_modified=False,
                     log_enabled=upstream_child.log_enabled,
@@ -1227,6 +1299,7 @@ class ActionCrudService:
                     log_record_params=upstream_child.log_record_params,
                     log_record_result=upstream_child.log_record_result,
                     log_record_variables=upstream_child.log_record_variables,
+                    log_record_page_snapshot=upstream_child.log_record_page_snapshot,
                     log_only_on_error=upstream_child.log_only_on_error,
                     log_max_payload_length=upstream_child.log_max_payload_length,
                     log_retention_days=upstream_child.log_retention_days,
@@ -1273,12 +1346,16 @@ class ActionCrudService:
     ) -> Dict[int, UpstreamSyncFlag]:
         """批量计算每个 Action 的「是否需要同步上游」状态
 
-        一次 IN 查询取回所有上游的 updated_at / is_public，避免 N+1。
+        一次 IN 查询取回所有上游的 updated_at / is_public / version / content_hash，
+        避免 N+1。
 
-        need_sync 判定（docs/fork-上游同步计划书.md §4.1）：
-        forked_from_id 非空 且上游存在且公开 且
-        上游.updated_at > last_synced_at（last_synced_at 为 None 视为需要同步）。
+        need_sync 判定（docs/动作版本与内容指纹计划书.md §3.5）：
+        forked_from_id 非空 且 上游存在且公开 且
+        上游.content_hash 与 副本.last_synced_hash 不等（任一侧为空视为未知版本 → 可同步）。
         上游已删除/私有化：不提示同步（保留当前副本）。
+
+        注意：这里**不再比较 updated_at**——改名字/图标/描述也会推进 updated_at，
+        用它判定会向上游"只换了个图标"的 Fork 用户误报有新版本。
 
         Args:
             models: 待标注的 Action 列表（通常是列表接口的一页结果）
@@ -1298,28 +1375,37 @@ class ActionCrudService:
                     CompositeActionModel.id,
                     CompositeActionModel.updated_at,
                     CompositeActionModel.is_public,
+                    CompositeActionModel.version,
+                    CompositeActionModel.content_hash,
                 ).where(CompositeActionModel.id.in_(upstream_ids))
             )
-            upstream_map: Dict[int, tuple[datetime, bool]] = {
-                row[0]: (row[1], bool(row[2])) for row in result.all()
+            upstream_map: Dict[int, _UpstreamSnapshot] = {
+                row[0]: _UpstreamSnapshot(
+                    updated_at=row[1],
+                    is_public=bool(row[2]),
+                    version=row[3] or "",
+                    content_hash=row[4] or "",
+                )
+                for row in result.all()
             }
 
         for m in fork_models:
             assert m.id is not None
             upstream = upstream_map.get(m.forked_from_id)
-            if not upstream or not upstream[1]:
+            if not upstream or not upstream.is_public:
                 # 上游已删除或私有化：不提示同步
                 flags[m.id] = UpstreamSyncFlag(
-                    has_upstream_update=False, upstream_updated_at=None
+                    has_upstream_update=False,
+                    upstream_updated_at=None,
                 )
                 continue
-            upstream_updated_at = upstream[0]
-            has_update = (
-                m.last_synced_at is None or upstream_updated_at > m.last_synced_at
-            )
             flags[m.id] = UpstreamSyncFlag(
-                has_upstream_update=has_update,
-                upstream_updated_at=int(upstream_updated_at.timestamp()),
+                has_upstream_update=_has_upstream_update(
+                    m.last_synced_hash, upstream.content_hash
+                ),
+                upstream_updated_at=int(upstream.updated_at.timestamp()),
+                upstream_version=upstream.version or None,
+                upstream_content_hash=upstream.content_hash,
             )
         return flags
 

@@ -167,6 +167,10 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 默认指向 docker-compose 内部服务名；本地开发在 .env.dev 覆盖为 127.0.0.1。
     message_service_url: str = "http://be-message-service:18739"
 
+    # 服主 / 管理员 mid 列表（逗号分隔）：用户提交报错后实时推送的目标。
+    # 为空则仅落库不推送。示例：RPA_FEEDBACK_NOTIFY_MIDS=123,456
+    feedback_notify_mids: str = ""
+
     admin_base_path: str = "/api/admin/rpa"
 
     # 是否强制要求执行操作（execute，如执行工作流/定时计划）前已通过对应审批单
@@ -196,6 +200,19 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
             return "INFO"
         return "WARNING"
 
+    @property
+    def feedback_notify_mid_list(self) -> list[int]:
+        """解析 ``feedback_notify_mids``（逗号分隔）为 mid 列表；空/非法片段忽略。"""
+        raw = (self.feedback_notify_mids or "").strip()
+        if not raw:
+            return []
+        mids: list[int] = []
+        for chunk in raw.split(","):
+            chunk = chunk.strip()
+            if chunk.isdigit():
+                mids.append(int(chunk))
+        return mids
+
     # 底下是不那么重要的配置
     # 推送渠道配置（message_config）、服务标识（SERVER_NAME / SERVER_ADDRESS）、
     # 渠道默认端点（pushme_url / pushplus_url）、hitokoto_api_url 等共用项
@@ -205,6 +222,11 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     default_proxy_server: str = (
         ""  # 只要ip加端口就行,别加协议,httpx的all会自动处理,类似127.0.0.1:3128
     )
+    # 代理绕过列表（服务端兜底）：逗号或分号分隔的 host 规则，命中的主机直连、不走代理，
+    # 例如 "*.bilibili.com,127.0.0.1"。单个浏览器的绕过列表由用户自己配置
+    # （userbrowserinfo.proxy_bypass），本项只在浏览器未配置时兜底。
+    # 与 default_proxy_server 同口径：只做运行时兜底，绝不落库（随部署环境变化）。
+    browser_proxy_bypass: str = ""
 
     # ==================== browser_id（短雪花 ID，分钟步进）====================
     # 对外发布 ID 统一收敛到 bili_common 的分钟级短雪花（见规则 snowflake-id.mdc）：

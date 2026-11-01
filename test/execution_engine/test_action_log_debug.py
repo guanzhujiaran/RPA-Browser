@@ -20,8 +20,11 @@ from app.config import settings
 from app.models.execution.action_params import ActionLogOption
 from app.services.execution.action_logger import (
     _DB_CACHE,
+    _ERROR_MESSAGE_MAX_LENGTH,
+    _build_result_payload,
     _normalize_debug,
     _resolve_db_log_option,
+    _truncate_error_message,
     resolve_log_option,
 )
 
@@ -223,3 +226,46 @@ class TestActionLevelDebug:
         assert option is not None
         assert option.debug is False
         assert option.enabled is True
+
+
+class TestErrorMessageColumnGuard:
+    """`error_message` 是 varchar(2000)：超长必须截断，否则整条日志写不进去。"""
+
+    def test_long_error_is_truncated_to_column_width(self):
+        truncated = _truncate_error_message("x" * (_ERROR_MESSAGE_MAX_LENGTH + 500))
+
+        assert truncated is not None
+        assert len(truncated) == _ERROR_MESSAGE_MAX_LENGTH
+
+    def test_normal_error_kept_as_is(self):
+        assert _truncate_error_message("Connection error.") == "Connection error."
+
+    def test_empty_error_becomes_none(self):
+        assert _truncate_error_message("") is None
+        assert _truncate_error_message(None) is None
+
+
+class TestResultPayload:
+    """`result_data` 要能带结构化失败明细（LLM 逐模型失败列表）。"""
+
+    def test_includes_error_details_when_present(self):
+        result = SimpleNamespace(
+            data=None,
+            error_details={
+                "model_count": 2,
+                "llm_failures": [
+                    {"label": "m@a#1", "kind": "401 鉴权失败", "message": "bad key"}
+                ],
+            },
+        )
+
+        payload = _build_result_payload(result, success=False)
+
+        assert payload["success"] is False
+        assert payload["data"] is None
+        assert payload["error_details"]["model_count"] == 2
+
+    def test_omits_error_details_when_absent(self):
+        payload = _build_result_payload(SimpleNamespace(data="ok"), success=True)
+
+        assert payload == {"success": True, "data": "ok"}

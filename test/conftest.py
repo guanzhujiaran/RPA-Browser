@@ -69,6 +69,7 @@ def _init_test_db():
     import app.models.database.workflow.models  # noqa: F401
     import app.models.database.browser.info  # noqa: F401
     import app.models.database.notify.models  # noqa: F401
+    import app.models.database.feedback.models  # noqa: F401
 
     async def _setup():
         db_url = os.environ["MYSQL_BROWSER_INFO_URL"]

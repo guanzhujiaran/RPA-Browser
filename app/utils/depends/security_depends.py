@@ -3,7 +3,7 @@
 用于验证浏览器ID是否属于特定用户MID
 """
 
-from fastapi import Depends
+from fastapi import Depends, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.common.exceptions.base_exception import (
     BrowserIdNotBeloneToUserException,
@@ -63,7 +63,13 @@ async def _verify_browser_ownership_core(
 
 
 async def verify_browser_ownership(
-    browser_id: int | str,
+    browser_id: int | str = Query(
+        ...,
+        description=(
+            "目标浏览器 id（雪花 id，纯数字；字符串形式也接受）。"
+            "必须是当前用户自己的浏览器，否则报「浏览器不属于该用户」。"
+        ),
+    ),
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> BrowserReqAuthInfo:
@@ -96,7 +102,13 @@ def _is_browser_monitor_admin(auth_info: AuthInfo) -> bool:
 
 
 async def verify_browser_ownership_or_admin(
-    browser_id: int | str,
+    browser_id: int | str = Query(
+        ...,
+        description=(
+            "目标浏览器 id（雪花 id，纯数字；字符串形式也接受）。"
+            "自己的浏览器或监管管理员可访问。"
+        ),
+    ),
     auth_info: AuthInfo = Depends(get_auth_info_from_header),
     session: AsyncSession = DatabaseSessionManager.get_dependency(),
 ) -> BrowserReqAuthInfo:

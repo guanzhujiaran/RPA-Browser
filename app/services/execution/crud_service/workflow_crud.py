@@ -12,6 +12,7 @@ from app.models.database.workflow.models import (
     CompositeActionModel,
 )
 from app.models.workflow.models import UpstreamSyncFlag
+from app.models.workflow.notify_flags import NotifyChannelFlags
 from app.models.common.exceptions.base_exception import NameAlreadyExistsException
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.utils.snow_flake_gen import generate_workflow_id
@@ -49,8 +50,10 @@ class WorkflowCrudService:
         trigger_type: str = "manual",
         trigger_config: Dict | None = None,
         is_public: bool = False,
-        notify_on_start: bool = False,
-        notify_on_end: bool = True,
+        notify_inbox_on_start: bool = False,
+        notify_inbox_on_end: bool = True,
+        notify_push_on_start: bool = False,
+        notify_push_on_end: bool = True,
         log_enabled: bool = False,
         log_debug: bool | None = None,
         resume_on_restart: bool = False,
@@ -69,6 +72,12 @@ class WorkflowCrudService:
                 raise NameAlreadyExistsException(name=name, name_type="工作流")
 
             new_workflow_id = await generate_workflow_id()
+            notify_flags = NotifyChannelFlags(
+                inbox_on_start=notify_inbox_on_start,
+                inbox_on_end=notify_inbox_on_end,
+                push_on_start=notify_push_on_start,
+                push_on_end=notify_push_on_end,
+            )
             model = UserWorkflow(
                 workflow_id=new_workflow_id,
                 name=name,
@@ -84,8 +93,13 @@ class WorkflowCrudService:
                 trigger_type=trigger_type,
                 trigger_config=trigger_config or {},
                 is_public=is_public,
-                notify_on_start=notify_on_start,
-                notify_on_end=notify_on_end,
+                notify_inbox_on_start=notify_flags.inbox_on_start,
+                notify_inbox_on_end=notify_flags.inbox_on_end,
+                notify_push_on_start=notify_flags.push_on_start,
+                notify_push_on_end=notify_flags.push_on_end,
+                # 旧字段（通道混合）保持为派生值，旧读方（管理端 / 导出）不会看到「全关」
+                notify_on_start=notify_flags.legacy_on_start,
+                notify_on_end=notify_flags.legacy_on_end,
                 log_enabled=log_enabled,
                 log_debug=log_debug,
                 resume_on_restart=resume_on_restart,
@@ -202,8 +216,10 @@ class WorkflowCrudService:
         trigger_config: Dict | None = None,
         is_enabled: bool | None = None,
         is_public: bool | None = None,
-        notify_on_start: bool | None = None,
-        notify_on_end: bool | None = None,
+        notify_inbox_on_start: bool | None = None,
+        notify_inbox_on_end: bool | None = None,
+        notify_push_on_start: bool | None = None,
+        notify_push_on_end: bool | None = None,
         log_enabled: bool | None = None,
         log_debug: bool | None = None,
         auto_sync_upstream: bool | None = None,
@@ -253,10 +269,21 @@ class WorkflowCrudService:
                 model.is_enabled = is_enabled
             if is_public is not None:
                 model.is_public = is_public
-            if notify_on_start is not None:
-                model.notify_on_start = notify_on_start
-            if notify_on_end is not None:
-                model.notify_on_end = notify_on_end
+            if notify_inbox_on_start is not None:
+                model.notify_inbox_on_start = notify_inbox_on_start
+            if notify_inbox_on_end is not None:
+                model.notify_inbox_on_end = notify_inbox_on_end
+            if notify_push_on_start is not None:
+                model.notify_push_on_start = notify_push_on_start
+            if notify_push_on_end is not None:
+                model.notify_push_on_end = notify_push_on_end
+            # 旧字段保持为派生值（唯一来源是 4 个新开关），旧读方口径不失真
+            model.notify_on_start = bool(model.notify_inbox_on_start) or bool(
+                model.notify_push_on_start
+            )
+            model.notify_on_end = bool(model.notify_inbox_on_end) or bool(
+                model.notify_push_on_end
+            )
             if log_enabled is not None:
                 model.log_enabled = log_enabled
             if log_debug is not None:
@@ -339,6 +366,7 @@ class WorkflowCrudService:
                 return None
 
             new_workflow_id = await generate_workflow_id()
+            notify_flags = NotifyChannelFlags.from_model(original)
             new_model = UserWorkflow(
                 workflow_id=new_workflow_id,
                 name=f"{original.name} (副本)",
@@ -349,8 +377,12 @@ class WorkflowCrudService:
                 trigger_type=original.trigger_type,
                 trigger_config=original.trigger_config,
                 is_public=False,
-                notify_on_start=original.notify_on_start,
-                notify_on_end=original.notify_on_end,
+                notify_inbox_on_start=notify_flags.inbox_on_start,
+                notify_inbox_on_end=notify_flags.inbox_on_end,
+                notify_push_on_start=notify_flags.push_on_start,
+                notify_push_on_end=notify_flags.push_on_end,
+                notify_on_start=notify_flags.legacy_on_start,
+                notify_on_end=notify_flags.legacy_on_end,
                 log_enabled=original.log_enabled,
                 log_debug=original.log_debug,
                 resume_on_restart=original.resume_on_restart,
@@ -406,8 +438,7 @@ class WorkflowCrudService:
             original_trigger_type = original.trigger_type
             original_trigger_config = original.trigger_config
             original_is_public = original.is_public
-            original_notify_on_start = original.notify_on_start
-            original_notify_on_end = original.notify_on_end
+            original_notify_flags = NotifyChannelFlags.from_model(original)
             original_log_enabled = original.log_enabled
             original_log_debug = original.log_debug
             original_updated_at = original.updated_at
@@ -468,8 +499,12 @@ class WorkflowCrudService:
                 last_synced_at=original_updated_at,
                 auto_sync_upstream=auto_sync_upstream,
                 local_steps_modified=False,
-                notify_on_start=original_notify_on_start,
-                notify_on_end=original_notify_on_end,
+                notify_inbox_on_start=original_notify_flags.inbox_on_start,
+                notify_inbox_on_end=original_notify_flags.inbox_on_end,
+                notify_push_on_start=original_notify_flags.push_on_start,
+                notify_push_on_end=original_notify_flags.push_on_end,
+                notify_on_start=original_notify_flags.legacy_on_start,
+                notify_on_end=original_notify_flags.legacy_on_end,
                 log_enabled=original_log_enabled,
                 log_debug=original_log_debug,
                 resume_on_restart=bool(original.resume_on_restart),

@@ -78,6 +78,14 @@ class ActionLogOption(SQLModel):
     record_params: bool = Field(default=True, description="是否记录变量替换后的入参")
     record_result: bool = Field(default=True, description="是否记录执行返回结果")
     record_variables: bool = Field(default=False, description="是否记录变量池快照")
+    record_page_snapshot: bool = Field(
+        default=False,
+        description=(
+            "是否记录报错时的页面关键元素快照（可交互元素的 tag/selector/文本摘要，"
+            "站点无关）。仅在执行失败时采集，配合 only_on_error 排查「选择器未命中、"
+            "验证码/弹窗状态」等页面态问题；体积受 max_payload_length 截断。"
+        ),
+    )
     only_on_error: bool = Field(default=False, description="仅在执行失败时记录")
     max_payload_length: int = Field(
         default=4000,

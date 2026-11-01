@@ -117,6 +117,12 @@ class ActionResult(Generic[DataT]):
     #: 仍计入 `failed_count`（便于排查），但**不参与「整次运行是否失败」的结论**——
     #: 判定失败的只有「未知异常」与「on_error=stop（含重试耗尽）」。
     tolerated: bool = False
+    #: 失败的结构化明细（可选），如 LLM 回退链的逐模型失败列表。
+    #:
+    #: `error` 是给人和通知看的**文本摘要**（超长还会被列宽截断）；需要按字段排查
+    #: （「5 个 key 里几个 401、几个 429」）时读这里。由 `action_logger` 一并写入
+    #: `result_data.error_details`，不影响 `data` 的语义与输出变量合并。
+    error_details: Dict | None = None
 
 
 @dataclass
@@ -149,6 +155,13 @@ class BaseAction(ABC, Generic[ParamsT]):
         将 action_result.data 的键值对按需赋值到 variables 中：
         - 如果有 output_vars，按顺序将 data 的值赋给对应的变量名
         - 始终设置 last_output 为完整的 data
+
+        **引擎不擅自改写用户的变量**：动作失败（无产出）时**不会**去清空
+        output_vars 里已有的值。变量该是什么值，只由两处决定：
+        步骤自己声明的 ``output_vars``（产出）与步骤自己声明的
+        ``input_vars``（显式写入）。「每轮开始前把某个变量抹掉」这类需求，
+        由用户在**每轮都会执行的那个步骤**上用 ``input_vars`` 显式声明，
+        而不是由引擎在失败 / 轮末 / 分支末隐式地改。
 
         注意：不会将 data 的所有字段展开到 variables 中，避免 params 泄漏。
         execute 完了之后必须调用

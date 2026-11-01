@@ -15,8 +15,16 @@ from app.models.execution.action_params import AllActionParams
 class ExecutionRequest(SQLModel):
     """执行请求基础参数"""
 
-    mid: int | str = Field(description="用户ID")
-    browser_id: int | str = Field(description="浏览器ID")
+    mid: int | str = Field(
+        description="用户 mid（由网关注入的 x-bili-mid；调用方一般不需要传）"
+    )
+    browser_id: int | str = Field(
+        description=(
+            "目标浏览器 id（雪花 id，纯数字；字符串形式也接受）。"
+            "执行类接口真实取值来自 query 的同名参数（依赖归属校验），"
+            "请求体里的该字段仅用于透传给执行引擎。"
+        )
+    )
     variables: Dict = Field(default_factory=dict, description="变量池")
     page_index: int | None = Field(default=None, description="页面索引")
     execution_id: str = Field(

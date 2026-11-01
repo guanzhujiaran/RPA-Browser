@@ -58,10 +58,13 @@ DEFAULT_MID = 140682000
 API_PREFIX = "/api/v1/rpa/browser/control"
 
 #: 导入载荷字段 → JSON 键名（两侧一致，直接透传）；
-#: JSON 中不在此表中的字段（mid/id/created_at/version/likes_count 等）为数据库
+#: JSON 中不在此表中的字段（mid/id/created_at/likes_count 等）为数据库
 #: 冗余字段，由服务端请求模型忽略。
+#: 注意：``version`` 自 2026-11 起参与落库（内容指纹方案），不能再当冗余字段丢弃，
+#: 详见 docs/动作版本与内容指纹计划书.md §6.3/§6.4。
 _PAYLOAD_FIELDS = (
     "name",
+    "version",
     "action_type",
     "description",
     "icon_series",
@@ -99,6 +102,7 @@ class ActionPayload:
     """
 
     name: str
+    version: str = "1.0.0"
     action_type: str = "COMPOSITE"
     description: str = ""
     icon_series: int = 0

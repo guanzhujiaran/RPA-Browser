@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import TypeAdapter, ValidationError, model_validator
+from pydantic import TypeAdapter, ValidationError, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from app.models.execution.action_param_models import (
@@ -58,7 +58,12 @@ def _fill_action_type_impl(data: Any) -> Any:
     """递归处理 children 中的 action_type 填充。"""
     if isinstance(data, dict):
         if not data.get("action_type") and data.get("action_id"):
-            data["action_type"] = data["action_id"]
+            action_id = data["action_id"]
+            # 复合动作（雪花 int / 纯数字串）的 action_type 是 "composite"；
+            # 直接拿 action_id 填进去（int）会让整条判别联合校验失败
+            data["action_type"] = (
+                "composite" if is_composite_action_id(action_id) else action_id
+            )
         if "children" in data and data["children"]:
             data["children"] = [
                 _fill_action_type_impl(item) if isinstance(item, dict) else item
@@ -91,6 +96,23 @@ class BaseWorkflowStep(SQLModel, Generic[P]):
     def _fill_action_type(cls, data: Any) -> Any:
         """若 action_type 缺失，从 action_id 自动填充，确保 discriminated union 能匹配。"""
         return _fill_action_type_impl(data)
+
+    @field_validator("action_id", mode="before")
+    @classmethod
+    def _coerce_action_id(cls, v: Any) -> Any:
+        """复合动作引用统一归一化为字符串。
+
+        雪花 ``action_id`` 在 Python 侧是 int（CRUD 落库时就是 int，JSON 往返后
+        也可能是 int），而步骤模型是 ``action_id: str`` 的判别联合：不在这里
+        归一化时，``{"action_id": 1118..., "action_type": "composite"}``
+        会让整条 union 校验失败，表现为「引用了自定义动作的工作流跑不起来」。
+        内置动作名本身就是字符串，不受影响。
+        """
+        if isinstance(v, bool) or v is None:
+            return v
+        if isinstance(v, int):
+            return str(v)
+        return v
 
 
 class ClickWorkflowStep(BaseWorkflowStep[ClickParams]):

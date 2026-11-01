@@ -1,6 +1,7 @@
 from app.models.runtime.control import PageInfo
 import asyncio
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import AsyncGenerator, Any, Dict
@@ -593,8 +594,24 @@ class BrowserSession:
     async def create_session(
         self, params: BrowserSessionCreateParams
     ) -> WebRTCEnabledSession:
-        """添加新的会话"""
+        """添加新的会话（已关闭的就地重建）"""
         if sess := self.get_session(params):
+            if not sess.is_closed:
+                return sess
+            # 用户手动关窗口 / 浏览器崩溃 / 显示环境重启后，池里留着的是**已关闭**的
+            # 对象。直接返回它会让上层在「浏览器创建完成」之后立刻判定 closed
+            # （LiveService._reuse_or_create_session_entry 第五阶段），表现为
+            # 「创建过程中被关闭」并重试到失败。这里就地重建：池与 LiveService
+            # 持有的是同一个实例引用，重建后立刻可用。
+            logger.warning(
+                f"会话已关闭，就地重建底层浏览器: mid={self.mid}, "
+                f"browser_id={params.browser_id}"
+            )
+            # 先释放旧实例：可能只是页面被关、进程仍在，占着 user_data_dir 的
+            # profile 锁，不关掉的话新实例启动后会立刻被踢掉（pages 为空）。
+            with suppress(Exception):
+                await sess.close()
+            await sess._create_session()
             return sess
         session_info: WebRTCEnabledSession = await WebRTCEnabledSession.new(
             mid=self.mid,

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Query
 from bili_common.models.depends import BrowserReqAuthInfo
 from bili_common.models.response import (
     StandardResponse,
@@ -56,9 +56,15 @@ router = new_mcp_debug_router()
 
 
 async def verify_debug_browser(
-    browser_id: str,
     auth_info: Annotated[AuthInfo, Depends(get_auth_info_from_header)],
     session: Annotated[AsyncSession, Depends(DatabaseSessionManager.get_db_session)],
+    browser_id: str = Query(
+        ...,
+        description=(
+            "目标浏览器 id（雪花 id 的十进制字符串）。"
+            "必须是当前用户自己的浏览器，否则报「浏览器不属于该用户」。"
+        ),
+    ),
 ) -> BrowserReqAuthInfo:
     """调试路由专用的浏览器归属校验。
 

@@ -49,6 +49,14 @@ class CompositeActionCreateRequest(SQLModel):
         default=BuiltinActionType.COMPOSITE, description="操作类型"
     )
     description: str = Field(default="", description="操作描述")
+    version: str = Field(
+        default="1.0.0",
+        max_length=50,
+        description=(
+            "语义化版本（作者声明，服务端不自动递增）。"
+            "判断内容是否变化请看 content_hash，见 docs/动作版本与内容指纹计划书.md"
+        ),
+    )
     icon_series: int = Field(
         default=0, ge=0, le=999999, description="图标系列编号（0 表示默认图标）"
     )
@@ -81,6 +89,9 @@ class CompositeActionCreateRequest(SQLModel):
     )
     log_record_result: bool = Field(default=True, description="是否记录执行返回结果")
     log_record_variables: bool = Field(default=False, description="是否记录变量池快照")
+    log_record_page_snapshot: bool = Field(
+        default=False, description="是否记录报错时的页面关键元素快照"
+    )
     log_only_on_error: bool = Field(default=False, description="仅在执行失败时记录")
     log_max_payload_length: int = Field(default=4000, description="payload 最大字符数")
     log_retention_days: int = Field(default=30, description="日志保留天数，0 表示永久")
@@ -92,6 +103,11 @@ class CompositeActionUpdateRequest(SQLModel):
     action_id: int = Field(description="操作的雪花 action_id")
     name: str | None = Field(default=None, description="新名称")
     description: str | None = Field(default=None, description="新描述")
+    version: str | None = Field(
+        default=None,
+        max_length=50,
+        description="语义化版本（不传表示不修改；服务端不自动递增）",
+    )
     icon_series: int | None = Field(
         default=None, ge=0, le=999999, description="图标系列编号（不传表示不修改）"
     )
@@ -131,6 +147,9 @@ class CompositeActionUpdateRequest(SQLModel):
     )
     log_record_variables: bool | None = Field(
         default=None, description="是否记录变量池快照"
+    )
+    log_record_page_snapshot: bool | None = Field(
+        default=None, description="是否记录报错时的页面关键元素快照"
     )
     log_only_on_error: bool | None = Field(
         default=None, description="仅在执行失败时记录"
@@ -197,6 +216,10 @@ class CompositeActionDetailResponse(UpstreamSyncFields):
     action_id: int
     name: str
     version: str
+    content_hash: str = Field(
+        default="",
+        description="语义内容指纹（steps/参数/入出参的 sha256）；空=存量未计算",
+    )
     action_type: str
     description: str
     icon_series: int = 0
@@ -226,6 +249,7 @@ class CompositeActionDetailResponse(UpstreamSyncFields):
     log_record_params: bool = True
     log_record_result: bool = True
     log_record_variables: bool = False
+    log_record_page_snapshot: bool = False
     log_only_on_error: bool = False
     log_max_payload_length: int = 4000
     log_retention_days: int = 30
@@ -244,6 +268,8 @@ class CompositeActionListItemResponse(UpstreamSyncFields):
     id: int = Field(description="表主键")
     action_id: int = Field(description="雪花 action_id（be-message 互动 rpa_action 的 bizId）")
     name: str
+    version: str = Field(default="1.0.0", description="作者声明的语义化版本")
+    content_hash: str = Field(default="", description="语义内容指纹（空=存量未计算）")
     action_type: str
     description: str
     icon_series: int = 0

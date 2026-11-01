@@ -62,6 +62,13 @@ duration_membership_router = RouterInfo(
     description="时长与会员权益 - 余额查询、签到、兑换码、流水与使用统计",
 )
 
+browser_feedback_router = RouterInfo(
+    version_tag=DEFAULT_VERSION,
+    router_tag=RouterTag.browser_feedback,
+    router_prefix=RouterPrefix.BROWSER,
+    description="报错反馈 - 用户提交运行报错 / 改进建议给服主（落库并实时推送）",
+)
+
 
 # ====== 浏览器运行时管理模块 ======
 
@@ -151,6 +158,7 @@ BROWSER_CONFIG_ROUTERS: List[RouterInfo] = [
     browser_notification_router,
     user_browser_default_settings_router,
     duration_membership_router,
+    browser_feedback_router,
 ]
 
 # 浏览器运行时相关路由

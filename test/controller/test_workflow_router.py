@@ -2,6 +2,12 @@
 测试 Workflow 管理接口 - 使用真实数据库操作
 使用 httpx.AsyncClient 进行异步测试
 参考: https://fastapi.org.cn/advanced/async-tests/
+
+契约要点（与 app/controller/.../workflow_router.py 对齐）：
+- workflow_id 是雪花 int（不再有 "wf_" 前缀），CRUD 用数据库主键 ``id`` 定位；
+- 「工作流不存在 / 无权访问」统一走业务码 ``WORKFLOW_NOT_FOUND``（HTTP 200），
+  不再返回 404 / 403，避免泄露资源存在性；
+- 发布公开（is_public=true）需要管理员审批，这类用例不在离线测试里覆盖。
 """
 
 import pytest
@@ -9,7 +15,7 @@ import pytest
 from bili_common.models.response_code import ResponseCode
 
 # 复用 conftest 中的 PREFIX
-from test.controller.conftest import PREFIX
+from test.controller.conftest import OTHER_MID, PREFIX
 
 
 @pytest.mark.anyio
@@ -29,7 +35,10 @@ class TestCreateWorkflow:
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
         assert data["data"]["name"] == "测试工作流"
-        assert data["data"]["workflow_id"].startswith("wf_")
+        # 雪花 int：> 0 且是整数，不再是 "wf_xxx" 字符串
+        assert isinstance(data["data"]["workflow_id"], int)
+        assert data["data"]["workflow_id"] > 0
+        assert isinstance(data["data"]["id"], int)
 
     async def test_create_workflow_minimal(self, client):
         request_data = {"name": "最小化工作流"}
@@ -88,8 +97,8 @@ class TestGetWorkflowDetail:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
     async def test_get_workflow_detail_no_permission(self, client):
@@ -98,8 +107,8 @@ class TestGetWorkflowDetail:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
@@ -128,8 +137,8 @@ class TestUpdateWorkflow:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
@@ -158,8 +167,8 @@ class TestDeleteWorkflow:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
     async def test_delete_workflow_no_permission(self, client):
@@ -168,8 +177,8 @@ class TestDeleteWorkflow:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
@@ -214,8 +223,8 @@ class TestDuplicateWorkflow:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
@@ -224,61 +233,45 @@ class TestForkWorkflow:
     async def test_fork_workflow_success(self, client, created_workflow):
         db_id, workflow_id = created_workflow
 
-        # 先将工作流设为公开
-        await client.post(
-            f"{PREFIX}/workflows/update", json={"id": db_id, "is_public": True}
-        )
-
-        list_resp = await client.post(
-            f"{PREFIX}/workflows/list", json={"page": 1, "per_page": 100}
-        )
-        found_id = None
-        for item in list_resp.json()["data"]["items"]:
-            if item["workflow_id"] == workflow_id:
-                found_id = item["id"]
-                break
-
-        assert found_id is not None
-
+        # 自己的资源允许直接 Fork，无需先发布（发布公开要管理员审批）
         response = await client.post(
-            f"{PREFIX}/workflows/fork", json={"id": found_id, "new_name": "我的 Fork"}
+            f"{PREFIX}/workflows/fork", json={"id": db_id, "new_name": "我的 Fork"}
         )
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ResponseCode.SUCCESS
-        assert "Fork" in data["data"]["name"]
+        assert data["data"]["name"] == "我的 Fork"
+        assert data["data"]["forked_from"] == workflow_id
 
     async def test_fork_workflow_not_found(self, client):
         response = await client.post(f"{PREFIX}/workflows/fork", json={"id": 999999})
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
-    async def test_fork_workflow_not_public(self, client, created_workflow):
-        db_id, workflow_id = created_workflow
-        # created_workflow 默认 is_public=False
+    async def test_fork_workflow_not_public(self, client):
+        """他人的非公开工作流不允许 Fork（只能 Fork 公开的或自己的）"""
+        from app.services.execution.crud_service import workflow_crud_svr
 
-        list_resp = await client.post(
-            f"{PREFIX}/workflows/list", json={"page": 1, "per_page": 100}
+        other = await workflow_crud_svr.create(
+            mid=OTHER_MID,
+            name="他人私有工作流",
+            custom_action_id=None,
+            is_public=False,
         )
-        found_id = None
-        for item in list_resp.json()["data"]["items"]:
-            if item["workflow_id"] == workflow_id:
-                found_id = item["id"]
-                break
 
-        assert found_id is not None
-
-        response = await client.post(f"{PREFIX}/workflows/fork", json={"id": found_id})
+        response = await client.post(
+            f"{PREFIX}/workflows/fork", json={"id": other.id}
+        )
 
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == ResponseCode.FORBIDDEN, (
-            f"Expected FORBIDDEN, got {data['code']}: {data.get('message')}"
+            f"Expected FORBIDDEN, got {data['code']}: {data.get('msg')}"
         )
 
 
@@ -298,29 +291,37 @@ class TestGetWorkflowForks:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.NOT_FOUND, (
-            f"Expected NOT_FOUND, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.WORKFLOW_NOT_FOUND, (
+            f"Expected WORKFLOW_NOT_FOUND, got {data['code']}: {data.get('msg')}"
         )
 
 
 @pytest.mark.anyio
 class TestExecuteWorkflow:
-    async def test_execute_workflow_missing_action_id(self, client):
-        """测试：缺少 action_id 时返回 BAD_REQUEST"""
-        request_data = {
-            "browser_id": 1,
-            "variables": {"key": "value"},
-            "input_data": {},
-            "output": [],
-        }
+    async def test_execute_workflow_missing_action_id(self, client, monkeypatch):
+        """既没有 action_id 也没有 steps 时返回 BUSINESS_ERROR
 
-        response = await client.post(f"{PREFIX}/workflows/execute", json=request_data)
+        现在的 ``/workflows/execute`` 从浏览器归属依赖里取 mid/browser_id，
+        并要解析一个真实页面；离线测试只需要把页面解析换掉，
+        验证「两个入口都没给」时的兜底提示。
+        """
+        from app.controller.v1.browser_control.execution import execution_router
+
+        async def _fake_resolve_page(mid, browser_id, page_index=None):
+            return object()
+
+        monkeypatch.setattr(execution_router, "_resolve_page", _fake_resolve_page)
+
+        response = await client.post(
+            f"{PREFIX}/workflows/execute", json={"variables": {"key": "value"}}
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["code"] == ResponseCode.BAD_REQUEST, (
-            f"Expected BAD_REQUEST, got {data['code']}: {data.get('message')}"
+        assert data["code"] == ResponseCode.BUSINESS_ERROR, (
+            f"Expected BUSINESS_ERROR, got {data['code']}: {data.get('msg')}"
         )
+        assert "action_id" in data["msg"]
 
 
 @pytest.mark.anyio

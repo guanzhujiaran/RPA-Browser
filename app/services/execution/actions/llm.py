@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
+from collections import Counter
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -138,7 +142,7 @@ class LLMAction(BaseAction[LLMParams]):
         ]
 
         # 回退链上下文：先声明再进 try，保证任何分支（含超时）都能安全引用
-        failures: list[tuple[str, str]] = []
+        failures: list[_LLMFailure] = []
         fallbacks: list[Any] = []
         budget_seconds = 0.0
         try:
@@ -183,27 +187,33 @@ class LLMAction(BaseAction[LLMParams]):
             )
             logger.error(f"[LLMAction] {error}")
             if failures:
-                detail = "; ".join(f"{name}: {msg[:300]}" for name, msg in failures)
-                error = f"{error}；已失败模型 [{detail[:1200]}]"
+                error = f"{error}；已失败模型：{_format_llm_failures(failures)}"
             return ActionResult(
                 success=False,
                 error=error,
+                logs=_failure_logs(failures),
+                error_details=_failure_details(failures),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
             )
 
         except Exception as e:
-            # `with_fallbacks` 全失败时只抛出**第一个**异常，备用模型的失败原因会丢，
-            # 因此用包装里收集到的 failures 拼一条完整说明（每段截断，避免超长）。
+            # `with_fallbacks` 全失败时只抛出**第一个**异常（langchain 内部 `raise
+            # first_error`），备用模型的失败原因会丢，因此用包装层收集到的 failures
+            # 拼一条完整说明：每项带「端点 + 序号 + 错误类别」，超出条数按类别计数。
             error = str(e)
             if failures:
-                detail = "; ".join(f"{name}: {msg[:300]}" for name, msg in failures)
-                error = f"所有模型均失败（{len(failures)} 个）[{detail[:1200]}]"
+                error = (
+                    f"所有模型均失败（{len(failures)} 个）："
+                    f"{_format_llm_failures(failures)}"
+                )
                 logger.error(f"[LLMAction] 模型回退链全部失败: {error}")
             return ActionResult(
                 success=False,
                 error=error,
+                logs=_failure_logs(failures),
+                error_details=_failure_details(failures),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
@@ -250,7 +260,7 @@ class LLMAction(BaseAction[LLMParams]):
             )
             return []
 
-    def _build_runnable(self, params: LLMParams, failures: list[tuple[str, str]]):
+    def _build_runnable(self, params: LLMParams, failures: list[_LLMFailure]):
         """构造「主模型 → 备用模型…」回退链（LangChain ``with_fallbacks``）
 
         - 无备用模型时直接返回主模型的可调用对象（行为与改造前一致）；
@@ -267,7 +277,7 @@ class LLMAction(BaseAction[LLMParams]):
         configs.extend((fb.model, fb.server_url, fb.api_key) for fb in fallback_cfgs)
 
         runnables: list = []
-        for model, server_url, api_key in configs:
+        for index, (model, server_url, api_key) in enumerate(configs, start=1):
             chat = self._build_chat_model(
                 model=model,
                 server_url=server_url,
@@ -280,7 +290,15 @@ class LLMAction(BaseAction[LLMParams]):
                 callable_obj = chat.with_structured_output(
                     schema_model, method="json_schema"
                 )
-            runnables.append(_remember_failure(model, callable_obj, failures))
+            runnables.append(
+                _remember_failure(
+                    model,
+                    callable_obj,
+                    failures,
+                    index=index,
+                    endpoint=_endpoint_of(server_url),
+                )
+            )
 
         if len(runnables) == 1:
             return runnables[0]
@@ -359,20 +377,166 @@ register_action_class(LLMAction)
 # ── 工具函数 ───────────────────────────────────────────────
 
 
-def _remember_failure(model: str, runnable: object, failures: list[tuple[str, str]]):
-    """把模型包一层：失败时记录「哪个模型、什么错误」再原样抛出
+@dataclass(frozen=True)
+class _LLMFailure:
+    """一次模型调用的失败现场（用于「全部失败」时的完整汇报）。
 
-    ``with_fallbacks`` 只保留第一个异常，不记下备用模型的失败原因，
-    导致「主模型 429 / 备用模型 401」这种信息丢失。这里在回退链内逐模型记录，
-    上层汇总成一条完整的失败说明。
+    ``with_fallbacks`` 内部只保留第一个异常（``langchain_core/runnables/
+    fallbacks.py`` 里的 ``raise first_error``），备用模型的异常会被静默吞掉；
+    因此只能在回退链的每一环外面包一层，把失败逐个记下来。这里固定三项：
+
+    - ``label``：``模型@端点#序号``。LLM 列表里常见「同名模型 + 多个 key/中转站」，
+      只记模型名无法区分到底哪个配置挂了；
+    - ``kind``：错误类别（429 限流 / 401 鉴权 / 超时 / 连接失败 …），便于快速判断
+      是「配额用尽」还是「key 写错」；
+    - ``message``：脱敏 + 截断后的原始错误摘要。
     """
+
+    label: str
+    kind: str
+    message: str
+
+
+#: 错误文本 → 类别的兜底匹配表（HTTP 状态在 _classify_llm_error 里优先处理）
+_LLM_ERROR_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("429 限流", ("429", "rate limit", "rate_limit", "too many requests", "quota")),
+    (
+        "401 鉴权失败",
+        ("401", "unauthorized", "invalid api key", "invalid_api_key", "authentication"),
+    ),
+    ("403 无权限", ("403", "forbidden", "permission denied", "no permission")),
+    ("404 模型或端点不存在", ("404", "not found", "model_not_found", "does not exist")),
+    (
+        "5xx 服务端错误",
+        ("500", "502", "503", "504", "internal server error", "bad gateway"),
+    ),
+    (
+        "连接失败",
+        ("connection", "connect", "econnrefused", "getaddrinfo", "network", "proxy"),
+    ),
+    ("超时", ("timeout", "timed out", "read timeout")),
+)
+
+#: 常见密钥形态（日志/通知里一律脱敏）
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"sk-[A-Za-z0-9_\-]{6,}"), "sk-***"),
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{8,}"), r"\1***"),
+    (re.compile(r"(?i)(api[_-]?key[\"']?\s*[:=]\s*[\"']?)[^\s\"',}]{8,}"), r"\1***"),
+)
+
+
+def _endpoint_of(server_url: str | None) -> str:
+    """取端点标识（host:port），不把完整 URL/query 带进通知。"""
+    if not server_url:
+        return "-"
+    parsed = urlparse(server_url if "://" in server_url else f"http://{server_url}")
+    return parsed.netloc or server_url
+
+
+def _scrub_secrets(text: str) -> str:
+    """把错误文本里的密钥打码（异常里偶尔会带出 Authorization / api_key）。"""
+    cleaned = text
+    for pattern, replacement in _SECRET_PATTERNS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
+
+
+def _classify_llm_error(exc: BaseException) -> str:
+    """给异常归类（优先 status_code，其次异常类型，最后文本关键字）。"""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "超时"
+
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        if status == 429:
+            return "429 限流"
+        if status == 401:
+            return "401 鉴权失败"
+        if status == 403:
+            return "403 无权限"
+        if status == 404:
+            return "404 模型或端点不存在"
+        if 500 <= status < 600:
+            return "5xx 服务端错误"
+        return f"HTTP {status}"
+
+    text = str(exc).lower()
+    for kind, needles in _LLM_ERROR_KEYWORDS:
+        if any(needle in text for needle in needles):
+            return kind
+    return "调用失败"
+
+
+def _format_llm_failures(
+    failures: list[_LLMFailure],
+    *,
+    limit: int = 8,
+    max_length: int = 1200,
+) -> str:
+    """把逐模型失败汇总成一行可读文本。
+
+    - 最多展开 ``limit`` 条（每条含端点与类别），其余按类别计数，避免被长度截断后
+      「后面的错误全部消失」；
+    - 总长再兜一层 ``max_length``，防止单条超长报错（整页 HTML）把通知撑爆。
+    """
+    if not failures:
+        return ""
+    parts = [f"{f.label} {f.kind}：{f.message}" for f in failures[:limit]]
+    rest = failures[limit:]
+    if rest:
+        counter = Counter(f.kind for f in rest)
+        summary = "、".join(f"{kind}×{count}" for kind, count in counter.most_common())
+        parts.append(f"其余 {len(rest)} 条：{summary}")
+    text = "；".join(parts)
+    return text if len(text) <= max_length else f"{text[:max_length]}…"
+
+
+def _failure_logs(failures: list[_LLMFailure]) -> list[str]:
+    """逐条失败日志（全量、不省略），供动作日志留痕与前端展开排查。"""
+    return [f"LLM 模型失败 {f.label}（{f.kind}）：{f.message}" for f in failures]
+
+
+def _failure_details(failures: list[_LLMFailure]) -> dict[str, Any] | None:
+    """失败的结构化明细（写入 `ActionResult.error_details` → 动作日志 result_data）。
+
+    `error` 是给人/通知看的文本摘要，超过列宽还会被截断；这里是机器可读版本，
+    前端可据此按类别聚合（「3 个 401、2 个 429」）而不必解析字符串。
+    """
+    if not failures:
+        return None
+    return {
+        "model_count": len(failures),
+        "llm_failures": [asdict(item) for item in failures],
+    }
+
+
+def _remember_failure(
+    model: str,
+    runnable: object,
+    failures: list[_LLMFailure],
+    *,
+    index: int = 1,
+    endpoint: str = "-",
+):
+    """把模型包一层：失败时记录「哪个配置、什么类别、什么错误」再原样抛出
+
+    ``with_fallbacks`` 只抛出第一个异常、不保留备用模型的失败原因
+    （「主模型 429 / 备用模型 401」这种现场会只剩 429）。这里在回退链内逐模型记录，
+    上层汇总成一条完整说明。
+    """
+    label = f"{model}@{endpoint}#{index}"
 
     async def _run(messages):
         try:
             return await runnable.ainvoke(messages)  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001 - 记完再抛，交给回退链处理
-            logger.warning(f"[LLMAction] 模型 {model} 调用失败: {exc}")
-            failures.append((model, str(exc)))
+            kind = _classify_llm_error(exc)
+            message = " ".join(_scrub_secrets(str(exc)).split())[:200]
+            failures.append(_LLMFailure(label=label, kind=kind, message=message))
+            logger.warning(f"[LLMAction] 模型 {label} 调用失败（{kind}）: {message}")
             raise
 
     return RunnableLambda(_run)

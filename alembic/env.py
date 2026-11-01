@@ -26,6 +26,7 @@ from app.models.database.notify.models import *  # noqa: F401, F403
 from app.models.database.log.models import *  # noqa: F401, F403
 from app.models.database.admin.models import *  # noqa: F401, F403
 from app.models.database.membership.models import *  # noqa: F401, F403
+from app.models.database.feedback.models import *  # noqa: F401, F403
 
 target_metadata = SQLModel.metadata
 

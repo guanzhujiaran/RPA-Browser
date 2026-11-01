@@ -28,6 +28,9 @@ class UpstreamSyncFlag:
 
     has_upstream_update: bool
     upstream_updated_at: int | None  # 秒级时间戳；上游不可用/非 Fork 时为 None
+    # 上游版本号与内容指纹（Action 侧填充；Workflow 侧保持默认值）
+    upstream_version: str | None = None
+    upstream_content_hash: str = ""
 
 
 class FilterType(StrEnumAutoDoc):

@@ -133,7 +133,20 @@ class CompositeActionModel(CommunityResourceBase, table=True):
         description="操作唯一标识（雪花 int，由应用层生成）",
     )
     name: str = Field(max_length=200, description="显示名称")
-    version: str = Field(default="1.0.0", max_length=50)
+    version: str = Field(
+        default="1.0.0",
+        max_length=50,
+        description="作者声明的语义化版本（服务端不自动递增，仅原样保存）",
+    )
+    content_hash: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "语义内容指纹：steps + parameters_schema + input_vars + output_vars 的 sha256；"
+            "空串 = 未计算（存量数据）。Fork/同步时继承上游值而非重算，"
+            "详见 docs/动作版本与内容指纹计划书.md"
+        ),
+    )
     action_type: BuiltinActionType = Field(
         default=BuiltinActionType.COMPOSITE, description="操作类型"
     )
@@ -173,6 +186,14 @@ class CompositeActionModel(CommunityResourceBase, table=True):
         foreign_key="compositeactionmodel.id",
         description="Fork 来源的操作ID",
     )
+    last_synced_hash: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "Fork 同步快照：上次同步时上游的 content_hash；"
+            "与上游 content_hash 不等即表示「上游有新版本」"
+        ),
+    )
     timeout: int = Field(default=30000, description="超时时间(毫秒)")
     retry_on_error: bool = Field(default=False)
     retry_times: int = Field(default=0)
@@ -195,6 +216,9 @@ class CompositeActionModel(CommunityResourceBase, table=True):
     )
     log_record_result: bool = Field(default=True, description="是否记录执行返回结果")
     log_record_variables: bool = Field(default=False, description="是否记录变量池快照")
+    log_record_page_snapshot: bool = Field(
+        default=False, description="是否记录报错时的页面关键元素快照"
+    )
     log_only_on_error: bool = Field(default=False, description="仅在执行失败时记录")
     log_max_payload_length: int = Field(
         default=4000,
@@ -273,12 +297,28 @@ class UserWorkflow(CommunityResourceBase, table=True):
     next_run_at: NaiveDatetime | None = Field(
         default=None, description="下次计划运行时间（由 cron 推导，仅供展示）"
     )
-    # === 运行通知开关（开始/结束；结束含成功与失败） ===
+    # === 运行通知开关「通道 × 时机」2×2 矩阵
+    # （见 docs/通知动作与运行告警计划书.md §E；结束 = 成功/失败/停止）
+    notify_inbox_on_start: bool = Field(
+        default=False, description="站内通知：工作流开始执行时是否发送"
+    )
+    notify_inbox_on_end: bool = Field(
+        default=True, description="站内通知：工作流结束时是否发送（成功/失败/停止）"
+    )
+    notify_push_on_start: bool = Field(
+        default=False, description="站外推送：工作流开始执行时是否发送"
+    )
+    notify_push_on_end: bool = Field(
+        default=True, description="站外推送：工作流结束时是否发送（成功/失败/停止）"
+    )
+    # === 旧字段（通道混合，已废弃）：仅为兼容旧读方保留，写入时置为两通道取或 ===
     notify_on_start: bool = Field(
-        default=False, description="工作流开始执行时是否发送通知"
+        default=False,
+        description="【已废弃】开始通知，改用 notify_inbox_on_start / notify_push_on_start",
     )
     notify_on_end: bool = Field(
-        default=True, description="工作流结束时是否发送通知（成功/失败）"
+        default=True,
+        description="【已废弃】结束通知，改用 notify_inbox_on_end / notify_push_on_end",
     )
     # === 执行日志开关（三态：None=未设置听从工作流/项目开关，True/False=显式开/关） ===
     log_enabled: bool | None = Field(

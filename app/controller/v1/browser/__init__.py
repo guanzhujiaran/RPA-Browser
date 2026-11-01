@@ -13,11 +13,13 @@ from app.controller.v1.browser.default_settings_router import (
     router as default_settings_router,
 )
 from app.controller.v1.browser.membership_router import router as membership_router
+from app.controller.v1.browser.feedback_router import router as feedback_router
 
 router = APIRouter()
 router.include_router(fingerprint_router)
 router.include_router(message_router)
 router.include_router(default_settings_router)
 router.include_router(membership_router)
+router.include_router(feedback_router)
 
 __all__ = ["router"]

@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Iterator
 from typing import Any, Final, cast
 
@@ -308,6 +309,137 @@ def build_user_app() -> FastAPI:
     return app
 
 
+def group_operations_by_tag(
+    app: FastAPI,
+    operation_map: dict[str, dict[str, Any]],
+) -> dict[str, int]:
+    """按 OpenAPI `tag` 统计工具数（启动日志用）。
+
+    比按路径段推断准确：`/browser/control/create|status|close` 这类路径的末段
+    就是动作名，按路径会切出 `create` / `status` / `queue_status` 之类伪资源名；
+    tag 是路由注册时人工给的业务分类（「工作流管理」「自定义操作管理」等）。
+    """
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    paths = schema.get("paths", {})
+    summary: dict[str, int] = {}
+    for detail in operation_map.values():
+        path = str(detail.get("path", ""))
+        method = str(detail.get("method", "")).lower()
+        operation = (paths.get(path) or {}).get(method) or {}
+        tags = operation.get("tags") or []
+        tag = str(tags[0]) if tags else "未分类"
+        summary[tag] = summary.get(tag, 0) + 1
+    return dict(sorted(summary.items(), key=lambda kv: -kv[1]))
+
+
+#: fastapi-mcp 自动追加响应段的固定分隔符（``openapi/convert.py`` 里的字面量）
+_RESPONSE_SECTION_MARKER = "\n\n### Responses:"
+
+#: 自动生成的工具名里一定包含的路径片段（显式设置了 operation_id 的接口没有）
+_AUTOGEN_NAME_MARKER = "_api_v1_rpa"
+
+
+def _tool_name_from_path(path: str, method: str) -> str:
+    """按「资源/动作」把接口路径压成短工具名，如 `rpa_workflows_list`。
+
+    去掉部署前缀（``/api/v1/rpa``）与固定前缀（``browser/control``），
+    路径分隔符与参数占位符统一成下划线。
+    """
+    raw = path.replace("/api/v1/rpa", "").strip("/")
+    for prefix in ("browser/control/", "browser/"):
+        if prefix in raw:
+            raw = raw.split(prefix, 1)[1]
+            break
+    slug = re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
+    return f"rpa_{slug}" if slug else f"rpa_{method.lower()}"
+
+
+def shorten_tool_names(
+    tools: Iterable[Any],
+    operation_map: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    """把 fastapi-mcp 自动生成的超长工具名收敛成 `rpa_<资源>_<动作>`。
+
+    fastapi-mcp 对**没有显式 operation_id** 的接口用「函数名 + 完整路径 + 方法」
+    兜底命名，形如
+    ``create_or_update_user_default_settings_api_v1_rpa_browser_default_settings_create_or_update_post``
+    （实测中位 69 字符、最长 96），既把部署前缀 ``api/v1/rpa`` 泄进工具名，又挤占
+    调用方上下文、逼近部分客户端的名字长度上限。
+
+    显式设置了 operation_id 的接口（``rpa_execute_action`` 等）保持原样。
+
+    Returns:
+        ``{旧名: 新名}`` 映射（供日志核对）。注意 **同步改写了 operation_map 的 key**：
+        `call_tool` 正是按工具名索引它，只改 tool.name 会让调用查不到路由。
+    """
+    renamed: dict[str, str] = {}
+    taken = {str(getattr(tool, "name", "")) for tool in tools}
+    for tool in tools:
+        old = str(getattr(tool, "name", ""))
+        if not old or _AUTOGEN_NAME_MARKER not in old:
+            continue
+        detail = operation_map.get(old) or {}
+        path = str(detail.get("path", ""))
+        method = str(detail.get("method", ""))
+        if not path:
+            continue
+        new = _tool_name_from_path(path, method)
+        if new in taken:
+            index = 2
+            while f"{new}_{index}" in taken:
+                index += 1
+            new = f"{new}_{index}"
+        if len(new) >= len(old):
+            continue
+        tool.name = new
+        operation_map[new] = operation_map.pop(old)
+        taken.discard(old)
+        taken.add(new)
+        renamed[old] = new
+    return renamed
+
+
+def strip_generated_response_section(tools: Iterable[Any]) -> int:
+    """裁掉 fastapi-mcp 自动拼进工具描述的 ``### Responses`` 段，返回被裁工具数。
+
+    该段由 ``fastapi_mcp/openapi/convert.py:71-135`` **无条件**拼接
+    （``describe_all_responses=False`` 只控制「包含几条响应」，不控制「是否包含」），
+    内容是按响应 schema 生成的占位示例：
+
+        **200**: Successful Response (Success Response)
+        **Example Response:** {"code": 1, "msg": "Msg"}
+
+    在本服务里它占掉约一半描述字符（94 个工具合计 1.3 万字符），而且给出的
+    ``code: 1`` 与真实约定（``code == 0`` 才是成功）相反，容易误导调用方。
+    响应语义由各工具自己写明的段落 + MCP 服务描述承担，这里统一裁掉。
+    """
+    removed = 0
+    for tool in tools:
+        description = getattr(tool, "description", "") or ""
+        changed = False
+        if _RESPONSE_SECTION_MARKER in description:
+            description = description.split(_RESPONSE_SECTION_MARKER, 1)[0].rstrip()
+            changed = True
+        # 另一个小噪音：summary 与 docstring 首行相同时会渲染成
+        # 「执行工作流\n\n执行工作流\n\n...」，把重复的那几份去掉
+        while True:
+            first, sep, rest = description.partition("\n\n")
+            head = first.strip()
+            body = rest.lstrip()
+            if not sep or not head or not body.startswith(head):
+                break
+            # 只吃「完全相同的一段」，避免误删「执行工作流（延迟）」这类同前缀内容
+            tail = body[len(head) :]
+            if tail and not tail.startswith("\n"):
+                break
+            description = body
+            changed = True
+        if changed:
+            tool.description = description.rstrip()
+            removed += 1
+    return removed
+
+
 def group_operations_by_resource(
     operation_map: dict[str, dict[str, Any]],
 ) -> dict[str, int]:
@@ -332,5 +464,8 @@ __all__ = [
     "find_admin_guarded_routes",
     "find_admin_paths",
     "group_operations_by_resource",
+    "group_operations_by_tag",
     "install_schema_compat",
+    "shorten_tool_names",
+    "strip_generated_response_section",
 ]

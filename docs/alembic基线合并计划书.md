@@ -1,7 +1,7 @@
 # RPA Alembic 版本合并（单条基线重建）计划书（v1）
 
-> 状态：**已实施**（2026-10-21）
-> 结果：`alembic/versions` 只剩 `20261021_rpa_baseline.py` 一条；空库 `upgrade head` 建出 28 张表，
+> 状态：**已实施**（2026-10-21；2026-10-30 二次合并为 `20261030_rpa_baseline`，见 §4.2）
+> 结果：`alembic/versions` 只剩 `20261030_rpa_baseline.py` 一条；空库 `upgrade head` 建出 28 张表，
 > 与旧链回放结果结构比对「实质差异为空」；`downgrade base` → `upgrade head` 可重复执行；
 > `check_schemas()` 通过。
 > 涉及仓库：`RPA-Browser`
@@ -98,6 +98,26 @@ uv run alembic upgrade head
 - [x] 新旧两库结构 diff「实质差异（表/列/类型/可空性/索引/表选项）」为空；
 - [x] `downgrade base` 后库内无残留表，`upgrade head` 可再次建出；
 - [x] `check_schemas()`（启动期校验）通过。
+
+### 4.2 二次合并（2026-10-30）
+
+在 `20261021_rpa_baseline` 之上又累积了 4 条增量，按同一流程再次合并为单条基线
+`20261030_rpa_baseline`（`alembic/versions/20261030_rpa_baseline.py`）：
+
+- 被合并的增量：`20261021_wf_run_queue`（同浏览器排队字段）、`20261025_log_debug`
+  （工作流/动作级调试三态）、`20261030_proxy_bypass`（浏览器代理绕过）、
+  `20261030_log_page_snapshot`（操作日志 `page_snapshot` + 动作级采集开关）；
+- 空库 autogenerate 后与真实库做 information_schema（表/列/索引）逐项 diff，**差异 0 项**；
+- 真实库 `alembic stamp 20261030_rpa_baseline`（结构未变，仅移动版本指针；旧 revision
+  文件已删除，stamp 需带 `--purge`）；临时库上 `downgrade base` → `upgrade head` 可重复执行；
+- `check_schemas()` 通过，业务数据（动作表 3 行 / 日志表 1.2 万行）保持不变。
+
+本次 diff 暴露出旧链遗留的两处「库落后于模型」，已一并修正：
+
+| 对象 | 旧链状态 | 修正后 |
+|---|---|---|
+| `compositeactionmodel.action_type` | 枚举缺 `PARALLEL`（`check_schemas` 只比对类型大类，查不出枚举标签缺失） | 补齐 `PARALLEL` |
+| `compositeactionmodel.log_record_page_snapshot` | 手写增量建为可空 | 改为 `NOT NULL`（与模型 `bool = False` 一致） |
 
 ## 6. 已知非实质差异（可接受）
 

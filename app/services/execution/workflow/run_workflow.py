@@ -191,19 +191,19 @@ async def _finalize_precheck_failure(
         )
     # 工作流卡片快照（last_run_status / last_run_at）由终态事件订阅者刷新
     # （见 docs/工作流运行状态机计划书.md §7），这里不再直接写，避免两处口径。
-    # 配置类失败同样要通知（受 notify_on_end 开关约束），避免定时任务静默失效
-    if getattr(workflow, "notify_on_end", True):
-        notified = await _notify_run(
-            workflow=workflow,
-            mid=mid,
-            browser_id=target,
-            run_id=run.run_id,
-            phase="failure",
-            summary={"total": 0, "success": 0, "failed": 0},
-            error_message=str(exc),
-        )
-        if notified:
-            await workflow_run_crud_svr.mark_notified(run.run_id)
+    # 配置类失败同样要通知（按「结束」时机的通道开关），避免定时任务静默失效；
+    # 开关全关时 _notify_run 直接返回 False，不会写 notified 标记
+    notified = await _notify_run(
+        workflow=workflow,
+        mid=mid,
+        browser_id=target,
+        run_id=run.run_id,
+        phase="failure",
+        summary={"total": 0, "success": 0, "failed": 0},
+        error_message=str(exc),
+    )
+    if notified:
+        await workflow_run_crud_svr.mark_notified(run.run_id)
     logger.warning(f"[WorkflowRunner] 前置校验失败: {workflow.workflow_id}, {exc}")
     return {
         "run_id": run.run_id,
@@ -392,15 +392,15 @@ async def run_workflow(
     # 运行批次ID 与 步骤日志批次ID 共用，便于下钻
     execution_id = run.run_id
 
-    # ---------- 开始通知（受 notify_on_start 开关约束） ----------
-    if getattr(workflow, "notify_on_start", False):
-        await _notify_run(
-            workflow=workflow,
-            mid=mid,
-            browser_id=target_browser_id,
-            run_id=run.run_id,
-            phase="start",
-        )
+    # ---------- 开始通知（按「开始」时机的通道开关：站内/站外各自独立） ----------
+    # 开关全关时 _notify_run 内部直接返回，无需在此预先判断（见 notify_flags）
+    await _notify_run(
+        workflow=workflow,
+        mid=mid,
+        browser_id=target_browser_id,
+        run_id=run.run_id,
+        phase="start",
+    )
 
     error_message: str | None = None
     billed_started: float | None = None  # 计费计时起点（会话获取成功后才有值）

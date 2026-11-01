@@ -50,6 +50,7 @@ from app.services.execution.actions.safe_eval import (
 from app.config import settings
 from app.services.RPA_browser.session.page_registry import page_registry
 from app.models.database.workflow.models import BuiltinActionType
+from app.models.execution.builtin_action_types import OnErrorEnum
 from app.models.database.log.models import ActionLogSourceEnum
 from app.services.execution.action_logger import (
     ActionLogContext,
@@ -151,6 +152,11 @@ class StepExecutor:
         旧实现中循环体 / 条件分支内的子步骤直接调用 ``execute()``，
         步骤 JSON 上声明的 ``retry`` 被静默忽略，且失败后仍继续执行
         后续步骤——这正是「报错了却定位不到、甚至谎报成功」的根因之一。
+
+        **重试全部失败后才执行兜底分支（``on_error_branch``）**：与工作流执行
+        链路（``pipeline.py``）语义对齐——之前复合动作路径完全不解析
+        ``on_error_branch``，用户在步骤 JSON 里配的「失败回退 / 告警」永远
+        不执行，而同一步骤在工作流里跑却会执行，两条路径行为不一致。
         """
         results = [await self.execute(step, step_index)]
         if not results[0].success and step.retry > 0:
@@ -158,6 +164,30 @@ class StepExecutor:
                 results.append(await self.execute(step, step_index))
                 if results[-1].success:
                     break
+        if not results[-1].success:
+            results.extend(await self._run_error_branch(step, results[-1]))
+        return results
+
+    async def _run_error_branch(
+        self, step: WorkflowStep, failed: ActionResult
+    ) -> list[ActionResult]:
+        """执行步骤声明的兜底分支（``on_error_branch``）
+
+        兜底分支里的步骤按普通步骤执行（**不再递归触发自己的兜底分支**，
+        避免兜底链无限嵌套）。分支内任一步失败即中断该分支。
+        """
+        branch_steps = list(getattr(step, "on_error_branch", None) or [])
+        if not branch_steps:
+            return []
+        self.context.variables["last_error"] = failed.error or "未知错误"
+        self.context.variables["last_output"] = failed.data
+        logger.info(f"执行 {step.action_id} 的错误处理分支")
+        results: list[ActionResult] = []
+        for sub_step in branch_steps:
+            sub_result = await self.execute(sub_step)
+            results.append(sub_result)
+            if not sub_result.success:
+                break
         return results
 
     def _get_strategy(self, action_id: str) -> "ExecutionStrategy":
@@ -818,8 +848,13 @@ class LoopStrategy(ExecutionStrategy):
             if continue_condition and self._evaluate_condition(continue_condition):
                 return results, False, True
 
-            # 任一步骤失败（含重试耗尽）即中断后续子步骤
+            # 任一步骤失败（含重试耗尽）即中断后续子步骤；
+            # 但 on_error=continue 显式要求「失败也继续往下走」——与工作流执行
+            # 链路（pipeline.py）语义对齐：被容忍的失败不再中断后续步骤
             if not result.success:
+                if child_step.on_error == OnErrorEnum.CONTINUE:
+                    result.tolerated = True
+                    continue
                 break
         return results, False, False
 
@@ -1348,19 +1383,34 @@ class LoopAction(BaseAction[LoopParams]):
         children: list[WorkflowStep],
         mapped: dict[str, Any],
     ) -> list[WorkflowStep]:
-        """将映射参数注入到子步骤中"""
+        """把 param_mapping 的映射值注入子步骤的**同名参数**
+
+        与 pipeline 的同名实现保持一致，两条约束（引擎不得擅自改写用户写死
+        的配置）：
+
+        1. **只注入用户声明过该参数名的步骤**：``param_mapping`` 的语义是
+           「把某个参数的值换成循环项的字段」，不是给所有步骤凭空加参数。
+           旧实现给**每个**子步骤的 params 都加上映射键，等于用循环项的值
+           顶掉所有步骤的同名参数（连用户写死的 ``selector`` 也会被覆盖）。
+        2. **不改原步骤对象**：返回副本，避免映射值残留在步骤定义里
+           （下一轮映射为空时，上一轮的值会继续生效）。
+        """
         if not mapped or not children:
             return children
-        new_children = []
+        new_children: list[WorkflowStep] = []
         for child in children:
             raw = child.params or {}
             if hasattr(raw, "model_dump"):
                 raw = raw.model_dump()
             elif not isinstance(raw, dict):
                 raw = {}
-            merged = {**raw, **mapped}
-            child.params = merged
-            new_children.append(child)
+            injected = {k: v for k, v in mapped.items() if k in raw}
+            if not injected:
+                new_children.append(child)
+                continue
+            new_children.append(
+                child.model_copy(update={"params": {**raw, **injected}})
+            )
         return new_children
 
     def _resolve_items_from_variable(
@@ -1567,7 +1617,16 @@ class IfElseAction(BaseAction[IfElseParams]):
         # 失败传播：分支内任一步骤失败（含重试耗尽）→ 整个条件判断失败。
         # 旧实现恒返回 success=True，嵌套在复合动作中时分支内失败被完全掩盖，
         # 出现「点击转发失败 → 仍继续输入/发布 → 最终谎报成功」的假阳性。
-        failed = next((r for r in results if not r.get("success")), None)
+        # 被 on_error=continue 显式容忍的失败不参与判定（与 pipeline 对齐）：
+        # 「LLM 失败 → 走抄评论兜底」不应让整个分支判失败。
+        failed = next(
+            (
+                r
+                for r in results
+                if not r.get("success") and not r.get("tolerated")
+            ),
+            None,
+        )
         return ActionResult(
             success=failed is None,
             error=failed.get("error") if failed else None,
@@ -1605,9 +1664,17 @@ class IfElseAction(BaseAction[IfElseParams]):
                     "success": last.success,
                     "error": last.error,
                     "data": last.data,
+                    # 被 on_error=continue 容忍的失败不参与分支失败判定
+                    "tolerated": bool(last.tolerated),
                 }
             )
             if not last.success:
+                # on_error=continue 显式要求「失败也继续往下走」（与 pipeline 对齐）：
+                # 例如「LLM 生成失败 → 继续走后面的抄评论兜底分支」
+                if step.on_error == OnErrorEnum.CONTINUE:
+                    last.tolerated = True
+                    results[-1]["tolerated"] = True
+                    continue
                 break
         return results
 
@@ -1937,25 +2004,17 @@ class CompositeAction(BaseAction[CompositeParams]):
         results = []
 
         for i, step in enumerate(steps):
-            # 执行步骤
-            result = await executor.execute(step, i)
-            results.append(result)
+            # 执行步骤（含重试与兜底分支，语义与 execute_with_retry 一致）
+            attempt_results = await executor.execute_with_retry(step, i)
+            results.extend(attempt_results)
+            result = attempt_results[-1]
 
-            # 错误处理：retry 重试
-            if not result.success and step.retry > 0:
-                for _ in range(step.retry):
-                    result = await executor.execute(step, i)
-                    results.append(result)
-                    if result.success:
-                        break
-
-            # 步骤失败且重试也失败时，中断后续步骤
-            if not result.success and step.retry == 0:
+            # 步骤失败且重试也失败时，中断后续步骤；
+            # on_error=continue 显式要求「失败也继续往下走」（与 pipeline 对齐）
+            if not result.success:
+                if step.on_error == OnErrorEnum.CONTINUE:
+                    result.tolerated = True
+                    continue
                 break
-            elif not result.success:
-                # 检查所有重试结果，如果都失败则中断
-                retry_results = results[-(step.retry + 1) :]
-                if not any(r.success for r in retry_results):
-                    break
 
         return results

@@ -142,69 +142,197 @@
       "action_type": "print"
     },
     {
-      "retry": 1,
       "params": {
-        "dedupe": true,
-        "id_field": "reserve_sid",
-        "list_path": "items",
-        "method_name": "get_reserve_lottery",
-        "resource_type": "bili_lottery_reserve",
-        "get_reserve_lottery_params": {
-          "status": "unfinished",
-          "page_num": 1,
-          "page_size": 1000
-        }
+        "name": "预约抽奖是否只抽大奖",
+        "condition": {
+          "logic": "AND",
+          "condition": {
+            "field": "reserve_only_grand",
+            "condition_value": true,
+            "condition_value_type": "BOOLEAN"
+          }
+        },
+        "TrueBranch": [
+          {
+            "retry": 1,
+            "params": {
+              "dedupe": true,
+              "id_field": "reserve_sid",
+              "list_path": "items",
+              "method_name": "get_reserve_lottery",
+              "resource_type": "bili_lottery_reserve",
+              "get_reserve_lottery_params": {
+                "status": "unfinished",
+                "page_num": 1,
+                "page_size": 1000,
+                "is_grand_prize": true
+              }
+            },
+            "action_id": "fetch_external_data",
+            "action_type": "fetch_external_data",
+            "output_vars": [
+              "reserve_code",
+              "reserve_data"
+            ]
+          }
+        ],
+        "FalseBranch": [
+          {
+            "retry": 1,
+            "params": {
+              "dedupe": true,
+              "id_field": "reserve_sid",
+              "list_path": "items",
+              "method_name": "get_reserve_lottery",
+              "resource_type": "bili_lottery_reserve",
+              "get_reserve_lottery_params": {
+                "status": "unfinished",
+                "page_num": 1,
+                "page_size": 1000
+              }
+            },
+            "action_id": "fetch_external_data",
+            "action_type": "fetch_external_data",
+            "output_vars": [
+              "reserve_code",
+              "reserve_data"
+            ]
+          }
+        ]
       },
-      "action_id": "fetch_external_data",
-      "action_type": "fetch_external_data",
-      "output_vars": [
-        "reserve_code",
-        "reserve_data"
-      ]
+      "action_id": "if_else",
+      "action_type": "if_else",
+      "output_vars": []
     },
     {
-      "retry": 1,
       "params": {
-        "dedupe": true,
-        "id_field": "dynId",
-        "list_path": "items",
-        "method_name": "get_official_lottery",
-        "resource_type": "bili_lottery_official",
-        "get_official_lottery_params": {
-          "status": "unfinished",
-          "page_num": 1,
-          "page_size": 1000
-        }
+        "name": "官方抽奖是否只抽大奖",
+        "condition": {
+          "logic": "AND",
+          "condition": {
+            "field": "official_only_grand",
+            "condition_value": true,
+            "condition_value_type": "BOOLEAN"
+          }
+        },
+        "TrueBranch": [
+          {
+            "retry": 1,
+            "params": {
+              "dedupe": true,
+              "id_field": "dynId",
+              "list_path": "items",
+              "method_name": "get_official_lottery",
+              "resource_type": "bili_lottery_official",
+              "get_official_lottery_params": {
+                "status": "unfinished",
+                "page_num": 1,
+                "page_size": 1000,
+                "is_grand_prize": true
+              }
+            },
+            "action_id": "fetch_external_data",
+            "action_type": "fetch_external_data",
+            "output_vars": [
+              "official_code",
+              "official_data"
+            ]
+          }
+        ],
+        "FalseBranch": [
+          {
+            "retry": 1,
+            "params": {
+              "dedupe": true,
+              "id_field": "dynId",
+              "list_path": "items",
+              "method_name": "get_official_lottery",
+              "resource_type": "bili_lottery_official",
+              "get_official_lottery_params": {
+                "status": "unfinished",
+                "page_num": 1,
+                "page_size": 1000
+              }
+            },
+            "action_id": "fetch_external_data",
+            "action_type": "fetch_external_data",
+            "output_vars": [
+              "official_code",
+              "official_data"
+            ]
+          }
+        ]
       },
-      "action_id": "fetch_external_data",
-      "action_type": "fetch_external_data",
-      "output_vars": [
-        "official_code",
-        "official_data"
-      ]
+      "action_id": "if_else",
+      "action_type": "if_else",
+      "output_vars": []
     },
     {
-      "retry": 1,
       "params": {
-        "dedupe": true,
-        "id_field": "dynId",
-        "list_path": "items",
-        "method_name": "get_others_lot_dyn_list",
-        "resource_type": "bili_lottery_others",
-        "get_others_lot_dyn_list_params": {
-          "is_lot": true,
-          "created_at_preset": "30d",
-          "pub_time_preset": "7d",
-          "page_num": 1,
-          "page_size": 1000
-        }
+        "name": "第三方抽奖是否只抽大奖",
+        "condition": {
+          "logic": "AND",
+          "condition": {
+            "field": "others_only_grand",
+            "condition_value": true,
+            "condition_value_type": "BOOLEAN"
+          }
+        },
+        "TrueBranch": [
+          {
+            "retry": 1,
+            "params": {
+              "dedupe": true,
+              "id_field": "dynId",
+              "list_path": "items",
+              "method_name": "get_others_lot_dyn_list",
+              "resource_type": "bili_lottery_others",
+              "get_others_lot_dyn_list_params": {
+                "is_lot": true,
+                "created_at_preset": "30d",
+                "pub_time_preset": "7d",
+                "page_num": 1,
+                "page_size": 1000,
+                "is_grand_prize": true
+              }
+            },
+            "action_id": "fetch_external_data",
+            "action_type": "fetch_external_data",
+            "output_vars": [
+              "others_code",
+              "others_data"
+            ]
+          }
+        ],
+        "FalseBranch": [
+          {
+            "retry": 1,
+            "params": {
+              "dedupe": true,
+              "id_field": "dynId",
+              "list_path": "items",
+              "method_name": "get_others_lot_dyn_list",
+              "resource_type": "bili_lottery_others",
+              "get_others_lot_dyn_list_params": {
+                "is_lot": true,
+                "created_at_preset": "30d",
+                "pub_time_preset": "7d",
+                "page_num": 1,
+                "page_size": 1000
+              }
+            },
+            "action_id": "fetch_external_data",
+            "action_type": "fetch_external_data",
+            "output_vars": [
+              "others_code",
+              "others_data"
+            ]
+          }
+        ]
       },
-      "action_id": "fetch_external_data",
-      "action_type": "fetch_external_data",
-      "output_vars": [
-        "others_code",
-        "others_data"
-      ]
+      "action_id": "if_else",
+      "action_type": "if_else",
+      "output_vars": []
     },
     {
       "params": {
@@ -387,7 +515,8 @@
               "need_like": "",
               "already_followed": "",
               "up_name": "",
-              "dyn_content": ""
+              "dyn_content": "",
+              "record_note": ""
             }
           },
           {
@@ -434,7 +563,8 @@
                   "action_id": "mark_resource_result",
                   "action_type": "mark_resource_result",
                   "input_vars": {
-                    "skip_reason": "页面未就绪(page_ok=false)"
+                    "skip_reason": "页面未就绪(page_ok=false)",
+                    "record_note": "failed：动态页未就绪(page_ok=false)，未转发"
                   }
                 }
               ],
@@ -618,7 +748,10 @@
                           "resource_type": "bili_lottery_official"
                         },
                         "action_id": "mark_resource_result",
-                        "action_type": "mark_resource_result"
+                        "action_type": "mark_resource_result",
+                        "input_vars": {
+                          "record_note": "success：已转发且转发弹窗已关闭"
+                        }
                       }
                     ],
                     "FalseBranch": [
@@ -633,7 +766,8 @@
                         "action_id": "mark_resource_result",
                         "action_type": "mark_resource_result",
                         "input_vars": {
-                          "skip_reason": "转发未确认"
+                          "skip_reason": "转发未确认",
+                          "record_note": "failed：转发弹窗8秒内未关闭，转发可能未生效"
                         }
                       }
                     ]
@@ -648,7 +782,49 @@
           },
           {
             "params": {
-              "message": "【官方转发抽奖】本轮结果 dynId={{off_item.dynId}} up={{off_item.sender_uid}} url=https://www.bilibili.com/opus/{{off_item.dynId}}\n跳过原因={{skip_reason}}\n页面就绪={{page_ok}} 已点赞={{already_liked}} 点赞={{need_like}} 已关注={{already_followed}}\n动作：转发={{action_forward}} 点赞={{action_like}} 关注={{action_follow}}",
+              "expression": "record_note == ''",
+              "TrueBranch": [
+                {
+                  "params": {
+                    "message": "【官方转发抽奖】本轮没有产生任何资源记录（中途异常/分支被跳过）→ 补记 failed：dynId={{off_item.dynId}}",
+                    "log": {
+                      "enabled": true,
+                      "record_params": false,
+                      "record_result": true,
+                      "record_variables": false,
+                      "only_on_error": false,
+                      "max_payload_length": 4000
+                    }
+                  },
+                  "action_id": "print",
+                  "action_type": "print",
+                  "input_vars": {
+                    "skip_reason": "本轮未完成参与(中途异常)",
+                    "record_note": "failed：本轮中途异常未产生记录，已补记 failed 以便下一轮重试"
+                  }
+                },
+                {
+                  "params": {
+                    "success": false,
+                    "resource_id": "{{off_item.dynId}}",
+                    "resource_type": "bili_lottery_official",
+                    "status": "failed",
+                    "fail_reason": "本轮未完成参与(中途异常)"
+                  },
+                  "action_id": "mark_resource_result",
+                  "action_type": "mark_resource_result",
+                  "on_error": "continue"
+                }
+              ],
+              "FalseBranch": []
+            },
+            "action_id": "if_else",
+            "action_type": "if_else",
+            "on_error": "continue"
+          },
+          {
+            "params": {
+              "message": "【官方转发抽奖】本轮结果 dynId={{off_item.dynId}} up={{off_item.sender_uid}} url=https://www.bilibili.com/opus/{{off_item.dynId}}\n记录结果={{record_note}}\n跳过原因={{skip_reason}}\n页面就绪={{page_ok}} 已点赞={{already_liked}} 点赞={{need_like}} 已关注={{already_followed}}\n动作：转发={{action_forward}} 点赞={{action_like}} 关注={{action_follow}}",
               "log": {
                 "enabled": true,
                 "record_params": false,
@@ -714,7 +890,8 @@
               "llm_reply_model": "",
               "llm_reply_role": "",
               "up_name": "",
-              "dyn_content": ""
+              "dyn_content": "",
+              "record_note": ""
             }
           },
           {
@@ -761,7 +938,8 @@
                   "action_id": "mark_resource_result",
                   "action_type": "mark_resource_result",
                   "input_vars": {
-                    "skip_reason": "页面未就绪(page_ok=false)"
+                    "skip_reason": "页面未就绪(page_ok=false)",
+                    "record_note": "failed：动态页未就绪(page_ok=false)，未参与"
                   }
                 }
               ],
@@ -960,7 +1138,7 @@
                     },
                     "TrueBranch": [
                       {
-                        "retry": 1,
+                        "retry": 0,
                         "params": {
                           "model": "{{llm_model}}",
                           "prompt": "【我的昵称】{{self_nickname}}\n【UP主昵称】{{up_name}}\n【动态正文】\n{{dyn_content}}\n【热门评论（仅供风格参考，禁止照抄）】\n{{dyn_comments}}\n\n请直接输出一条 10~40 字的单行中文短评。",
@@ -1707,7 +1885,10 @@
                                 "resource_type": "bili_lottery_others"
                               },
                               "action_id": "mark_resource_result",
-                              "action_type": "mark_resource_result"
+                              "action_type": "mark_resource_result",
+                              "input_vars": {
+                                "record_note": "success：评论已生效，已转发且转发弹窗已关闭"
+                              }
                             }
                           ],
                           "FalseBranch": [
@@ -1722,7 +1903,8 @@
                               "action_id": "mark_resource_result",
                               "action_type": "mark_resource_result",
                               "input_vars": {
-                                "skip_reason": "转发未确认"
+                                "skip_reason": "转发未确认",
+                                "record_note": "failed：转发弹窗8秒内未关闭，转发可能未生效"
                               }
                             }
                           ]
@@ -1747,7 +1929,7 @@
                       },
                       {
                         "params": {
-                          "message": "【第三方评论抽奖】评论未生效：评论区作者={{latest_comment_users_text}}、我的昵称={{self_nickname}}、出现验证码={{captcha_shown}} → 跳过点赞与标记（下一轮重试）",
+                          "message": "【第三方评论抽奖】评论未生效：评论区作者={{latest_comment_users_text}}、我的昵称={{self_nickname}}、出现验证码={{captcha_shown}} → 无验证码记skipped终态防重复评论，有验证码下一轮重试",
                           "log": {
                             "enabled": true,
                             "record_params": false,
@@ -1762,6 +1944,32 @@
                         "input_vars": {
                           "skip_reason": "评论未生效(见验证码标记)"
                         }
+                      },
+                      {
+                        "params": {
+                          "expression": "captcha_shown == false and comment_text != ''",
+                          "TrueBranch": [
+                            {
+                              "params": {
+                                "success": true,
+                                "resource_id": "{{oth_item.dynId}}",
+                                "resource_type": "bili_lottery_others",
+                                "status": "skipped",
+                                "fail_reason": "评论已发出但三轮校验均未确认生效，记终态跳过防重复评论"
+                              },
+                              "action_id": "mark_resource_result",
+                              "action_type": "mark_resource_result",
+                              "input_vars": {
+                                "skip_reason": "评论未生效(已记skipped防重评)",
+                                "record_note": "skipped：评论已发出但校验未确认生效，记终态防重复评论"
+                              }
+                            }
+                          ],
+                          "FalseBranch": []
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else",
+                        "on_error": "continue"
                       }
                     ]
                   },
@@ -1794,8 +2002,21 @@
                   "action_id": "print",
                   "action_type": "print",
                   "input_vars": {
-                    "skip_reason": "本轮未完成参与(中途异常)"
+                    "skip_reason": "本轮未完成参与(中途异常)",
+                    "record_note": "failed：本轮中途异常未产生记录，已补记 failed 以便下一轮重试"
                   }
+                },
+                {
+                  "params": {
+                    "success": false,
+                    "resource_id": "{{oth_item.dynId}}",
+                    "resource_type": "bili_lottery_others",
+                    "status": "failed",
+                    "fail_reason": "本轮未完成参与(中途异常)"
+                  },
+                  "action_id": "mark_resource_result",
+                  "action_type": "mark_resource_result",
+                  "on_error": "continue"
                 }
               ],
               "FalseBranch": []
@@ -1805,7 +2026,7 @@
           },
           {
             "params": {
-              "message": "【第三方评论抽奖】本轮结果 dynId={{oth_item.dynId}} up={{oth_item.up_uid}}\n跳过原因={{skip_reason}}\n页面就绪={{page_ok}} 已点赞={{already_liked}} 点赞={{need_like}} 已关注={{already_followed}}\n动作：转发={{action_forward}} 点赞={{action_like}} 关注={{action_follow}}\n评论={{comment_text}}\n评论作者={{latest_comment_users_text}} 验证码={{captcha_shown}}\nUP={{up_name}}\n正文={{dyn_content}}",
+              "message": "【第三方评论抽奖】本轮结果 dynId={{oth_item.dynId}} up={{oth_item.up_uid}}\n记录结果={{record_note}}\n跳过原因={{skip_reason}}\n页面就绪={{page_ok}} 已点赞={{already_liked}} 点赞={{need_like}} 已关注={{already_followed}}\n动作：转发={{action_forward}} 点赞={{action_like}} 关注={{action_follow}}\n评论={{comment_text}}\n评论作者={{latest_comment_users_text}} 验证码={{captcha_shown}}\nUP={{up_name}}\n正文={{dyn_content}}",
               "log": {
                 "enabled": true,
                 "record_params": false,
@@ -1852,7 +2073,7 @@
     }
   ],
   "is_composite": 0,
-  "description": "判断登录→取预约/官方/第三方抽奖数据→预约随机打乱、转发类按动态主键(dynId)从大到小→预约/转发/点赞/关注，纯DOM操作，记录已参与动态防重复，每轮循环结束均有固定等待，抄评论取评论区已加载的全部评论并剔除UP主评论与置顶评论后随机选一条，LLM评论生成时提供我的昵称/UP主昵称/动态正文/热门评论上下文（需在工作流中运行以启用去重）",
+  "description": "判断登录→取预约/官方/第三方抽奖数据→预约随机打乱、转发类按动态主键(dynId)从大到小→预约/转发/点赞/关注，纯DOM操作，记录已参与动态防重复，每轮循环结束均有固定等待，抄评论取评论区已加载的全部评论并剔除UP主评论与置顶评论后随机选一条，LLM评论生成时提供我的昵称/UP主昵称/动态正文/热门评论上下文（需在工作流中运行以启用去重）｜输入变量 reserve_only_grand / official_only_grand / others_only_grand：分类型只抽大奖（true=该类仅取大奖，false/缺省=该类全部有效抽奖）",
   "icon_series": 0,
   "icon_id": 0,
   "input_vars": [
@@ -1927,6 +2148,27 @@
         ],
         "type": "object"
       }
+    },
+    {
+      "name": "reserve_only_grand",
+      "type": "boolean",
+      "default": false,
+      "required": false,
+      "description": "只参与大奖的预约抽奖：开启后该类取数仅返回 LLM 判定为大奖的记录；默认关闭 = 参与该类全部有效抽奖"
+    },
+    {
+      "name": "official_only_grand",
+      "type": "boolean",
+      "default": false,
+      "required": false,
+      "description": "只参与大奖的官方抽奖：开启后该类取数仅返回 LLM 判定为大奖的记录；默认关闭 = 参与该类全部有效抽奖"
+    },
+    {
+      "name": "others_only_grand",
+      "type": "boolean",
+      "default": false,
+      "required": false,
+      "description": "只参与大奖的第三方抽奖：开启后该类取数仅返回 LLM 判定为大奖的记录；默认关闭 = 参与该类全部有效抽奖"
     }
   ],
   "output_vars": [],

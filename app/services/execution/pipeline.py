@@ -33,7 +33,7 @@ import asyncio
 import random
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Coroutine, List, Protocol
 
 from loguru import logger
@@ -263,13 +263,28 @@ class LoopStep(StepNode):
     def _inject_mapped_params(
         self, pipeline: Pipeline, mapped: dict[str, Any]
     ) -> Pipeline:
-        """将映射参数注入 Pipeline 中每个 AtomicStep 的 params"""
-        if not mapped:
-            return pipeline
+        """把 param_mapping 的映射值注入循环体各步骤的**同名参数**
+
+        两条约束（引擎不得擅自改写用户写死的配置）：
+
+        1. **只注入用户声明过该参数名的步骤**：``param_mapping`` 的语义是
+           「把某个参数的值换成循环项的字段」，不是给所有步骤凭空加参数。
+           旧实现给循环体里**每个**步骤的 params 都加上映射键，等于用循环项
+           的值顶掉所有步骤的同名参数（连用户写死的 ``selector`` 也会被
+           悄悄覆盖）。
+        2. **不改原步骤对象**：返回新的 Pipeline / 步骤副本，避免映射值残留
+           在步骤定义里（下一轮映射为空时，上一轮的值会继续生效）。
+        """
+        steps: list[StepNode] = []
         for step in pipeline.steps:
             if isinstance(step, AtomicStep):
-                step.params = {**step.params, **mapped}
-        return pipeline
+                step_params = dict(step.params or {})
+                injected = {k: v for k, v in mapped.items() if k in step_params}
+                if injected:
+                    step_params.update(injected)
+                    step = replace(step, params=step_params)
+            steps.append(step)
+        return Pipeline(steps)
 
     async def _report_iteration(
         self, scope: Scope, index: int, total: int
@@ -407,8 +422,10 @@ class LoopStep(StepNode):
                 break
             if self._should_continue(scope):
                 continue
-            self._randomize_trailing_wait(self.body)
-            ir = await self.body.execute(scope, executor, body_of_loop=True)
+            # 用本轮副本执行：随机冷却只改副本，不污染循环体定义
+            body = self._inject_mapped_params(self.body, {})
+            self._randomize_trailing_wait(body)
+            ir = await body.execute(scope, executor, body_of_loop=True)
             results.extend(ir)
             rounds += 1
             if not await self._finish_iteration(scope, executor, ir, results):
@@ -432,8 +449,10 @@ class LoopStep(StepNode):
             if self._should_continue(scope):
                 i += 1
                 continue
-            self._randomize_trailing_wait(self.body)
-            ir = await self.body.execute(scope, executor, body_of_loop=True)
+            # 用本轮副本执行：随机冷却只改副本，不污染循环体定义
+            body = self._inject_mapped_params(self.body, {})
+            self._randomize_trailing_wait(body)
+            ir = await body.execute(scope, executor, body_of_loop=True)
             results.extend(ir)
             rounds += 1
             if not await self._finish_iteration(scope, executor, ir, results):
@@ -458,8 +477,10 @@ class LoopStep(StepNode):
             if self._should_continue(scope):
                 i += 1
                 continue
-            self._randomize_trailing_wait(self.body)
-            ir = await self.body.execute(scope, executor, body_of_loop=True)
+            # 用本轮副本执行：随机冷却只改副本，不污染循环体定义
+            body = self._inject_mapped_params(self.body, {})
+            self._randomize_trailing_wait(body)
+            ir = await body.execute(scope, executor, body_of_loop=True)
             results.extend(ir)
             rounds += 1
             if not await self._finish_iteration(scope, executor, ir, results):
@@ -692,12 +713,14 @@ class IfElseStep(StepNode):
         last_result = results[-1]
 
         if self.on_error_branch and self.on_error_branch.steps:
-            scope.push()
+            # 与主流程共用同一个变量作用域（不 push/pop）：兜底分支里写入的变量
+            # 必须保留下来，否则「兜底步骤产出」会被引擎悄悄丢弃。
             scope.set("last_error", last_result.error or "未知错误")
             scope.set("last_output", last_result.data)
             logger.info(f"if_else 分支 {branch_name} 失败，执行 on_error_branch")
-            self.on_error_branch.execute(scope, executor)  # fire-and-forget 日志
-            scope.pop()
+            # 必须 await：兜底分支（抄评论降级 / 告警）是本步骤失败后的**确定性**收尾，
+            # 之前 fire-and-forget 会让它在后台与主流程并发执行，消息顺序错乱。
+            await self.on_error_branch.execute(scope, executor)
 
         if self.on_error == OnErrorEnum.CONTINUE:
             logger.warning(
@@ -839,15 +862,45 @@ class Pipeline:
                 if result.success:
                     continue  # 成功，进入下一步
 
-                # ── 失败处理：先跑 on_error_branch（回退/清理/告警）──
+                # ── 重试：放在 on_error_branch 之前 ──
+                # 重试成功说明这一步最终是能完成的，此时**不应该**再跑兜底/告警分支，
+                # 否则会出现「第一次失败 → 已回退抄评论 → 重试成功 → 又用 LLM 结果」
+                # 这种同一轮内既降级又升级的错乱。
+                # on_error=continue 同样允许重试：continue 的语义是「失败也继续往下走」，
+                # 并不是「一次失败就放弃」；此前 continue 会抢先命中导致 retry 被静默忽略，
+                # 步骤 JSON 里声明的 retry 形同虚设。
+                if step.retry > 0 and step.on_error in (
+                    OnErrorEnum.RETRY,
+                    OnErrorEnum.CONTINUE,
+                ):
+                    for retry_i in range(step.retry):
+                        logger.info(
+                            f"重试 {step.action_id} ({retry_i + 1}/{step.retry})"
+                        )
+                        result = await step.execute(scope, executor)
+                        # 重试结果同样要补上 action_id：否则重试失败时上报与日志里
+                        # 会出现空动作名，排障时看不出是哪一步重试挂的
+                        result.action_id = step.action_id
+                        outcome_result = result
+                        if result.success:
+                            break
+                    results[-1] = result
+                    outcome_success = result.success
+                    step_error = None if result.success else result.error
+                    if result.success:
+                        continue  # 重试成功，进入下一步
+
+                # ── 失败处理：跑 on_error_branch（回退/清理/告警）──
+                # 只有重试也失败（或未声明重试）才走到这里，保证「失败才回退」。
+                # 兜底分支与主流程**共用同一个变量作用域**：不 push/pop 隔离，
+                # 否则兜底分支里通过 output_vars 写入的变量会在 pop 时被丢弃
+                # （引擎擅自让用户的变量消失 = 隐式重置）。
                 if step.on_error_branch and step.on_error_branch.steps:
-                    scope.push()
                     scope.set("last_error", result.error or "未知错误")
                     scope.set("last_output", result.data)
                     logger.info(f"执行 {step.action_id} 的错误处理分支")
                     error_results = await step.on_error_branch.execute(scope, executor)
                     results.extend(error_results)
-                    scope.pop()
 
                 # ── 根据 on_error 策略决定后续行为 ──
                 if step.on_error == OnErrorEnum.CONTINUE:
@@ -857,21 +910,6 @@ class Pipeline:
                     # 显式容忍：仍记失败（日志/计数），但不参与「整次运行是否失败」的结论
                     result.tolerated = True
                     continue
-
-                if step.on_error == OnErrorEnum.RETRY and step.retry > 0:
-                    for retry_i in range(step.retry):
-                        logger.info(
-                            f"重试 {step.action_id} ({retry_i + 1}/{step.retry})"
-                        )
-                        result = await step.execute(scope, executor)
-                        outcome_result = result
-                        if result.success:
-                            break
-                    results[-1] = result
-                    outcome_success = result.success
-                    step_error = None if result.success else result.error
-                    if result.success:
-                        continue  # 重试成功，进入下一步
 
                 # on_error="stop"（默认）或重试全部失败 → 停止
                 break

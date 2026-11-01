@@ -98,31 +98,45 @@ class Botright(AsyncObject):
         self.cache: Dict[str, APIResponse] = {}
 
         # '--disable-gpu', '--incognito', '--disable-blink-features=AutomationControlled'
+        #
+        # 每个开关只在一个地方设置一次，这里不放 driver 已经负责的开关：
+        #
+        # 1) playwright/patchright 启动 chromium 时必然注入下面这些
+        #    （见 playwright-core/lib/server/chromium/chromium.js 的 chromiumSwitches()），
+        #    再写一遍就是重复设置：
+        #   --disable-background-networking --disable-background-timer-throttling
+        #   --disable-backgrounding-occluded-windows --disable-breakpad
+        #   --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages
+        #   --disable-component-update --no-default-browser-check --disable-default-apps
+        #   --disable-dev-shm-usage --disable-extensions --disable-hang-monitor
+        #   --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost
+        #   --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only
+        #   --no-first-run --password-store=basic --use-mock-keychain --disable-infobars
+        #   --disable-sync（headless 时还会额外注入 --hide-scrollbars/--mute-audio/--blink-settings）
+        # 2) --lang / --accept-lang 由指纹参数（BaseFingerprintBrowserInitParams.lang/accept_lang）唯一设置
+        # 3) --proxy-server / --proxy-bypass-list 由 playwright 的 proxy 参数唯一设置
+        #
+        # --disable-features / --enable-features 例外：driver 也会注入同名开关，但这里列出的特性
+        # （IsolateOrigins/site-per-process/TrustTokens 等）必须保留。由
+        # playwright_mock.launch_args.build_launch_args 负责合并「driver 的 + 这里的」为一条，
+        # 并用 ignore_default_args 抑制 driver 那份，所以最终命令行里这两个开关也只出现一次。
         # fmt: off
-        self.flags = ['--accept-lang=en-US', '--lang=en-US', '--no-pings', '--mute-audio',
-                      '--no-first-run', '--no-default-browser-check', '--disable-cloud-import',
-                      '--disable-gesture-typing', '--disable-offer-store-unmasked-wallet-cards',
-                      '--disable-offer-upload-credit-cards', '--disable-print-preview', '--disable-voice-input',
-                      '--disable-wake-on-wifi', '--disable-cookie-encryption', '--ignore-gpu-blocklist',
-                      '--enable-async-dns', '--enable-simple-cache-backend', '--enable-tcp-fast-open',
+        self.flags = ['--no-pings', '--mute-audio',
+                      '--disable-cloud-import', '--disable-gesture-typing',
+                      '--disable-offer-store-unmasked-wallet-cards', '--disable-offer-upload-credit-cards',
+                      '--disable-print-preview', '--disable-voice-input', '--disable-wake-on-wifi',
+                      '--disable-cookie-encryption', '--ignore-gpu-blocklist', '--enable-async-dns',
+                      '--enable-simple-cache-backend', '--enable-tcp-fast-open',
                       '--prerender-from-omnibox=disabled', '--enable-web-bluetooth',
                       '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process,TranslateUI,BlinkGenPropertyTrees',
-                      '--aggressive-cache-discard', '--disable-extensions', '--disable-ipc-flooding-protection',
-                      '--disable-blink-features=AutomationControlled', '--test-type',
+                      '--aggressive-cache-discard', '--disable-blink-features=AutomationControlled', '--test-type',
                       '--enable-features=NetworkService,NetworkServiceInProcess,TrustTokens,TrustTokensAlwaysAllowIssuance',
-                      '--disable-component-extensions-with-background-pages',
-                      '--disable-default-apps', '--disable-breakpad', '--disable-component-update',
-                      '--disable-domain-reliability', '--disable-sync', '--disable-client-side-phishing-detection',
-                      '--disable-hang-monitor', '--disable-popup-blocking', '--disable-prompt-on-repost',
-                      '--metrics-recording-only', '--safebrowsing-disable-auto-update', '--password-store=basic',
-                      '--autoplay-policy=no-user-gesture-required', '--use-mock-keychain',
+                      '--disable-domain-reliability', '--safebrowsing-disable-auto-update',
+                      '--autoplay-policy=no-user-gesture-required',
                       '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
                       '--webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-session-crashed-bubble',
-                      '--disable-crash-reporter', '--disable-dev-shm-usage', '--force-color-profile=srgb',
-                      '--disable-translate', '--disable-background-networking', '--disable-background-timer-throttling',
-                      '--disable-backgrounding-occluded-windows', '--disable-infobars',
-                      '--hide-scrollbars', '--disable-renderer-backgrounding', '--font-render-hinting=none',
-                      '--disable-logging', '--enable-surface-synchronization',
+                      '--disable-crash-reporter', '--disable-translate', '--hide-scrollbars',
+                      '--font-render-hinting=none', '--disable-logging', '--enable-surface-synchronization',
                       '--run-all-compositor-stages-before-draw', '--disable-threaded-animation',
                       '--disable-threaded-scrolling', '--disable-checker-imaging',
                       '--disable-new-content-rendering-timeout', '--disable-image-animation-resync',
@@ -144,14 +158,19 @@ class Botright(AsyncObject):
         self.fingerprint_generator = desktop_fingerprint_generator
 
     async def new_browser(
-        self, proxy: Optional[str] = None, **launch_arguments
+        self,
+        proxy: Optional[str] = None,
+        proxy_bypass: str | None = None,
+        **launch_arguments,
     ) -> BrowserContext:
         """
         Create a new Botright browser instance with specified configurations.
 
         Args:
             proxy (str, optional): Proxy server URL to use for the browser. Defaults to None.
-            **launch_arguments: Additional launch arguments to the browser. See at `Playwright Docs <https://playwright.dev/python/docs/api/class-browsertype#browser-type-launch-persistent-context>`_.
+            proxy_bypass (str, optional): Comma-separated hosts that must bypass the proxy
+                (Chromium ``--proxy-bypass-list`` semantics). Ignored when no proxy is set.
+            **launch_arguments: Additional launch arguments to the browser. See at `Playwright Docs <https://playwright.dev/python/docs/api/class-browsertype#browser-type-launch-persistent-context>`.
 
         Returns:
             BrowserContext: A new browser context for web scraping or automation.
@@ -170,7 +189,7 @@ class Botright(AsyncObject):
             flags = self.flags
 
         _browser = await browser.new_browser(
-            self, _proxy, _faker, flags, **launch_arguments
+            self, _proxy, _faker, flags, proxy_bypass=proxy_bypass, **launch_arguments
         )
         _browser.proxy = _proxy
         _browser.faker = _faker

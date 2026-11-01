@@ -41,6 +41,7 @@ class BrowserService:
         """
         res = await gen_from_browserforge_fingerprint(params=params)
         res.proxy_server = None  # 随机生成的不需要代理服务器配置
+        res.proxy_bypass = None  # 没有代理时绕过列表无意义
         return res
 
     # Notification related methods

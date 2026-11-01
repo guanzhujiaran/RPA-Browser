@@ -6,6 +6,7 @@ Core 模块 - 浏览器指纹模型
 
 from bili_common.models import StrEnumAutoDoc
 from typing import Annotated, ClassVar
+from sqlalchemy import Text
 from sqlmodel import Field, SQLModel, Column, JSON
 from browserforge.fingerprints import (
     Fingerprint,
@@ -161,6 +162,14 @@ class BaseFingerprintBrowserInitParams(SQLModel):
         alias="--proxy-server",
         description="http, socks proxy (password authentication not supported)",
     )
+    # 绕过规则数量不设上限，用 TEXT 而不是默认的 VARCHAR(255)
+    proxy_bypass: str | None = Field(
+        None,
+        sa_type=Text,
+        description="代理绕过列表：逗号分隔的 host 规则（如 *.bilibili.com,127.0.0.1），"
+        "命中的主机直连、不走 proxy_server。只能匹配主机名/IP，不能写完整 URL；"
+        "未配置时回退到服务端环境变量 browser_proxy_bypass",
+    )
     patchright_screen_width: int = Field(default=1920)
     patchright_screen_height: int = Field(default=1080)
     patchright_viewport_width: int = Field(default=1920)
@@ -223,8 +232,13 @@ class BaseFingerprintBrowserInitParams(SQLModel):
         }
 
     # 这些字段是给 playwright launch kwargs 用的（见 base_engines.launch_browser_span），
-    # 不是 chromium 命令行开关，不能进入 args，否则会注入 --viewport={'width': ...} 这类非法参数
-    NON_CLI_ARG_KEYS: ClassVar[frozenset[str]] = frozenset({"viewport", "screen"})
+    # 不是 chromium 命令行开关，不能进入 args，否则会注入 --viewport={'width': ...} 这类非法参数。
+    # proxy_server / proxy_bypass 同样如此：代理通过 playwright 的 proxy 参数唯一设置
+    # （driver 会自己拼 --proxy-server/--proxy-bypass-list），这里再拼一份就是重复设置同一个开关。
+    # 注意 key 是去掉 "--" 后的字段名（proxy_bypass 没有 alias，所以用下划线形式）。
+    NON_CLI_ARG_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {"viewport", "screen", "proxy-server", "proxy_bypass"}
+    )
 
     def fp_2_args_list(self) -> list[str]:
         """将指纹参数转换为浏览器启动参数列表"""

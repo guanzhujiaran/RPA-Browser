@@ -26,6 +26,31 @@ def _display_socket_path(display: str) -> str:
     return f"/tmp/.X11-unix/X{display.lstrip(':').split('.')[0]}"
 
 
+def _display_alive(display: str) -> bool:
+    """探测某个 X display 是否真的可用。
+
+    不能只看 `DISPLAY` 环境变量 / socket 文件是否**存在**：宿主重启、桌面会话退出后，
+    `/tmp/.X11-unix/X0` 这类 socket 文件常常残留下来，但后面已经没有 X server。
+    此时如果直接复用，有头浏览器会在一个死掉的 display 上启动：进程起来后立刻退出，
+    Playwright 拿到的 context 没有任何页面（`browser_context.pages` 为空），
+    上层 `is_closed` 判定为已关闭，报「浏览器在创建过程中被关闭，请重试」。
+
+    因此这里真连一次 unix socket：能连上才认为 server 活着。
+    """
+    import socket as _socket
+
+    sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    sock.settimeout(1.0)
+    try:
+        sock.connect(_display_socket_path(display))
+        return True
+    except OSError:
+        return False
+    finally:
+        with suppress(Exception):
+            sock.close()
+
+
 async def ensure_virtual_display() -> str | None:
     """确保进程拥有可用的 X DISPLAY，返回生效的 DISPLAY 值（失败返回 None）"""
     current_display = os.environ.get("DISPLAY")
@@ -36,8 +61,15 @@ async def ensure_virtual_display() -> str | None:
         return current_display or None
 
     if current_display:
-        logger.info(f"检测到已有显示环境，跳过 Xvfb: DISPLAY={current_display}")
-        return current_display
+        if _display_alive(current_display):
+            logger.info(f"检测到可用的显示环境，跳过 Xvfb: DISPLAY={current_display}")
+            return current_display
+        # DISPLAY 有值但连不上（宿主重启 / 桌面会话退出后 socket 残留）：
+        # 继续走 Xvfb 分支，不能直接复用这个死 display
+        logger.warning(
+            f"DISPLAY={current_display} 不可用（X server 已退出，socket 可能残留），"
+            "回退为自建 Xvfb"
+        )
 
     xvfb_executable = shutil.which("Xvfb")
     if not xvfb_executable:
@@ -51,11 +83,17 @@ async def ensure_virtual_display() -> str | None:
     socket_path = _display_socket_path(display)
     os.makedirs(os.path.dirname(socket_path), exist_ok=True)
 
-    # 复用已存在的同名 Xvfb（例如上次进程残留 / 手动启动的）
+    # 复用已存在**且仍然存活**的同名 Xvfb（上次进程残留 / 手动启动的）
     if os.path.exists(socket_path):
-        os.environ["DISPLAY"] = display
-        logger.info(f"复用已存在的虚拟显示: DISPLAY={display}")
-        return display
+        if _display_alive(display):
+            os.environ["DISPLAY"] = display
+            logger.info(f"复用已存在的虚拟显示: DISPLAY={display}")
+            return display
+        # socket 残留但 server 已退出：必须清掉，否则 Xvfb 会以
+        # "Server is already active for display N" 直接退出
+        with suppress(OSError):
+            os.remove(socket_path)
+        logger.warning(f"清理残留的 display socket: {socket_path}")
 
     global _xvfb_process
     _xvfb_process = await asyncio.create_subprocess_exec(

@@ -1,3 +1,7 @@
+import contextlib
+
+from loguru import logger
+
 from app.models.runtime.control import BrowserSessionStatusData
 from app.services.RPA_browser.session.live_service import live_service
 from app.services.RPA_browser.session.session_status_bus import (
@@ -57,24 +61,34 @@ async def create_browser_session(
     session_key = f"{auth_info.mid}_{browser_info.browser_id}"
 
     if session_key in LiveService._browser_sessions:
-        # 会话已存在，返回现有会话信息
         entry = LiveService._browser_sessions[session_key]
-        created_at = getattr(entry, "created_at", entry.last_activity)
-        expires_at = getattr(entry, "expires_at", None)
-        # 获取当前会话状态，确保返回的是实际运行状态
-        session_status = getattr(entry, "status", None)
-        status_value = session_status.value if session_status else "running"
+        if getattr(entry, "browser_running", False):
+            # 会话已存在且浏览器在跑，返回现有会话信息
+            created_at = getattr(entry, "created_at", entry.last_activity)
+            expires_at = getattr(entry, "expires_at", None)
+            # 获取当前会话状态，确保返回的是实际运行状态
+            session_status = getattr(entry, "status", None)
+            status_value = session_status.value if session_status else "running"
 
-        response_data = CreateSessionResponse(
-            success=True,
-            session_id=session_key,
-            browser_started=True,
-            status=status_value,
-            created_at=created_at,
-            expires_at=expires_at,
-            message="会话已存在，返回现有会话信息",
-        )
-        return success_response(data=response_data)
+            response_data = CreateSessionResponse(
+                success=True,
+                session_id=session_key,
+                browser_started=True,
+                status=status_value,
+                created_at=created_at,
+                expires_at=expires_at,
+                message="会话已存在，返回现有会话信息",
+            )
+            return success_response(data=response_data)
+
+        # 浏览器已被手动关闭 / 崩溃：entry 还挂在表里但没有浏览器在跑。
+        # 此时不能再返回「会话已存在」（前端会以为启动成功，实际没有进程），
+        # 必须先 force 释放（删 entry + 清池 + 关进程），再走下面的重建流程。
+        logger.warning(f"检测到已关闭的浏览器会话，清理后重建: {session_key}")
+        with contextlib.suppress(Exception):
+            await live_service.release_browser_session(
+                auth_info.mid, int(browser_info.browser_id)
+            )
 
     # 🔑 VIP 身份决定内存不足时进入哪条启动队列（VIP 队列优先）
     is_vip = is_vip_user(auth_info)

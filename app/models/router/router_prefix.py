@@ -163,6 +163,13 @@ class NotifyRouterPath(StrEnumAutoDoc):
     delete_notify_config = "/notify/conf/delete"
 
 
+class BrowserFeedbackRouterPath(StrEnumAutoDoc):
+    """报错反馈路由路径 - prefix: /browser"""
+
+    feedback_submit = "/feedback/submit"
+    feedback_list = "/feedback/list"
+
+
 class AdminPermissionRouterPath(StrEnumAutoDoc):
     """等级权限 / 指纹配额管理路由路径 - prefix: /api/admin/rpa（仅 root）"""
 
