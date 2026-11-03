@@ -189,6 +189,11 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
         case_sensitive=False,
         env_file_encoding="utf-8",
         extra="ignore",
+        # 空字符串环境变量视为「未设置」，回落字段默认值。
+        # docker-compose 里用 ``${VAR:-}`` 透传可选覆盖项时，变量未设置会注入空串；
+        # 若不忽略空值，int / bool / list 字段会直接解析失败（float('') 之类）。
+        # 默认值只在本类声明一处，compose 不再重复写死业务默认。
+        env_ignore_empty=True,
     )
 
     @property
@@ -266,7 +271,10 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 注：pin 占用（自动化任务）与存在 WebRTC 观看者的会话照旧跳过回收，
     # 所以「调试中正在看画面」不会被误关。
     browser_session_cleanup_all_modes: bool = True
-    browser_session_max_idle_time: int = 300  # 最大闲置时间（秒）→ 超过后关实例出池
+    # 最大闲置时间（秒）→ 超过后先宽限再关实例出池。
+    # 全链路从「开始闲置」到「关实例出池」不超过 5 分钟（300s）：
+    #   60s 降级 → 180s 挂起 → 240s 进宽限（倒计时 60s）→ 300s 关实例。
+    browser_session_max_idle_time: int = 240
     browser_session_cleanup_interval: int = 60  # 清理检查间隔（秒）
     browser_session_expiration_time: int | None = (
         None  # 会话过期时间（秒），None表示不过期
@@ -274,8 +282,8 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # ── 会话闲置三级软着陆（详见 docs/be-message-统一计划书.md §5.15）──
     # 活跃时间戳统一由 LiveService.touch() 刷新；三级阈值须满足
     # degrade_after < suspend_after < max_idle_time
-    browser_stream_degrade_after: int = 120  # 闲置降级阈值（秒）：降质降帧
-    browser_stream_suspend_after: int = 300  # 闲置挂起阈值（秒）：关流保实例
+    browser_stream_degrade_after: int = 60  # 闲置降级阈值（秒）：降质降帧
+    browser_stream_suspend_after: int = 180  # 闲置挂起阈值（秒）：关流保实例
     browser_session_terminate_grace: int = 60  # 关实例前宽限倒计时（秒）
 
     # ── 会话状态 SSE 推送（详见 docs/rpa-会话状态SSE推送计划书.md）──
