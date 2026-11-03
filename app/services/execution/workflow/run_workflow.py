@@ -86,6 +86,27 @@ def _build_tolerated_breaker_message(
     )
 
 
+def _build_loop_abort_message(
+    *, loop_summaries: list[LoopRunSummary], abort_count: int = 1
+) -> str:
+    """循环中断失败的运行级文案。
+
+    与容错熔断的区别：熔断是「失败次数达到阈值」，而循环中断是**结构性失败**
+    ——某一层循环因体内步骤失败被提前打断，剩余数据根本没跑；这种情况不看失败
+    占比，直接判失败，文案要说清是哪一层循环、跑到第几轮。
+    """
+    aborted = [s for s in loop_summaries if s.aborted_by_failure]
+    detail = "、".join(
+        f"「{s.name or '未命名循环'}」执行 {s.rounds}"
+        + (f"/{s.rounds_planned}" if s.rounds_planned else "")
+        + " 轮后中断"
+        for s in aborted[:3]
+    )
+    if not detail:
+        detail = "循环因步骤失败被中断"
+    return f"{abort_count} 层循环中断（{detail}），判定为失败"
+
+
 async def _precheck(
     workflow: UserWorkflow,
     *,
@@ -574,6 +595,25 @@ async def run_workflow(
     if status == WorkflowRunStatusEnum.SUCCESS and new_fatal > 0:
         status = WorkflowRunStatusEnum.FAILED
         error_message = error_message or f"存在 {new_fatal} 个失败步骤"
+
+    # 循环中断失败：任一层循环因体内步骤失败而**提前中断** → 直接判失败，
+    # 不参与下面的「容忍失败阈值 / 失败占比」判定。
+    # 原因：循环被打断意味着剩余数据根本没处理，属于结构性失败；若循环步骤配了
+    # on_error=continue（失败被标记 tolerated），旧的阈值逻辑在失败数未达阈值时
+    # 仍会报成功，用户看到「全部成功」但实际只跑了前几条。
+    if (
+        status == WorkflowRunStatusEnum.SUCCESS
+        and progress_reporter.loop_aborted_by_failure
+    ):
+        status = WorkflowRunStatusEnum.FAILED
+        error_message = error_message or _build_loop_abort_message(
+            loop_summaries=progress_reporter.loop_summaries,
+            abort_count=progress_reporter.loop_abort_count,
+        )
+        logger.warning(
+            f"[WorkflowRunner] 循环因失败中断，运行直接判失败（不看失败占比）: "
+            f"run={run.run_id}, loop_aborts={progress_reporter.loop_abort_count}"
+        )
 
     # 容错熔断：`on_error=continue` 允许失败，但不允许「几乎全失败还报成功」。
     # 达阈值即降级为 failed（原因写清容忍条数与示例），避免用户被假绿灯误导。

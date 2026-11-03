@@ -329,8 +329,16 @@ class LoopStep(StepNode):
             scope.loop_nesting -= 1
             # 每层循环结束都上报（打印是全量的）；上报器内部只在「被跟踪的
             # 最外层」结束时清空循环维度进度，避免界面停在最后一轮的 N/N。
+            # aborted_by_failure：体内存在**未被容忍**的失败 → 该层循环是因失败中断的，
+            # 运行级据此直接判失败（不再看容忍失败阈值/占比）。
             if scope.progress is not None:
-                await scope.progress.loop_finished(self.action_id, depth=loop_depth)
+                await scope.progress.loop_finished(
+                    self.action_id,
+                    depth=loop_depth,
+                    aborted_by_failure=any(
+                        not r.success and not r.tolerated for r in results
+                    ),
+                )
 
         # 失败传播：任一**未被容忍**的迭代失败（即使策略是 continue 跳过了后续动作）都要
         # 向上报告，否则工作流会「假成功」——界面显示全部步骤成功，实际却跳过了数据。
@@ -347,6 +355,9 @@ class LoopStep(StepNode):
             "iterations": rounds,
             "steps": len(results),
             "failed_steps": len(tolerated_failures),
+            # 因体内步骤失败而中断（区别于 break_condition 的正常提前退出）：
+            # 运行级据此直接判失败，不参与容忍失败阈值/占比判定
+            "aborted_by_failure": failed is not None,
         }
         if first_tolerated is not None:
             data["first_error"] = first_tolerated.error or "未知错误"

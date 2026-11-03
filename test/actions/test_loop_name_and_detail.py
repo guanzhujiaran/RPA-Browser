@@ -42,6 +42,8 @@ class _RecordingReporter:
     def __init__(self) -> None:
         self.iterations: list[dict] = []
         self.finished: list[tuple[str, int]] = []
+        #: loop_finished 传入的「因失败中断」标记（新增能力：循环中断 → 运行直接判失败）
+        self.aborts: list[bool] = []
         self.steps_started: list[tuple[int, str, str]] = []
         self.tolerated: list[tuple[object, str | None]] = []
         self.steps_finished: list[tuple[bool, str | None]] = []
@@ -66,8 +68,11 @@ class _RecordingReporter:
             }
         )
 
-    async def loop_finished(self, action_id: str, depth: int = 1) -> None:
+    async def loop_finished(
+        self, action_id: str, depth: int = 1, *, aborted_by_failure: bool = False
+    ) -> None:
         self.finished.append((action_id, depth))
+        self.aborts.append(aborted_by_failure)
 
     def record_tolerated(self, result, error=None) -> None:
         """与真实 reporter 同名：LoopStep 会把循环级容忍的失败补登进来"""

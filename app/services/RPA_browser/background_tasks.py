@@ -27,8 +27,15 @@ class BackgroundTasks:
         - 避免重复遍历会话列表
         - 统一的日志输出
         - 更容易监控和维护
+
+        运行模式：默认**所有模式**都执行（`browser_session_cleanup_all_modes=True`），
+        否则本地 DEV 跑完工作流后浏览器会话永远不回收，只能手动关。
+        pin 占用 / 有 WebRTC 观看者的会话仍由状态机自身跳过，调试中正在看画面不会被误关。
         """
-        if settings.RUNNING_MODE == ConfigRunningModeEnum.PROD:
+        if (
+            settings.browser_session_cleanup_all_modes
+            or settings.RUNNING_MODE == ConfigRunningModeEnum.PROD
+        ):
             # 1. 会话状态检查（包含状态机评估和自动清理）
             await live_service._check_session_cleanup()
 

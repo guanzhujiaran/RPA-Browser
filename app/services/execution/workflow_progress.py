@@ -322,6 +322,9 @@ class WorkflowRunProgressReporter:
         # 因此单独计数并在运行结束通知里汇总（见 docs/通知动作与运行告警计划书.md）。
         self._tolerated_count = 0
         self._tolerated_samples: list[str] = []
+        # ── 循环中断计数：循环因体内步骤失败提前中断的次数 ──
+        # 命中 >0 时整次运行直接判失败（不看容忍失败阈值/占比），见 run_workflow 汇总段。
+        self._loop_abort_count = 0
         # ── 循环聚合：每层循环体内动作的成败计数（loop_finished 时固化）──
         # depth -> [成功数, 失败数]；body_step_* 归「上报时 ≤depth 的最近循环层」，
         # 分支体（if_else）动作没有自己的层，归外层循环（见计划书 §D4）。
@@ -347,6 +350,16 @@ class WorkflowRunProgressReporter:
     def tolerated_samples(self) -> list[str]:
         """前几条（去重、截断）容忍失败的错误摘要，供结束通知展示。"""
         return list(self._tolerated_samples)
+
+    @property
+    def loop_abort_count(self) -> int:
+        """循环因体内步骤失败而中断的次数（>0 = 本次运行结构性失败）。"""
+        return self._loop_abort_count
+
+    @property
+    def loop_aborted_by_failure(self) -> bool:
+        """是否发生过「循环中断失败」——是则运行结论直接判失败。"""
+        return self._loop_abort_count > 0
 
     @property
     def loop_summaries(self) -> list[LoopRunSummary]:
@@ -457,12 +470,20 @@ class WorkflowRunProgressReporter:
         await self._persist(force=False)
         self._publish()
 
-    async def loop_finished(self, action_id: str, depth: int = 1) -> None:
+    async def loop_finished(
+        self, action_id: str, depth: int = 1, *, aborted_by_failure: bool = False
+    ) -> None:
         """一层循环结束：发消息（每层都发）；结束的是跟踪层时清空循环维度。
 
         Args:
             depth: 结束的循环所在层级（1=最外层）。内层结束不动进度维度。
+            aborted_by_failure: 该层循环是否**因体内步骤失败而中断**（区别于
+                break_condition 的正常提前退出）。命中一次即视为运行级失败。
         """
+        if aborted_by_failure:
+            # 循环中断属于结构性失败：单独计数，run_workflow 据此直接判失败，
+            # 不再走「容忍失败阈值 / 失败占比」判定。
+            self._loop_abort_count += 1
         layer = self._loop_layers.pop(depth, None)
         if layer is None:
             return
@@ -480,6 +501,7 @@ class WorkflowRunProgressReporter:
                 rounds_planned=finished_total,
                 body_success=body[0] if body else 0,
                 body_failed=body[1] if body else 0,
+                aborted_by_failure=aborted_by_failure,
             )
         )
         # 只有被跟踪的那层（最外层）结束才把进度维度回落，内层结束不影响进度条

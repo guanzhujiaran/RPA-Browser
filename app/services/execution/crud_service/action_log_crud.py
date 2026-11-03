@@ -103,12 +103,23 @@ class ActionLogCrudService:
         keyword: str | None = None,
         started_after: datetime | None = None,
         started_before: datetime | None = None,
+        execution_id_prefix: bool = False,
     ) -> list:
         conditions: list = [ActionLogRecord.mid == str(mid)]
         if action_id:
             conditions.append(ActionLogRecord.action_id == str(action_id))
         if execution_id:
-            conditions.append(ActionLogRecord.execution_id == execution_id)
+            if execution_id_prefix:
+                # 只读查询允许前缀匹配：UI 上展示的是 run_id 前 8 位，
+                # 用户按看到的短 id 筛选也要能命中（完整 id 同样是自身前缀）。
+                # ⚠️ 删除（clear）必须保持精确匹配，避免一次删掉多个批次。
+                conditions.append(
+                    ActionLogRecord.execution_id.like(  # type: ignore[attr-defined]
+                        f"{execution_id.strip()}%"
+                    )
+                )
+            else:
+                conditions.append(ActionLogRecord.execution_id == execution_id)
         if workflow_id:
             conditions.append(ActionLogRecord.workflow_id == str(workflow_id))
         if browser_id:
@@ -134,6 +145,8 @@ class ActionLogCrudService:
 
     @classmethod
     async def count(cls, mid: int | str, **filters) -> int:
+        # 只读统计：execution_id 允许前缀匹配，与列表口径一致
+        filters.setdefault("execution_id_prefix", True)
         conditions = cls._build_filters(mid, **filters)
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
@@ -151,6 +164,8 @@ class ActionLogCrudService:
         order_desc: bool = True,
         **filters,
     ) -> List[ActionLogRecord]:
+        # 只读列表：execution_id 允许前缀匹配（UI 展示的是短 id）
+        filters.setdefault("execution_id_prefix", True)
         conditions = cls._build_filters(mid, **filters)
         order_col = (
             ActionLogRecord.id.desc()

@@ -366,6 +366,7 @@ class ResourceRecordService:
         *,
         resource_type: str | None = None,
         status: ResourceProcessStatus | None = None,
+        execution_id: str | None = None,
     ) -> BasePaginationResp[WorkflowResourceRecord]:
         """分页查询某工作流在指定浏览器上的资源处理记录（按最近处理时间倒序）。
 
@@ -386,8 +387,13 @@ class ResourceRecordService:
             conditions.append(
                 WorkflowResourceRecord.resource_id.like(f"%{resource_id}%")  # type: ignore[attr-defined]
             )
-        if execution_id:
-            conditions.append(WorkflowResourceRecord.execution_id == execution_id)
+        if execution_id and execution_id.strip():
+            # 与 list_records 同一口径：execution_id 支持**前缀**匹配
+            conditions.append(
+                WorkflowResourceRecord.execution_id.like(  # type: ignore[attr-defined]
+                    f"{execution_id.strip()}%"
+                )
+            )
         if process_count_min is not None:
             conditions.append(
                 WorkflowResourceRecord.process_count >= int(process_count_min)
@@ -470,8 +476,15 @@ class ResourceRecordService:
             conditions.append(
                 WorkflowResourceRecord.resource_id.like(f"%{resource_id}%")  # type: ignore[attr-defined]
             )
-        if execution_id:
-            conditions.append(WorkflowResourceRecord.execution_id == execution_id)
+        if execution_id and execution_id.strip():
+            # 前缀匹配：前端「执行批次」列只展示 run_id 前 8 位（32 位 hex 放不下），
+            # 用户按看到的短 id 筛选必须能命中；完整 id 本身也是自身前缀，行为不变。
+            # 左锚定 LIKE 仍可走 execution_id 索引。
+            conditions.append(
+                WorkflowResourceRecord.execution_id.like(  # type: ignore[attr-defined]
+                    f"{execution_id.strip()}%"
+                )
+            )
         if process_count_min is not None:
             conditions.append(
                 WorkflowResourceRecord.process_count >= int(process_count_min)

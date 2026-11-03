@@ -556,18 +556,78 @@
               "TrueBranch": [
                 {
                   "params": {
-                    "success": false,
-                    "resource_id": "{{off_item.dynId}}",
-                    "resource_type": "bili_lottery_official",
-                    "status": "failed",
-                    "fail_reason": "页面未就绪(page_ok=false)"
+                    "state": "visible",
+                    "timeout": 1500,
+                    "selector": ".error-panel.error-404"
                   },
-                  "action_id": "mark_resource_result",
-                  "action_type": "mark_resource_result",
-                  "input_vars": {
-                    "skip_reason": "页面未就绪(page_ok=false)",
-                    "record_note": "failed：动态页未就绪(page_ok=false)，未转发"
-                  }
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "is_404_page"
+                  ]
+                },
+                {
+                  "params": {
+                    "condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "is_404_page",
+                        "condition_value_type": "BOOLEAN",
+                        "condition_value": true
+                      }
+                    },
+                    "TrueBranch": [
+                      {
+                        "params": {
+                          "message": "【官方转发抽奖】动态不存在/已删除（404 页）→ 记 skipped 终态，后续轮次不再重试：{{off_item.dynId}}",
+                          "log": {
+                            "enabled": true,
+                            "record_params": false,
+                            "record_result": true,
+                            "record_variables": false,
+                            "only_on_error": false,
+                            "max_payload_length": 4000
+                          }
+                        },
+                        "action_id": "print",
+                        "action_type": "print",
+                        "input_vars": {
+                          "skip_reason": "动态不存在或已删除(404)",
+                          "record_note": "skipped：动态页 404（已删除/不存在），终态跳过"
+                        }
+                      },
+                      {
+                        "params": {
+                          "success": true,
+                          "resource_id": "{{off_item.dynId}}",
+                          "resource_type": "bili_lottery_official",
+                          "status": "skipped",
+                          "fail_reason": "动态不存在或已删除(404)，终态跳过"
+                        },
+                        "action_id": "mark_resource_result",
+                        "action_type": "mark_resource_result"
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "success": false,
+                          "resource_id": "{{off_item.dynId}}",
+                          "resource_type": "bili_lottery_official",
+                          "status": "failed",
+                          "fail_reason": "页面未就绪(page_ok=false)"
+                        },
+                        "action_id": "mark_resource_result",
+                        "action_type": "mark_resource_result",
+                        "input_vars": {
+                          "skip_reason": "页面未就绪(page_ok=false)",
+                          "record_note": "failed：动态页未就绪(page_ok=false)，未转发"
+                        }
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else"
                 }
               ],
               "FalseBranch": [
@@ -689,15 +749,66 @@
                 },
                 {
                   "params": {
-                    "state": "hidden",
-                    "timeout": 8000,
-                    "selector": ".bili-dyn-share__wrap"
+                    "state": "visible",
+                    "timeout": 10000,
+                    "selector": ".bili-dyn-share-succ-tip__btn"
                   },
                   "action_id": "wait",
                   "action_type": "wait",
                   "output_vars": [
-                    "share_closed"
+                    "share_ok"
                   ]
+                },
+                {
+                  "params": {
+                    "condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "share_ok",
+                        "condition_value_type": "BOOLEAN",
+                        "condition_value": true
+                      }
+                    },
+                    "TrueBranch": [
+                      {
+                        "params": {
+                          "timeout": 5000,
+                          "selector": ".bili-dyn-share-succ-tip__btn"
+                        },
+                        "action_id": "click",
+                        "action_type": "click",
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
+                          "state": "hidden",
+                          "timeout": 8000,
+                          "selector": ".bili-dyn-share__wrap"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "output_vars": [
+                          "share_closed"
+                        ]
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "state": "hidden",
+                          "timeout": 8000,
+                          "selector": ".bili-dyn-share__wrap"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "output_vars": [
+                          "share_closed"
+                        ]
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else"
                 },
                 {
                   "params": {
@@ -763,13 +874,13 @@
                           "resource_id": "{{off_item.dynId}}",
                           "resource_type": "bili_lottery_official",
                           "status": "failed",
-                          "fail_reason": "转发弹窗未关闭，转发可能未生效"
+                          "fail_reason": "未检测到分享成功提示，转发可能未生效"
                         },
                         "action_id": "mark_resource_result",
                         "action_type": "mark_resource_result",
                         "input_vars": {
                           "skip_reason": "转发未确认",
-                          "record_note": "failed：转发弹窗8秒内未关闭，转发可能未生效"
+                          "record_note": "failed：转发后 10s 内未出现「分享成功」提示，转发可能未生效"
                         }
                       }
                     ]
@@ -931,18 +1042,78 @@
               "TrueBranch": [
                 {
                   "params": {
-                    "success": false,
-                    "resource_id": "{{oth_item.dynId}}",
-                    "resource_type": "bili_lottery_others",
-                    "status": "failed",
-                    "fail_reason": "页面未就绪(page_ok=false)"
+                    "state": "visible",
+                    "timeout": 1500,
+                    "selector": ".error-panel.error-404"
                   },
-                  "action_id": "mark_resource_result",
-                  "action_type": "mark_resource_result",
-                  "input_vars": {
-                    "skip_reason": "页面未就绪(page_ok=false)",
-                    "record_note": "failed：动态页未就绪(page_ok=false)，未参与"
-                  }
+                  "action_id": "wait",
+                  "action_type": "wait",
+                  "output_vars": [
+                    "is_404_page"
+                  ]
+                },
+                {
+                  "params": {
+                    "condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "is_404_page",
+                        "condition_value_type": "BOOLEAN",
+                        "condition_value": true
+                      }
+                    },
+                    "TrueBranch": [
+                      {
+                        "params": {
+                          "message": "【第三方评论抽奖】动态不存在/已删除（404 页）→ 记 skipped 终态，后续轮次不再重试：{{oth_item.dynId}}",
+                          "log": {
+                            "enabled": true,
+                            "record_params": false,
+                            "record_result": true,
+                            "record_variables": false,
+                            "only_on_error": false,
+                            "max_payload_length": 4000
+                          }
+                        },
+                        "action_id": "print",
+                        "action_type": "print",
+                        "input_vars": {
+                          "skip_reason": "动态不存在或已删除(404)",
+                          "record_note": "skipped：动态页 404（已删除/不存在），终态跳过"
+                        }
+                      },
+                      {
+                        "params": {
+                          "success": true,
+                          "resource_id": "{{oth_item.dynId}}",
+                          "resource_type": "bili_lottery_others",
+                          "status": "skipped",
+                          "fail_reason": "动态不存在或已删除(404)，终态跳过"
+                        },
+                        "action_id": "mark_resource_result",
+                        "action_type": "mark_resource_result"
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "success": false,
+                          "resource_id": "{{oth_item.dynId}}",
+                          "resource_type": "bili_lottery_others",
+                          "status": "failed",
+                          "fail_reason": "页面未就绪(page_ok=false)"
+                        },
+                        "action_id": "mark_resource_result",
+                        "action_type": "mark_resource_result",
+                        "input_vars": {
+                          "skip_reason": "页面未就绪(page_ok=false)",
+                          "record_note": "failed：动态页未就绪(page_ok=false)，未参与"
+                        }
+                      }
+                    ]
+                  },
+                  "action_id": "if_else",
+                  "action_type": "if_else"
                 }
               ],
               "FalseBranch": [
@@ -1409,10 +1580,29 @@
                   "on_error": "continue"
                 },
                 {
+                  "params": {
+                    "x": 0,
+                    "y": -2000,
+                    "steps": 8,
+                    "interval_ms": 120,
+                    "timeout": 5000
+                  },
+                  "action_id": "scroll",
+                  "action_type": "scroll",
+                  "on_error": "continue"
+                },
+                {
+                  "params": {
+                    "timeout": 800
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
                   "retry": 1,
                   "params": {
                     "timeout": 5000,
-                    "selector": "bili-comments #commentbox .brt-editor"
+                    "selector": ".brt-editor:visible"
                   },
                   "action_id": "click",
                   "action_type": "click"
@@ -1437,7 +1627,7 @@
                   "params": {
                     "value": "{{comment_text}}",
                     "timeout": 5000,
-                    "selector": "bili-comments #commentbox .brt-editor"
+                    "selector": ".brt-editor:visible"
                   },
                   "action_id": "input",
                   "action_type": "input"
@@ -1451,7 +1641,7 @@
                 },
                 {
                   "params": {
-                    "selector": "bili-comments #commentbox .brt-editor",
+                    "selector": ".brt-editor:visible",
                     "timeout": 5000,
                     "fail_on_empty": false
                   },
@@ -1487,7 +1677,7 @@
                         "retry": 1,
                         "params": {
                           "timeout": 5000,
-                          "selector": "bili-comments #commentbox .brt-editor"
+                          "selector": ".brt-editor:visible"
                         },
                         "action_id": "click",
                         "action_type": "click",
@@ -1498,7 +1688,7 @@
                         "params": {
                           "value": "{{comment_text}}",
                           "timeout": 5000,
-                          "selector": "bili-comments #commentbox .brt-editor"
+                          "selector": ".brt-editor:visible"
                         },
                         "action_id": "input",
                         "action_type": "input",
@@ -1513,7 +1703,7 @@
                       },
                       {
                         "params": {
-                          "selector": "bili-comments #commentbox .brt-editor",
+                          "selector": ".brt-editor:visible",
                           "timeout": 5000,
                           "fail_on_empty": false
                         },
@@ -1561,7 +1751,7 @@
                   "params": {
                     "state": "visible",
                     "timeout": 8000,
-                    "selector": "bili-comments #commentbox #pub button"
+                    "selector": "bili-comments #pub button:visible"
                   },
                   "action_id": "wait",
                   "action_type": "wait"
@@ -1570,10 +1760,30 @@
                   "retry": 1,
                   "params": {
                     "timeout": 5000,
-                    "selector": "bili-comments #commentbox #pub button"
+                    "selector": "bili-comments #pub button:visible"
                   },
                   "action_id": "click",
                   "action_type": "click"
+                },
+                {
+                  "params": {
+                    "timeout": 1500
+                  },
+                  "action_id": "wait",
+                  "action_type": "wait"
+                },
+                {
+                  "params": {
+                    "selector": ".brt-editor:visible",
+                    "timeout": 5000,
+                    "fail_on_empty": false
+                  },
+                  "action_id": "get_text",
+                  "action_type": "get_text",
+                  "output_vars": [
+                    "editor_after"
+                  ],
+                  "on_error": "continue"
                 },
                 {
                   "params": {
@@ -1826,15 +2036,66 @@
                       },
                       {
                         "params": {
-                          "state": "hidden",
-                          "timeout": 8000,
-                          "selector": ".bili-dyn-share__wrap"
+                          "state": "visible",
+                          "timeout": 10000,
+                          "selector": ".bili-dyn-share-succ-tip__btn"
                         },
                         "action_id": "wait",
                         "action_type": "wait",
                         "output_vars": [
-                          "share_closed"
+                          "share_ok"
                         ]
+                      },
+                      {
+                        "params": {
+                          "condition": {
+                            "logic": "AND",
+                            "condition": {
+                              "field": "share_ok",
+                              "condition_value_type": "BOOLEAN",
+                              "condition_value": true
+                            }
+                          },
+                          "TrueBranch": [
+                            {
+                              "params": {
+                                "timeout": 5000,
+                                "selector": ".bili-dyn-share-succ-tip__btn"
+                              },
+                              "action_id": "click",
+                              "action_type": "click",
+                              "on_error": "continue"
+                            },
+                            {
+                              "params": {
+                                "state": "hidden",
+                                "timeout": 8000,
+                                "selector": ".bili-dyn-share__wrap"
+                              },
+                              "action_id": "wait",
+                              "action_type": "wait",
+                              "output_vars": [
+                                "share_closed"
+                              ]
+                            }
+                          ],
+                          "FalseBranch": [
+                            {
+                              "params": {
+                                "state": "hidden",
+                                "timeout": 8000,
+                                "selector": ".bili-dyn-share__wrap"
+                              },
+                              "action_id": "wait",
+                              "action_type": "wait",
+                              "output_vars": [
+                                "share_closed"
+                              ]
+                            }
+                          ]
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else"
                       },
                       {
                         "params": {
@@ -1900,13 +2161,13 @@
                                 "resource_id": "{{oth_item.dynId}}",
                                 "resource_type": "bili_lottery_others",
                                 "status": "failed",
-                                "fail_reason": "转发弹窗未关闭，转发可能未生效"
+                                "fail_reason": "未检测到分享成功提示，转发可能未生效"
                               },
                               "action_id": "mark_resource_result",
                               "action_type": "mark_resource_result",
                               "input_vars": {
                                 "skip_reason": "转发未确认",
-                                "record_note": "failed：转发弹窗8秒内未关闭，转发可能未生效"
+                                "record_note": "failed：转发后 10s 内未出现「分享成功」提示，转发可能未生效"
                               }
                             }
                           ]
@@ -1953,18 +2214,42 @@
                           "TrueBranch": [
                             {
                               "params": {
-                                "success": true,
-                                "resource_id": "{{oth_item.dynId}}",
-                                "resource_type": "bili_lottery_others",
-                                "status": "skipped",
-                                "fail_reason": "评论已发出但三轮校验均未确认生效，记终态跳过防重复评论"
+                                "expression": "editor_after != ''",
+                                "TrueBranch": [
+                                  {
+                                    "params": {
+                                      "success": false,
+                                      "resource_id": "{{oth_item.dynId}}",
+                                      "resource_type": "bili_lottery_others",
+                                      "status": "failed",
+                                      "fail_reason": "评论未提交成功(发布后输入框仍有内容)，下一轮重试"
+                                    },
+                                    "action_id": "mark_resource_result",
+                                    "action_type": "mark_resource_result",
+                                    "input_vars": {
+                                      "skip_reason": "评论未提交成功",
+                                      "record_note": "failed：发布后输入框仍保留评论文本，判定未提交，下一轮重试"
+                                    }
+                                  }
+                                ],
+                                "FalseBranch": [
+                                  {
+                                    "params": {
+                                      "success": true,
+                                      "resource_id": "{{oth_item.dynId}}",
+                                      "resource_type": "bili_lottery_others",
+                                      "status": "success"
+                                    },
+                                    "action_id": "mark_resource_result",
+                                    "action_type": "mark_resource_result",
+                                    "input_vars": {
+                                      "record_note": "success：发布后输入框已清空=已提交，评论区列表未展示本人（校验假阴性）"
+                                    }
+                                  }
+                                ]
                               },
-                              "action_id": "mark_resource_result",
-                              "action_type": "mark_resource_result",
-                              "input_vars": {
-                                "skip_reason": "评论未生效(已记skipped防重评)",
-                                "record_note": "skipped：评论已发出但校验未确认生效，记终态防重复评论"
-                              }
+                              "action_id": "if_else",
+                              "action_type": "if_else"
                             }
                           ],
                           "FalseBranch": []
@@ -1987,11 +2272,11 @@
           },
           {
             "params": {
-              "expression": "skip_reason == '' and action_like != '已点赞'",
+              "expression": "record_note == ''",
               "TrueBranch": [
                 {
                   "params": {
-                    "message": "【第三方评论抽奖】本轮未完成参与（中途异常，下一轮重试）",
+                    "message": "【第三方评论抽奖】本轮未产生任何资源记录（中途异常/分支被跳过）→ 补记 failed：dynId={{oth_item.dynId}}",
                     "log": {
                       "enabled": true,
                       "record_params": false,

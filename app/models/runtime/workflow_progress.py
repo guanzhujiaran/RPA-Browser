@@ -127,6 +127,13 @@ class LoopRunSummary(SQLModel):
     )
     body_success: int = Field(default=0, description="体内动作成功数（不含更深层循环）")
     body_failed: int = Field(default=0, description="体内动作失败数（不含更深层循环）")
+    aborted_by_failure: bool = Field(
+        default=False,
+        description=(
+            "是否因体内步骤失败而中断（区别于 break_condition 的正常提前退出）；"
+            "为 True 时整次运行直接判失败，不参与「容忍失败阈值/占比」判定"
+        ),
+    )
 
 
 def render_loop_summaries(summaries: list[LoopRunSummary]) -> str:

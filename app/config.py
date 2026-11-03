@@ -260,7 +260,13 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
 
     # 浏览器会话默认配置
     browser_session_auto_cleanup: bool = True  # 是否启用自动清理
-    browser_session_max_idle_time: int = 1800  # 最大闲置时间（秒）→ 超过后关实例出池
+    # 闲置回收是否在**非 PROD**（DEV / 本地）也执行。
+    # 默认 True：本地调完工作流后浏览器同样按闲置策略回收，不会一直挂着；
+    # 置 False 可退回旧行为（仅 PROD 执行空闲回收）。
+    # 注：pin 占用（自动化任务）与存在 WebRTC 观看者的会话照旧跳过回收，
+    # 所以「调试中正在看画面」不会被误关。
+    browser_session_cleanup_all_modes: bool = True
+    browser_session_max_idle_time: int = 300  # 最大闲置时间（秒）→ 超过后关实例出池
     browser_session_cleanup_interval: int = 60  # 清理检查间隔（秒）
     browser_session_expiration_time: int | None = (
         None  # 会话过期时间（秒），None表示不过期
