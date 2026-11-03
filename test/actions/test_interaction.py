@@ -2,6 +2,8 @@
 测试交互操作
 """
 
+import time
+
 import pytest
 from playwright.async_api import Page
 
@@ -248,6 +250,46 @@ class TestScrollAction:
         """)
         assert is_visible, "Target element should be visible after scroll"
 
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_scroll_multiple_elements_uses_first(self):
+        """选择器命中多个元素时滚动首个
+
+        回归：`scroll_into_view_if_needed` 是单元素 API，多元素会因严格模式直接抛错，
+        滚动一次都不会发生。列表容器（一条数据一个节点）场景只处理首个元素即可。
+        """
+        from app.services.execution.actions.interaction import ScrollAction
+
+        await self.page.set_content(
+            "<html><body>"
+            + "".join(
+                f"<div class='item' style='margin-top: 800px;'>item {index}</div>"
+                for index in range(5)
+            )
+            + "</body></html>"
+        )
+
+        action = ScrollAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={"test": True},
+            params=ScrollParams(selector=".item"),
+        )
+
+        result = await action.execute()
+        assert result.success
+        assert result.error is None, f"多元素不应走异常兜底: {result.error}"
+        # 首个元素被滚进视野即视为完成
+        is_visible = await self.page.evaluate(
+            """
+            () => {
+                const el = document.querySelectorAll('.item')[0];
+                const rect = el.getBoundingClientRect();
+                return rect.top >= 0 && rect.bottom <= window.innerHeight;
+            }
+            """
+        )
+        assert is_visible, "首个元素应已被滚入视野"
+
 
 class TestHoverAction:
     """悬停操作测试"""
@@ -356,6 +398,132 @@ class TestWaitAction:
         result = await action.execute()
         assert result.success
         assert result.data.element_found is True
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_wait_multiple_elements_visible(self):
+        """选择器命中多个元素时按「任一出现」等待
+
+        回归：Playwright 单元素 API（`wait_for`）默认严格模式，多元素会直接抛
+        `strict mode violation`，导致等待一次都没生效（历史 bug：评论区
+        `bili-comment-thread-renderer` 命中 20 个元素）。这里 20 个 `.item`
+        必须正常等到可见，而不是走异常兜底。
+        """
+        from app.services.execution.actions.interaction import WaitAction
+
+        await self.page.set_content(
+            "<html><body>"
+            + "".join(f"<div class='item'>item {index}</div>" for index in range(20))
+            + "</body></html>"
+        )
+
+        action = WaitAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={"test": True},
+            params=WaitParams(selector=".item", timeout=5000),
+        )
+
+        result = await action.execute()
+        assert result.success
+        assert result.data.element_found is True
+        assert result.error is None, f"多元素不应走异常兜底: {result.error}"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_wait_hidden_requires_all_gone(self):
+        """state=hidden 默认「全部消失」：逐个移除过程中不能提前返回"""
+        from app.services.execution.actions.interaction import WaitAction
+        from app.models.execution.enums import ElementStateEnum
+
+        await self.page.set_content(
+            "<html><body>"
+            "<div class='item' id='a'>A</div>"
+            "<div class='item' id='b'>B</div>"
+            "</body></html>"
+        )
+        await self.page.evaluate(
+            """
+            () => {
+                setTimeout(() => document.querySelector('#a').remove(), 150);
+                setTimeout(() => document.querySelector('#b').remove(), 300);
+            }
+            """
+        )
+
+        started = time.monotonic()
+        action = WaitAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={"test": True},
+            params=WaitParams(
+                selector=".item",
+                state=ElementStateEnum.HIDDEN,
+                timeout=5000,
+            ),
+        )
+
+        result = await action.execute()
+        elapsed = time.monotonic() - started
+        assert result.success
+        assert result.data.element_found is True
+        assert elapsed >= 0.25, f"仍有元素可见时不应返回，实际耗时 {elapsed:.2f}s"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_wait_hidden_match_any_returns_early(self):
+        """match=any + state=hidden：任一元素消失即返回"""
+        from app.services.execution.actions.interaction import WaitAction
+        from app.models.execution.enums import ElementStateEnum, WaitMatchEnum
+
+        await self.page.set_content(
+            "<html><body>"
+            "<div class='item'>A</div>"
+            "<div class='item' style='display: none'>B</div>"
+            "</body></html>"
+        )
+
+        started = time.monotonic()
+        action = WaitAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={"test": True},
+            params=WaitParams(
+                selector=".item",
+                state=ElementStateEnum.HIDDEN,
+                match=WaitMatchEnum.ANY,
+                timeout=5000,
+            ),
+        )
+
+        result = await action.execute()
+        elapsed = time.monotonic() - started
+        assert result.success
+        assert result.data.element_found is True
+        assert elapsed < 2, f"任一元素已隐藏应立即返回，实际耗时 {elapsed:.2f}s"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_wait_hidden_all_times_out_when_one_remains(self):
+        """state=hidden 全部语义下，只要还有一个元素可见就按超时处理（success 但 found=False）"""
+        from app.services.execution.actions.interaction import WaitAction
+        from app.models.execution.enums import ElementStateEnum
+
+        await self.page.set_content(
+            "<html><body><div class='item'>A</div><div class='item'>B</div></body></html>"
+        )
+
+        action = WaitAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={"test": True},
+            params=WaitParams(
+                selector=".item",
+                state=ElementStateEnum.HIDDEN,
+                timeout=600,
+            ),
+        )
+
+        result = await action.execute()
+        assert result.success
+        assert result.data.element_found is False
+        assert result.logs and "等待超时" in result.logs[0]
 
 
 class TestGetTextAction:

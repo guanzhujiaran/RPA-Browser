@@ -2,7 +2,7 @@
 操作 CRUD 服务
 """
 
-from sqlalchemy import or_, and_, true, update
+from sqlalchemy import or_, and_, true, false, update
 from dataclasses import dataclass
 from typing import Any, Dict, List
 from datetime import datetime
@@ -500,8 +500,40 @@ class ActionCrudService:
         return query
 
     @staticmethod
+    def _apply_scope_filter(query, mid: int | None, filter_type: str):
+        """按「我的 / 公开 / 社区」范围过滤动作查询。
+
+        - mid 为 None（未登录的游客）：只允许看到公开内容，private 恒为空；
+          community / public / all 一律收敛为 is_public，verified 额外要求已认证；
+        - mid 有值：按原有分支过滤（community 为自己之外的公开内容）。
+        """
+        if mid is None:
+            if filter_type == "private":
+                return query.where(false())
+            query = query.where(CompositeActionModel.is_public == true())
+            if filter_type == "verified":
+                query = query.where(CompositeActionModel.is_verified == true())
+            return query
+
+        if filter_type == "private":  # private只检查是自己创建的就行了
+            return query.where(CompositeActionModel.mid == str(mid))
+        if filter_type == "public":
+            return query.where(CompositeActionModel.is_public == true())
+        if filter_type == "community":
+            return query.where(
+                (CompositeActionModel.mid != str(mid))
+                & (CompositeActionModel.is_public == true())
+            )
+        if filter_type == "verified":
+            return query.where(CompositeActionModel.is_verified == true())
+        return query.where(
+            (CompositeActionModel.mid == str(mid))
+            | (CompositeActionModel.is_public == true())
+        )
+
+    @staticmethod
     async def count_by_user(
-        mid: int,
+        mid: int | None,
         filter_type: str = "all",
         name: str | None = None,
         tag: str | None = None,
@@ -511,22 +543,7 @@ class ActionCrudService:
 
         async with DatabaseSessionManager.async_session() as session:
             query = select(func.count(1))
-            if filter_type == "private":  # private只检查是自己创建的就行了
-                query = query.where(CompositeActionModel.mid == str(mid))
-            elif filter_type == "public":
-                query = query.where(CompositeActionModel.is_public == true())
-            elif filter_type == "community":
-                query = query.where(
-                    (CompositeActionModel.mid != str(mid))
-                    & (CompositeActionModel.is_public == true())
-                )
-            elif filter_type == "verified":
-                query = query.where(CompositeActionModel.is_verified == true())
-            else:
-                query = query.where(
-                    (CompositeActionModel.mid == str(mid))
-                    | (CompositeActionModel.is_public == true())
-                )
+            query = ActionCrudService._apply_scope_filter(query, mid, filter_type)
 
             query = ActionCrudService._apply_search_filters(query, name, tag, tag_exact)
             result = await session.exec(query)
@@ -534,7 +551,7 @@ class ActionCrudService:
 
     @staticmethod
     async def list_by_user(
-        mid: int,
+        mid: int | None,
         skip: int = 0,
         limit: int = 100,
         filter_type: str = "all",
@@ -548,22 +565,7 @@ class ActionCrudService:
 
         async with DatabaseSessionManager.async_session() as session:
             query = select(CompositeActionModel)
-            if filter_type == "private":  # private只检查是自己创建的就行了
-                query = query.where((CompositeActionModel.mid == str(mid)))
-            elif filter_type == "public":
-                query = query.where(CompositeActionModel.is_public == true())
-            elif filter_type == "community":
-                query = query.where(
-                    (CompositeActionModel.mid != str(mid))
-                    & (CompositeActionModel.is_public == true())
-                )
-            elif filter_type == "verified":
-                query = query.where(CompositeActionModel.is_verified == true())
-            else:
-                query = query.where(
-                    (CompositeActionModel.mid == str(mid))
-                    | (CompositeActionModel.is_public == true())
-                )
+            query = ActionCrudService._apply_scope_filter(query, mid, filter_type)
 
             query = ActionCrudService._apply_search_filters(query, name, tag, tag_exact)
 

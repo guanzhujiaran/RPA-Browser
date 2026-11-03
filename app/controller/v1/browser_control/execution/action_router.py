@@ -13,7 +13,11 @@ from bili_common.models.response import (
 )
 from bili_common.models.response_code import ResponseCode
 from app.models.router.router_prefix import BrowserControlRouterPath
-from app.utils.depends.mid_depends import get_auth_info_from_header, AuthInfo
+from app.utils.depends.mid_depends import (
+    get_auth_info_from_header,
+    get_optional_auth_info_from_header,
+    AuthInfo,
+)
 from app.utils.depends.admin_depends import assert_approved
 from fastapi import Depends
 from app.services.execution.crud_service import action_crud_svr
@@ -295,18 +299,21 @@ async def export_custom_action(
 @router.post(BrowserControlRouterPath.custom_actions_list, summary="获取自定义操作列表")
 async def list_custom_actions(
     request: CompositeActionListRequest,
-    auth: AuthInfo = Depends(get_auth_info_from_header),
+    auth: AuthInfo | None = Depends(get_optional_auth_info_from_header),
 ) -> StandardResponse[BasePaginationResp[CompositeActionListItemResponse]]:
-    """获取当前用户的自定义操作列表
+    """获取自定义操作列表（可选登录）
 
-    支持分页、筛选、按名称搜索、按标签筛选和排序
+    已登录：按 filter_type 返回「我的 / 公开 / 社区（他人公开）/ 认证 / 全部」；
+    未登录（游客）：只返回公开内容，private 恒为空（社区广场匿名浏览）。
     """
     # 计算 skip
     skip = (request.page - 1) * request.per_page
 
+    mid = auth.mid if auth else None
+
     # 获取总数
     total = await action_crud_svr.count_by_user(
-        mid=auth.mid,
+        mid=mid,
         filter_type=request.filter_type,
         name=request.name,
         tag=request.tag,
@@ -315,7 +322,7 @@ async def list_custom_actions(
 
     # 获取列表数据
     models = await action_crud_svr.list_by_user(
-        mid=auth.mid,
+        mid=mid,
         skip=skip,
         limit=request.per_page,
         filter_type=request.filter_type,

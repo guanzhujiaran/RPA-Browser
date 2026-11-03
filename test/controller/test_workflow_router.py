@@ -72,6 +72,47 @@ class TestListWorkflows:
 
 
 @pytest.mark.anyio
+class TestAnonymousCommunityWorkflows:
+    """未登录用户（社区广场游客）只能看到公开工作流"""
+
+    @staticmethod
+    async def _create_public_workflow(name: str):
+        from app.services.execution.crud_service import workflow_crud_svr
+
+        return await workflow_crud_svr.create(
+            mid=OTHER_MID,
+            name=name,
+            custom_action_id=None,
+            is_public=True,
+        )
+
+    async def test_community_list_returns_public_workflows(self, anon_client):
+        public = await self._create_public_workflow("他人的公开工作流")
+
+        response = await anon_client.post(
+            f"{PREFIX}/workflows/list",
+            json={"page": 1, "per_page": 10, "filter_type": "community"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS
+        ids = [item["id"] for item in data["data"]["items"]]
+        assert public.id in ids
+
+    async def test_private_list_is_empty_for_anonymous(self, anon_client, created_workflow):
+        response = await anon_client.post(
+            f"{PREFIX}/workflows/list",
+            json={"page": 1, "per_page": 10, "filter_type": "private"},
+        )
+
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS
+        assert data["data"]["total"] == 0
+        assert data["data"]["items"] == []
+
+
+@pytest.mark.anyio
 class TestGetWorkflowDetail:
     async def test_get_workflow_detail_success(self, client, created_workflow):
         db_id, workflow_id = created_workflow

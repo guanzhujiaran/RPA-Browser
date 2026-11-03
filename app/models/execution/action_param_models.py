@@ -30,6 +30,7 @@ from app.models.execution.enums import (
     KeyboardModifierEnum,
     MouseButtonEnum,
     ScreenshotTypeEnum,
+    WaitMatchEnum,
     WaitUntilEnum,
 )
 from app.models.execution.rpc_method_params import (
@@ -255,14 +256,25 @@ class ScrollParams(SelectorActionParams):
 
 
 class WaitParams(SelectorActionParams):
-    """
-    等待操作参数 - 对应 locator.wait_for()
-    如果元素已存在，立即返回True，否则等待超时后返回False
+    """等待操作参数
+
+    语义是「选择器命中一批元素，其中是否已有满足 `state` 的」：
+    - `match` 缺省时，`visible`/`attached` 按 `any`（任一出现即满足），
+      `hidden`/`detached` 按 `all`（全部消失才算消失）；
+    - 选择器命中多个元素（如一条评论一个自定义元素）不会因 Playwright 严格模式报错，
+      而是按上述范围等待。
     """
 
     state: ElementStateEnum = Field(
         default=ElementStateEnum.VISIBLE,
         description="等待的元素状态 (visible/hidden/attached/detached)",
+    )
+    match: WaitMatchEnum | None = Field(
+        default=None,
+        description=(
+            "多元素匹配范围：any=任一满足即返回，all=全部满足才返回；"
+            "缺省时 visible/attached 按 any，hidden/detached 按 all"
+        ),
     )
 
 

@@ -19,7 +19,10 @@ from app.controller.v1.browser_control.execution.workflow_router import (
 from app.controller.v1.browser_control.execution.execution_router import (
     router as execution_router,
 )
-from app.utils.depends.mid_depends import get_auth_info_from_header
+from app.utils.depends.mid_depends import (
+    get_auth_info_from_header,
+    get_optional_auth_info_from_header,
+)
 from app.utils.depends.security_depends import verify_browser_ownership
 from app.utils.depends.session_manager import DatabaseSessionManager
 from bili_common.models.response_code import ResponseCode
@@ -72,9 +75,30 @@ async def client(mock_auth, mock_browser):
 
     # 覆盖认证依赖，使用 mock auth
     app.dependency_overrides[get_auth_info_from_header] = lambda: mock_auth
+    # 列表接口用可选登录依赖（游客可读公开内容），已登录场景下等价于 mock auth
+    app.dependency_overrides[get_optional_auth_info_from_header] = lambda: mock_auth
     # 执行类接口用 Depends(verify_browser_ownership) 拿 mid/browser_id，
     # 测试不需要真实浏览器会话，直接注入固定的归属信息
     app.dependency_overrides[verify_browser_ownership] = lambda: mock_browser
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def anon_client():
+    """未登录（游客）客户端：不做任何依赖覆盖，请求不带 x-bili-mid。
+
+    用于验证「社区公开动作 / 公开工作流对游客可见」这条链路的真实鉴权行为：
+    可选登录依赖返回 None，强制登录依赖仍抛 401。
+    """
+    app = FastAPI()
+    app.include_router(action_router)
+    app.include_router(workflow_router)
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

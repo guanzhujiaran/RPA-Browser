@@ -23,8 +23,10 @@ from app.models.execution.action_params import (
 import asyncio
 import time
 from loguru import logger
+from playwright.async_api import Locator
 from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.models.database.workflow.models import BuiltinActionType
+from app.models.execution.enums import ElementStateEnum, WaitMatchEnum
 from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
 
 
@@ -262,7 +264,11 @@ class ScrollAction(BaseAction[ScrollParams]):
                 logger.info(
                     f"[ScrollAction] scroll_into_view_if_needed 参数: {scroll_kwargs}"
                 )
-                await locator.scroll_into_view_if_needed(**scroll_kwargs)
+                # 取 `.first`：`scroll_into_view_if_needed` 是单元素 API，选择器命中
+                # 多个元素（列表容器）时会因 Playwright 严格模式直接抛
+                # `strict mode violation`，滚动一次都不会发生。滚动语义本就是
+                # 「把（第一个）目标滚进视野」，多元素只需处理首个即可。
+                await locator.first.scroll_into_view_if_needed(**scroll_kwargs)
             else:
                 # 没有 selector 时，滚动整个页面到顶部
                 await self.page.evaluate("window.scrollTo(0, 0)")
@@ -286,8 +292,35 @@ class ScrollAction(BaseAction[ScrollParams]):
             )
 
 
+#: 轮询等待的间隔（毫秒）：仅用于无法走 `.first` 原生等待的状态组合
+_WAIT_POLL_INTERVAL_MS = 100
+#: 参数缺省超时（与 BaseActionParams.timeout 默认值一致）：等于它时交给 Playwright 默认超时
+_WAIT_DEFAULT_TIMEOUT_MS = 30000
+#: 未显式指定 `match` 时的匹配范围：出现类按「任一」，消失类按「全部」
+_WAIT_DEFAULT_MATCH: dict[ElementStateEnum, WaitMatchEnum] = {
+    ElementStateEnum.VISIBLE: WaitMatchEnum.ANY,
+    ElementStateEnum.ATTACHED: WaitMatchEnum.ANY,
+    ElementStateEnum.HIDDEN: WaitMatchEnum.ALL,
+    ElementStateEnum.DETACHED: WaitMatchEnum.ALL,
+}
+#: 「元素已消失」类状态：0 个命中元素时即视为满足
+_WAIT_ABSENT_STATES = (ElementStateEnum.HIDDEN, ElementStateEnum.DETACHED)
+
+
 class WaitAction(BaseAction[WaitParams]):
-    """等待操作"""
+    """等待操作（通用能力，不含任何站点逻辑）
+
+    等待语义 = 「选择器命中的一批元素里，是否已满足 `state`」：
+
+    - `visible` / `attached`（`match` 缺省为 `any`）：**任一**命中元素满足即返回。
+      走 `locator.first.wait_for` 的 Playwright 原生等待——`wait_for` 是单元素 API，
+      不加 `.first` 时选择器一旦命中多个元素（如一条数据一个自定义元素）就会因
+      严格模式抛 `strict mode violation`，等待根本没开始；
+    - `hidden` / `detached`（`match` 缺省为 `all`）：**全部**消失才算消失，
+      0 个命中元素视为已消失。`locator.first.wait_for(state="hidden")` 只盯第一个元素，
+      语义不符，改为轮询逐元素判定；
+    - `match` 显式指定时覆盖上述默认（如「任意一个消失即返回」）。
+    """
 
     action_id: BuiltinActionType = BuiltinActionType.WAIT
     action_type: BuiltinActionType = BuiltinActionType.WAIT
@@ -314,16 +347,23 @@ class WaitAction(BaseAction[WaitParams]):
         selector = validated_params.selector
         state = validated_params.state
         timeout = validated_params.timeout
+        match = validated_params.match or _WAIT_DEFAULT_MATCH[state]
 
         element_found = True
         try:
             if selector:
                 locator = self.page.locator(selector)
-                logger.info(f"[WaitAction] wait_for 参数: {validated_params}")
-                await locator.wait_for(
-                    timeout=timeout if timeout != 30000 else None,
-                    state=state.value,
+                logger.info(
+                    f"[WaitAction] wait_for 参数: 选择器={selector} "
+                    f"state={state.value} match={match.value} timeout={timeout}ms"
                 )
+                if match is WaitMatchEnum.ANY and state not in _WAIT_ABSENT_STATES:
+                    await locator.first.wait_for(
+                        timeout=timeout if timeout != _WAIT_DEFAULT_TIMEOUT_MS else None,
+                        state=state.value,
+                    )
+                else:
+                    await self._poll_until(locator, state, match, timeout)
             else:
                 # 没有 selector 时，使用固定等待
                 await asyncio.sleep(timeout / 1000)
@@ -348,7 +388,8 @@ class WaitAction(BaseAction[WaitParams]):
                 data=WaitResult(element_found=element_found),
                 logs=[
                     f"等待超时: 选择器 [{selector}] 在 {timeout}ms 内未满足 "
-                    f"state={state.value}（页面未加载 / 选择器失效 / 元素被遮挡 / 预期未命中）"
+                    f"state={state.value} / match={match.value}"
+                    f"（页面未加载 / 选择器失效 / 元素被遮挡 / 预期未命中）"
                 ],
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
@@ -363,6 +404,55 @@ class WaitAction(BaseAction[WaitParams]):
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
             )
+
+    async def _poll_until(
+        self,
+        locator: Locator,
+        state: ElementStateEnum,
+        match: WaitMatchEnum,
+        timeout_ms: float,
+    ) -> None:
+        """轮询直到满足 `state`（`match` 决定任一/全部），超时抛 Playwright 超时异常。
+
+        只用于 `.first.wait_for` 语义不符的组合（消失类状态、禁止「任一满足」的情况），
+        因此这里按元素逐个判定，命中数量就是选择器实际匹配到的元素个数。
+        """
+        deadline = time.monotonic() + timeout_ms / 1000
+        while True:
+            if await self._satisfied(locator, state, match is WaitMatchEnum.ALL):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PlaywrightTimeoutError(
+                    f"等待超时：{timeout_ms}ms 内未满足 state={state.value} "
+                    f"match={match.value}"
+                )
+            await asyncio.sleep(min(_WAIT_POLL_INTERVAL_MS / 1000, remaining))
+
+    async def _satisfied(
+        self, locator: Locator, state: ElementStateEnum, require_all: bool
+    ) -> bool:
+        """当前是否满足状态：0 个命中元素时，消失类状态直接判定为满足。"""
+        elements = await locator.all()
+        if not elements:
+            return state in _WAIT_ABSENT_STATES
+        results = [await self._element_satisfied(el, state) for el in elements]
+        return all(results) if require_all else any(results)
+
+    @staticmethod
+    async def _element_satisfied(element: Locator, state: ElementStateEnum) -> bool:
+        """单个元素是否处于目标状态（与 Playwright 的判定口径一致）。
+
+        `hidden` 对应「不可见或未附着」，因此用 `is_visible()` 取反即可覆盖
+        `display:none` / 零尺寸 / 已卸载等情况。
+        """
+        if state is ElementStateEnum.VISIBLE:
+            return await element.is_visible()
+        if state is ElementStateEnum.HIDDEN:
+            return not await element.is_visible()
+        if state is ElementStateEnum.ATTACHED:
+            return await element.count() > 0
+        return await element.count() == 0
 
 
 class HoverAction(BaseAction[HoverParams]):

@@ -133,29 +133,46 @@ class WorkflowCrudService:
             return result.first()
 
     @staticmethod
+    def _apply_scope_filter(query, mid: int | None, filter_type: str):
+        """按「我的 / 公开 / 社区」范围过滤工作流查询。
+
+        - mid 为 None（未登录的游客）：只允许看到公开内容，private 恒为空；
+          community / public / all 一律收敛为 is_public，verified 额外要求已认证；
+        - mid 有值：按原有分支过滤（community 为自己之外的公开内容）。
+        """
+        if mid is None:
+            if filter_type == "private":
+                return query.where(false())
+            query = query.where(UserWorkflow.is_public == true())
+            if filter_type == "verified":
+                query = query.where(UserWorkflow.is_verified == true())
+            return query
+
+        if filter_type == "private":
+            return query.where(
+                (UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false())
+            )
+        if filter_type == "public":
+            return query.where(UserWorkflow.is_public == true())
+        if filter_type == "community":
+            return query.where(
+                (UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true())
+            )
+        if filter_type == "verified":
+            return query.where(UserWorkflow.is_verified == true())
+        return query.where(
+            (UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true())
+        )
+
+    @staticmethod
     async def count_by_user(
-        mid: int, filter_type: str = "all", browser_id: int | None = None
+        mid: int | None, filter_type: str = "all", browser_id: int | None = None
     ) -> int:
         from sqlmodel import func
 
         async with DatabaseSessionManager.async_session() as session:
             query = select(func.count(UserWorkflow.id))
-            if filter_type == "private":
-                query = query.where(
-                    (UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false())
-                )
-            elif filter_type == "public":
-                query = query.where(UserWorkflow.is_public == true())
-            elif filter_type == "community":
-                query = query.where(
-                    (UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true())
-                )
-            elif filter_type == "verified":
-                query = query.where(UserWorkflow.is_verified == true())
-            else:
-                query = query.where(
-                    (UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true())
-                )
+            query = WorkflowCrudService._apply_scope_filter(query, mid, filter_type)
             if browser_id is not None:
                 query = query.where(UserWorkflow.browser_id == browser_id)
 
@@ -164,7 +181,7 @@ class WorkflowCrudService:
 
     @staticmethod
     async def list_by_user(
-        mid: int,
+        mid: int | None,
         skip: int = 0,
         limit: int = 100,
         filter_type: str = "all",
@@ -176,22 +193,7 @@ class WorkflowCrudService:
 
         async with DatabaseSessionManager.async_session() as session:
             query = select(UserWorkflow)
-            if filter_type == "private":
-                query = query.where(
-                    (UserWorkflow.mid == str(mid)) & (UserWorkflow.is_public == false())
-                )
-            elif filter_type == "public":
-                query = query.where(UserWorkflow.is_public == true())
-            elif filter_type == "community":
-                query = query.where(
-                    (UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true())
-                )
-            elif filter_type == "verified":
-                query = query.where(UserWorkflow.is_verified == true())
-            else:
-                query = query.where(
-                    (UserWorkflow.mid == str(mid)) | (UserWorkflow.is_public == true())
-                )
+            query = WorkflowCrudService._apply_scope_filter(query, mid, filter_type)
             if browser_id is not None:
                 query = query.where(UserWorkflow.browser_id == browser_id)
 

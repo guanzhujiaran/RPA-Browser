@@ -31,6 +31,22 @@ class ElementStateEnum(StrEnumAutoDoc):
     DETACHED = "detached"
 
 
+class WaitMatchEnum(StrEnumAutoDoc):
+    """等待动作的多元素匹配范围
+
+    Playwright 的单元素 API（`locator.wait_for`）默认开启严格模式：选择器命中多个
+    元素会直接抛错。等待的语义是「这一批里有没有满足状态的元素」，因此需要显式声明
+    范围：命中列表容器（一条数据一个节点）时按 `any` 等待，判断「整块是否消失」
+    时按 `all`。
+    """
+
+    ANY = "any"
+    """任一命中元素满足状态即返回"""
+
+    ALL = "all"
+    """全部命中元素满足状态才返回（0 个命中=已消失）"""
+
+
 class ScreenshotTypeEnum(StrEnumAutoDoc):
     """截图格式枚举"""
 

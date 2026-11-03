@@ -12,6 +12,7 @@ from bili_common.deps.auth import (
     Permission,
     LevelPermissions,
     get_auth_info_from_header,
+    get_optional_auth_info_from_header,
 )
 from bili_common.exceptions import (
     NotLoggedInException,
@@ -26,6 +27,7 @@ __all__ = [
     "Permission",
     "LevelPermissions",
     "get_auth_info_from_header",
+    "get_optional_auth_info_from_header",
     "NotLoggedInException",
     "InvalidUIDException",
     "InvalidMidFormatException",

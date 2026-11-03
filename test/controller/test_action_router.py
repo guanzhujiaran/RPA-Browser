@@ -86,6 +86,54 @@ class TestListCompositeActions:
 
 
 @pytest.mark.anyio
+class TestAnonymousCommunityActions:
+    """未登录用户（社区广场游客）只能看到公开动作"""
+
+    async def test_community_list_returns_public_actions(
+        self, anon_client, created_public_action
+    ):
+        response = await anon_client.post(
+            f"{PREFIX}/custom-actions/list",
+            json={"page": 1, "per_page": 10, "filter_type": "community"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS
+        action_ids = [item["action_id"] for item in data["data"]["items"]]
+        assert created_public_action in action_ids
+
+    async def test_all_list_excludes_private_actions_for_anonymous(
+        self, anon_client, created_action, created_public_action
+    ):
+        response = await anon_client.post(
+            f"{PREFIX}/custom-actions/list",
+            json={"page": 1, "per_page": 10, "filter_type": "all"},
+        )
+
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS
+        action_ids = [item["action_id"] for item in data["data"]["items"]]
+        assert created_public_action in action_ids
+        # created_action 是登录用户的私有动作，游客不应看到
+        assert created_action not in action_ids
+        assert all(item["is_public"] for item in data["data"]["items"])
+
+    async def test_private_list_is_empty_for_anonymous(
+        self, anon_client, created_action
+    ):
+        response = await anon_client.post(
+            f"{PREFIX}/custom-actions/list",
+            json={"page": 1, "per_page": 10, "filter_type": "private"},
+        )
+
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS
+        assert data["data"]["total"] == 0
+        assert data["data"]["items"] == []
+
+
+@pytest.mark.anyio
 class TestGetCompositeAction:
     async def test_get_custom_action_after_create(self, client, created_action):
         action_id = created_action
