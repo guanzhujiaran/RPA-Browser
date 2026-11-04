@@ -158,9 +158,24 @@ async def stats_action_logs(
     request: ActionLogStatsRequest = ActionLogStatsRequest(),
     auth: AuthInfo = Depends(get_auth_info_from_header),
 ) -> StandardResponse[ActionLogStatsResponse]:
-    """按 action 聚合统计最近 N 天的执行情况（days 默认 7）"""
-    data = await action_log_crud_svr.stats(auth.mid, request.days)
-    return success_response(ActionLogStatsResponse(**data))
+    """按 action 聚合统计执行情况
+
+    筛选口径与列表接口一致（operation / 批次 / 工作流 / 浏览器 / 来源 / 状态 /
+    结果 / 关键字），`days=0`（默认）表示不限时间，保证概览数字与列表总数对齐。
+    """
+    data = await action_log_crud_svr.stats(
+        auth.mid,
+        days=request.days,
+        action_id=request.action_id,
+        execution_id=request.execution_id,
+        workflow_id=request.workflow_id,
+        browser_id=request.browser_id,
+        source=request.source,
+        status=request.status,
+        success=request.success,
+        keyword=request.keyword,
+    )
+    return success_response(data)
 
 
 # ============ 序列化工具 ============

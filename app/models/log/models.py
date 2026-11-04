@@ -95,10 +95,30 @@ class ActionLogGetRequest(SQLModel):
 
 
 class ActionLogStatsRequest(SQLModel):
-    """日志统计请求"""
+    """日志统计请求
+
+    筛选口径与列表接口（ActionLogListRequest）保持一致，统计才能与列表总数对齐。
+    """
 
     days: int = Field(
-        default=7, ge=1, le=365, description="统计最近多少天（含今天，默认 7）"
+        default=0,
+        ge=0,
+        le=365,
+        description="统计最近多少天（含今天）；0 / 不传表示不限时间，与列表默认口径一致",
+    )
+    action_id: str | None = Field(default=None, description="按操作ID筛选")
+    execution_id: str | None = Field(default=None, description="按执行批次ID筛选")
+    workflow_id: str | None = Field(default=None, description="按工作流ID筛选")
+    browser_id: str | None = Field(default=None, description="按浏览器ID筛选")
+    source: ActionLogSourceEnum | None = Field(
+        default=None, description="按触发来源筛选"
+    )
+    status: ActionLogStatusEnum | None = Field(
+        default=None, description="按执行状态筛选"
+    )
+    success: bool | None = Field(default=None, description="按是否成功筛选")
+    keyword: str | None = Field(
+        default=None, description="关键字（匹配操作名/操作ID/错误信息）"
     )
 
 
@@ -145,6 +165,17 @@ class ActionLogClearRequest(SQLModel):
     )
 
 
+class ActionLogStatsItem(SQLModel):
+    """按操作聚合的统计条目"""
+
+    action_id: str
+    action_name: str = ""
+    total: int
+    success: int
+    failed: int
+    avg_execution_time: float
+
+
 class ActionLogStatsResponse(SQLModel):
     """日志统计响应"""
 
@@ -152,7 +183,7 @@ class ActionLogStatsResponse(SQLModel):
     total: int
     success: int
     failed: int
-    items: List[Dict[str, Any]] = Field(default_factory=list)
+    items: List[ActionLogStatsItem] = Field(default_factory=list)
 
 
 __all__ = [

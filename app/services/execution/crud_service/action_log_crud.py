@@ -10,9 +10,10 @@
 """
 
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import List
 
 from loguru import logger
+from sqlalchemy import case
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.orm import load_only
 from sqlmodel import func, select
@@ -23,6 +24,7 @@ from app.models.database.log.models import (
     ActionLogSourceEnum,
     ActionLogStatusEnum,
 )
+from app.models.log.models import ActionLogStatsItem, ActionLogStatsResponse
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -261,53 +263,89 @@ class ActionLogCrudService:
             await session.commit()
             return result.rowcount or 0
 
-    @staticmethod
-    async def stats(mid: int | str, days: int = 7) -> Dict[str, Any]:
-        """按 action 聚合统计最近 N 天的执行情况"""
-        since = datetime.now() - timedelta(days=max(days, 1))
+    @classmethod
+    async def stats(
+        cls,
+        mid: int | str,
+        *,
+        days: int = 0,
+        action_id: str | None = None,
+        execution_id: str | None = None,
+        workflow_id: str | None = None,
+        browser_id: str | None = None,
+        source: ActionLogSourceEnum | None = None,
+        status: ActionLogStatusEnum | None = None,
+        success: bool | None = None,
+        keyword: str | None = None,
+    ) -> ActionLogStatsResponse:
+        """按 action 聚合统计执行情况
+
+        筛选口径必须与列表接口一致（同一组 `_build_filters` 条件），否则顶部概览
+        会和列表总数对不上 —— 例如按批次下钻时统计仍吐全量数据。
+        `days<=0` 表示不限时间（列表默认也不限时间）。
+        """
+        conditions = cls._build_filters(
+            mid,
+            action_id=action_id,
+            execution_id=execution_id,
+            workflow_id=workflow_id,
+            browser_id=browser_id,
+            source=source,
+            status=status,
+            success=success,
+            keyword=keyword,
+            execution_id_prefix=True,
+        )
+        if days > 0:
+            conditions.append(
+                ActionLogRecord.started_at >= datetime.now() - timedelta(days=days)
+            )
         async with DatabaseSessionManager.async_session() as session:
             result = await session.exec(
                 select(
                     ActionLogRecord.action_id,
                     ActionLogRecord.action_name,
                     func.count(ActionLogRecord.id),
-                    func.sum(ActionLogRecord.success),
+                    # ⚠️ 不能用 func.sum(success)：SQLAlchemy 会把聚合结果的类型
+                    # 推导成入参列的 Boolean，MySQL 方言再按 Boolean 处理返回值，
+                    # 非零和会被折成 True（int 化后恒为 1），表现为「每个 action 成功 1 条」。
+                    # 用 case 显式转成整数，聚合类型才是 INTEGER。
+                    func.sum(
+                        case((ActionLogRecord.success.is_(True), 1), else_=0)
+                    ),
                     func.avg(ActionLogRecord.execution_time),
                 )
-                .where(
-                    ActionLogRecord.mid == str(mid),
-                    ActionLogRecord.started_at >= since,
-                )
+                .where(*conditions)
                 .group_by(ActionLogRecord.action_id, ActionLogRecord.action_name)
                 .order_by(func.count(ActionLogRecord.id).desc())
             )
             rows = result.all()
 
-        items = []
+        items: list[ActionLogStatsItem] = []
         total, total_success = 0, 0
-        for action_id, action_name, cnt, success_cnt, avg_time in rows:
-            cnt = int(cnt or 0)
-            success_cnt = int(success_cnt or 0)
-            total += cnt
-            total_success += success_cnt
+        for row_action_id, action_name, cnt, success_cnt, avg_time in rows:
+            count_value = int(cnt or 0)
+            success_value = int(success_cnt or 0)
+            total += count_value
+            total_success += success_value
             items.append(
-                {
-                    "action_id": action_id,
-                    "action_name": action_name or "",
-                    "total": cnt,
-                    "success": success_cnt,
-                    "failed": cnt - success_cnt,
-                    "avg_execution_time": round(float(avg_time or 0.0), 4),
-                }
+                ActionLogStatsItem(
+                    action_id=row_action_id,
+                    action_name=action_name or "",
+                    total=count_value,
+                    success=success_value,
+                    failed=count_value - success_value,
+                    avg_execution_time=round(float(avg_time or 0.0), 4),
+                )
             )
 
-        return {
-            "days": days,
-            "total": total,
-            "success": total_success,
-            "failed": total - total_success,
-            "items": items,
-        }
+        return ActionLogStatsResponse(
+            days=days,
+            total=total,
+            success=total_success,
+            failed=total - total_success,
+            items=items,
+        )
 
     @staticmethod
     async def cleanup_expired() -> int:
