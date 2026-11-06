@@ -139,6 +139,11 @@ async def notify_run_finished(event: WorkflowRunStatusChanged) -> None:
             "tolerated": summary.tolerated_count,
             "tolerated_samples": summary.tolerated_samples,
             "loop_summaries": summary.loop_summaries,
+            # 资源级结果（业务成败的主判据）
+            "resource_total": summary.resource_total,
+            "resource_success": summary.resource_success,
+            "resource_failed": summary.resource_failed,
+            "resource_skipped": summary.resource_skipped,
         },
         error_message=summary.error_message,
         duration_ms=summary.duration_ms,

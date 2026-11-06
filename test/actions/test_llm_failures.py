@@ -17,8 +17,10 @@ import asyncio
 import pytest
 
 from app.services.execution.actions.llm import (
+    LLMAction,
     _LLMFailure,
     _classify_llm_error,
+    _cooling_state,
     _endpoint_of,
     _failure_details,
     _failure_logs,
@@ -223,3 +225,53 @@ class TestRememberFailure:
         assert len(logs) == 2
         assert "m@a#1（429 限流）" in logs[0]
         assert "m@b#2（超时）" in logs[1]
+
+
+class TestModelCooldown:
+    """模型健康冷却：确定性失败本轮内直接跳过，瞬时错误不跳过
+
+    背景（2026-11-06 run 4e7b37d）：主模型当日额度耗尽 + 备用模型欠费（402），
+    75 次调用里 60 次失败、累计 1730s（占整轮 27%）。这些错误在几分钟内不会自愈，
+    每条数据都重试一遍纯属浪费。
+    """
+
+    def test_402_classified_as_balance(self) -> None:
+        assert _classify_llm_error(_HttpError(402, "insufficient balance")) == "402 余额不足"
+
+    def test_quota_429_classified_separately_from_rate_limit(self) -> None:
+        """「当天额度用尽」与「瞬时限流」必须区分：前者要冷却，后者只回退。"""
+        exc = _HttpError(429, "Rate limit exceeded: free-models-per-day")
+        assert _classify_llm_error(exc) == "429 额度耗尽"
+        assert _classify_llm_error(_HttpError(429, "Rate limit reached")) == "429 限流"
+
+    async def test_fatal_error_puts_model_into_cooldown(self) -> None:
+        failures: list[_LLMFailure] = []
+        wrapped = _remember_failure(
+            "m1",
+            _FailingRunnable(_HttpError(402, "insufficient balance")),
+            failures,
+            endpoint="api.example.com",
+        )
+        with pytest.raises(_HttpError):
+            await wrapped.ainvoke([])
+
+        assert _cooling_state("m1", "api.example.com") is not None
+        active, cooling = LLMAction._split_by_health(
+            [("m1", "https://api.example.com/v1", "k"), ("m2", "https://b.com/v1", "k")]
+        )
+        assert [item[0] for item in active] == ["m2"]
+        assert cooling and "402 余额不足" in cooling[0]
+
+    async def test_transient_error_does_not_cool_down(self) -> None:
+        """限流 / 超时 / 连接失败走回退链即可，冷却会把可用模型锁死。"""
+        for exc in (
+            _HttpError(429, "Rate limit reached"),
+            asyncio.TimeoutError(),
+            RuntimeError("Connection error."),
+        ):
+            wrapped = _remember_failure(
+                "m1", _FailingRunnable(exc), [], endpoint="api.example.com"
+            )
+            with pytest.raises(BaseException):
+                await wrapped.ainvoke([])
+            assert _cooling_state("m1", "api.example.com") is None

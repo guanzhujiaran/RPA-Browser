@@ -60,6 +60,15 @@ class WorkflowRunSummary(SQLModel):
         default_factory=list,
         description="已结束循环的聚合（每实例一条：轮次 + 体内动作成败）",
     )
+    # ── 资源级结果：业务工作流的**主要**成败指标 ──
+    # 步骤成功只代表"动作跑完了"，真正代表业务成败的是资源记录（success/failed）。
+    # total=0 表示该工作流没有资源记录（纯步骤型），此时运行结论退回步骤级判定。
+    resource_total: int = Field(default=0, description="本次运行处理的资源总数")
+    resource_success: int = Field(default=0, description="资源处理成功数")
+    resource_failed: int = Field(default=0, description="资源处理失败数（下一轮重试）")
+    resource_skipped: int = Field(
+        default=0, description="资源终态跳过数（如 404，不算失败）"
+    )
 
 
 class WorkflowRunStatusChanged(SQLModel):

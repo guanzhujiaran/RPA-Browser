@@ -23,6 +23,7 @@ from app.models.execution.action_param_models import (
     BUILTIN_ACTION_PARAMS_MAP,
     ClickParams,
     CompositeParams,
+    ElementStateParams,
     FetchExternalDataParams,
     GetTextParams,
     GetWindowParams,
@@ -40,12 +41,16 @@ from app.models.execution.action_param_models import (
     ParallelParams,
     ParallelBranch,
     PickLineParams,
+    PressParams,
     PrintParams,
     RandomPickParams,
     ScreenshotParams,
     ScrollParams,
+    SelectOptionParams,
     ShuffleListParams,
     SortListParams,
+    WaitForResponseParams,
+    WaitForUrlParams,
     WaitParams,
 )
 from app.models.execution.builtin_action_types import BuiltinActionType, OnErrorEnum
@@ -275,6 +280,44 @@ class ParallelWorkflowStep(BaseWorkflowStep[ParallelParams]):
     action_type: Literal[BuiltinActionType.PARALLEL] = BuiltinActionType.PARALLEL  # type: ignore[assignment]
 
 
+class PressWorkflowStep(BaseWorkflowStep[PressParams]):
+    """按键步骤"""
+
+    action_type: Literal[BuiltinActionType.PRESS] = BuiltinActionType.PRESS  # type: ignore[assignment]
+
+
+class WaitForResponseWorkflowStep(BaseWorkflowStep[WaitForResponseParams]):
+    """等待 HTTP 响应步骤"""
+
+    action_type: Literal[BuiltinActionType.WAIT_FOR_RESPONSE] = (
+        BuiltinActionType.WAIT_FOR_RESPONSE
+    )  # type: ignore[assignment]
+
+
+class ElementStateWorkflowStep(BaseWorkflowStep[ElementStateParams]):
+    """读取元素状态步骤"""
+
+    action_type: Literal[BuiltinActionType.ELEMENT_STATE] = (
+        BuiltinActionType.ELEMENT_STATE
+    )  # type: ignore[assignment]
+
+
+class SelectOptionWorkflowStep(BaseWorkflowStep[SelectOptionParams]):
+    """下拉选择步骤"""
+
+    action_type: Literal[BuiltinActionType.SELECT_OPTION] = (
+        BuiltinActionType.SELECT_OPTION
+    )  # type: ignore[assignment]
+
+
+class WaitForUrlWorkflowStep(BaseWorkflowStep[WaitForUrlParams]):
+    """等待 URL 步骤"""
+
+    action_type: Literal[BuiltinActionType.WAIT_FOR_URL] = (
+        BuiltinActionType.WAIT_FOR_URL
+    )  # type: ignore[assignment]
+
+
 def _ensure_action_type(v: Any) -> Any:
     """若 dict 缺少 action_type，从 action_id 自动填充，递归处理 children。"""
     if isinstance(v, dict):
@@ -374,6 +417,11 @@ WorkflowStep = (
     | OpenPageWorkflowStep
     | ClosePageWorkflowStep
     | ParallelWorkflowStep
+    | PressWorkflowStep
+    | WaitForResponseWorkflowStep
+    | ElementStateWorkflowStep
+    | SelectOptionWorkflowStep
+    | WaitForUrlWorkflowStep
 )
 
 # TypeAdapter 用于从 dict 反序列化
@@ -407,6 +455,11 @@ _WORKFLOW_STEP_CLASS_MAP: dict[BuiltinActionType, type[BaseWorkflowStep[Any]]] =
     BuiltinActionType.OPEN_PAGE: OpenPageWorkflowStep,
     BuiltinActionType.CLOSE_PAGE: ClosePageWorkflowStep,
     BuiltinActionType.PARALLEL: ParallelWorkflowStep,
+    BuiltinActionType.PRESS: PressWorkflowStep,
+    BuiltinActionType.WAIT_FOR_RESPONSE: WaitForResponseWorkflowStep,
+    BuiltinActionType.ELEMENT_STATE: ElementStateWorkflowStep,
+    BuiltinActionType.SELECT_OPTION: SelectOptionWorkflowStep,
+    BuiltinActionType.WAIT_FOR_URL: WaitForUrlWorkflowStep,
 }
 
 
@@ -468,6 +521,7 @@ __all__ = [
     "BiliReserveWorkflowStep",
     "ClickWorkflowStep",
     "CompositeWorkflowStep",
+    "ElementStateWorkflowStep",
     "FetchExternalDataWorkflowStep",
     "GetTextWorkflowStep",
     "GetWindowWorkflowStep",
@@ -480,6 +534,10 @@ __all__ = [
     "OpenPageWorkflowStep",
     "ClosePageWorkflowStep",
     "ParallelWorkflowStep",
+    "PressWorkflowStep",
+    "SelectOptionWorkflowStep",
+    "WaitForResponseWorkflowStep",
+    "WaitForUrlWorkflowStep",
     "NavigateWorkflowStep",
     "NewPageWorkflowStep",
     "PickLineWorkflowStep",

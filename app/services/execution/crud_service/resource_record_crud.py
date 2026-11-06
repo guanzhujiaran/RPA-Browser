@@ -33,6 +33,7 @@ from app.models.database.workflow.resource_record import (
     ResourceProcessStatus,
     WorkflowResourceRecord,
 )
+from app.models.execution.resource_stats import RunResourceStats
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -83,6 +84,39 @@ class ResourceRecordService:
         async with DatabaseSessionManager.async_session() as session:
             rows = await session.execute(stmt)
             return {r[0] for r in rows.all()}
+
+    @staticmethod
+    async def count_by_execution(execution_id: str) -> RunResourceStats:
+        """按运行批次聚合资源处理结果（运行结论的主要判据）
+
+        一次工作流运行的所有资源记录都以 `run_id` 作为 `execution_id` 写入，
+        因此这里按该字段做一次 GROUP BY 即可拿到本次运行的成功/失败/跳过数。
+        注意：只统计本次运行**真正处理过**的资源（upsert 会刷新 execution_id），
+        未被捞起的旧记录不会混进来。
+
+        Args:
+            execution_id: 运行批次 id（工作流运行场景下等于 WorkflowRunRecord.run_id）
+        """
+        # 多列 select 走 `session.exec`（SQLModel 的 AsyncSession.execute 只接受
+        # 单实体查询并会告警）；`exec` 对 (status, count) 这类元组行同样返回 Row。
+        stmt = (
+            select(
+                WorkflowResourceRecord.status,
+                sa_func.count(),
+            )
+            .where(WorkflowResourceRecord.execution_id == str(execution_id))
+            .group_by(WorkflowResourceRecord.status)
+        )
+        async with DatabaseSessionManager.async_session() as session:
+            rows = await session.exec(stmt)  # type: ignore[attr-defined]
+            counts = {str(status): int(count) for status, count in rows.all()}
+
+        return RunResourceStats(
+            total=sum(counts.values()),
+            success=counts.get(str(ResourceProcessStatus.SUCCESS), 0),
+            failed=counts.get(str(ResourceProcessStatus.FAILED), 0),
+            skipped=counts.get(str(ResourceProcessStatus.SKIPPED), 0),
+        )
 
     @staticmethod
     async def filter_pending(

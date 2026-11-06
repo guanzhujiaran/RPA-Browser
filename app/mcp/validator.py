@@ -254,7 +254,8 @@ def _hint_for(raw: object, error_type: str) -> str:
     }:
         return (
             f"action_type={action_type!r} 不是已注册的动作类型；内置动作用内置名"
-            "（click/input/navigate/wait/get_text/loop/if_else/print/...），"
+            "（click/input/press/navigate/wait/wait_for_url/wait_for_response/"
+            "element_state/select_option/get_text/loop/if_else/print/...），"
             f"复合动作用 composite（action_id={action_id!r} 为雪花 int）"
         )
     if error_type == "missing":

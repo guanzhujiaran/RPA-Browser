@@ -25,11 +25,16 @@ from app.models.database.workflow.resource_record import ResourceProcessStatus
 from app.models.execution.condition_models import ConditionRule
 from app.models.execution.enums import (
     ElementStateEnum,
+    ElementStateKindEnum,
     HttpBodyTypeEnum,
     HttpMethodEnum,
     KeyboardModifierEnum,
+    MissingPolicyEnum,
     MouseButtonEnum,
+    NavigateModeEnum,
     ScreenshotTypeEnum,
+    SelectOptionByEnum,
+    UrlPatternTypeEnum,
     WaitMatchEnum,
     WaitUntilEnum,
 )
@@ -185,18 +190,51 @@ class InputParams(BaseActionParams):
     selector: str = Field(max_length=500, description="用于定位输入框元素的选择器")
     value: str = Field(max_length=10000, description="要输入的文本内容")
     force: bool = Field(default=False, description="是否绕过可操作性检查，默认为 false")
+    trim: bool = Field(
+        default=False,
+        description=(
+            "输入前是否去除文本首尾空白（含换行/制表符）。"
+            "用于评论、搜索词等「首尾空白无意义」的场景："
+            "部分站点（如 B 站评论框）在文本以换行开头时会判定内容为空并拒绝提交，"
+            "因此需要先规范化再输入。默认 false（保持旧行为）"
+        ),
+    )
 
 
 class NavigateParams(BaseActionParams):
-    """导航操作参数"""
+    """导航操作参数
 
-    url: str = Field(max_length=2048, description="要导航到的 URL 地址")
+    ``mode`` 决定导航方式（见 ``NavigateModeEnum``）：
+
+    - ``goto``：跳转到 ``url``，``url`` 必填，``wait_until`` 生效；
+    - ``reload`` / ``back`` / ``forward``：复用当前页面的历史记录，``url`` 与
+      ``wait_until`` 都会被忽略（Playwright 对应接口不接受它们）。
+
+    历史 JSON 只写 ``url`` 时等价于 ``mode=goto``，校验与行为均保持不变。
+    """
+
+    mode: NavigateModeEnum = Field(
+        default=NavigateModeEnum.GOTO,
+        description="导航方式：goto=跳转 url；reload=刷新；back=后退；forward=前进",
+    )
+    url: str | None = Field(
+        default=None,
+        max_length=2048,
+        description="要导航到的 URL 地址（仅 mode=goto 必填，其余模式忽略）",
+    )
     wait_until: WaitUntilEnum = Field(
-        default=WaitUntilEnum.LOAD, description="导航成功前的等待条件"
+        default=WaitUntilEnum.LOAD, description="导航成功前的等待条件（仅 mode=goto 生效）"
     )
     timeout: float = Field(
         default=30000, ge=1000, le=300000, description="导航操作的超时时间（毫秒）"
     )
+
+    @model_validator(mode="after")
+    def check_url_required_for_goto(self) -> "NavigateParams":
+        """mode=goto 时必须提供非空 url；其余模式不校验（url 会被忽略）。"""
+        if self.mode is NavigateModeEnum.GOTO and not (self.url or "").strip():
+            raise ValueError("mode=goto 时必须提供 url")
+        return self
 
 
 class NewPageParams(BaseActionParams):
@@ -282,6 +320,224 @@ class HoverParams(MouseActionParams):
     """悬停操作参数 - 对应 locator.hover()"""
 
     pass
+
+
+# region 键盘 / 元素状态 / 下拉 / URL 与响应级等待（第一批 + 第二批内置动作）
+# 这些参数模型只描述「机制」（按键、读状态、选择、等待），站点差异一律由动作 JSON 表达。
+
+
+class PressParams(BaseActionParams):
+    """按键操作参数 - 对应 locator.press() 或 page.keyboard.press()
+
+    ``selector`` 为空时把按键发给当前页面焦点（全局按键）；提供时先由 Playwright
+    聚焦该元素再按键（``Locator.press`` 内部会聚焦，因此「先 focus 再按」是一步）。
+    """
+
+    selector: str = Field(
+        default="",
+        max_length=500,
+        description="用于定位要按键的元素的选择器；为空时把按键发给当前焦点",
+    )
+    key: str = Field(
+        min_length=1,
+        max_length=50,
+        description=(
+            "按键名，Playwright 语法：单键（Enter / Escape / Tab / ArrowDown）"
+            "或组合键（Control+A / Shift+Enter）"
+        ),
+    )
+    modifiers: list[KeyboardModifierEnum] | None = Field(
+        default=None, description="要按下的修饰键 (Alt/Control/Meta/Shift)，与 key 组合使用"
+    )
+
+    output_variables: ClassVar[list[VariableSpec]] = [
+        VariableSpec(name="pressed", type="boolean", description="是否成功按下按键"),
+    ]
+
+
+class ElementStateParams(SelectorActionParams):
+    """元素状态读取参数（探针动作）
+
+    ``kind`` 用枚举分流，输出固定为单个变量 ``state_value``：
+
+    - ``attribute`` → str（取不到属性时为空串），需同时提供 ``attribute``；
+    - ``input_value`` → str；
+    - ``count`` → int；
+    - ``visible`` / ``enabled`` → bool。
+
+    ``missing`` 决定元素不存在时的语义：``ignore``（默认）按空值成功返回，
+    便于当探针反复读取；``fail`` 直接失败，交由 retry / on_error 接管。
+
+    ``timeout`` 是「等待元素出现（attached）」的最大时间，``0`` 表示不等待、
+    立即读取（探针模式的常用取值）。
+    """
+
+    selector: str = Field(
+        min_length=1, max_length=500, description="用于定位元素的选择器"
+    )
+    kind: ElementStateKindEnum = Field(
+        default=ElementStateKindEnum.VISIBLE,
+        description="读取类型：attribute/count/visible/enabled/input_value",
+    )
+    attribute: str = Field(
+        default="",
+        max_length=200,
+        description="要读取的 HTML 属性名（仅在 kind=attribute 时必填）",
+    )
+    missing: MissingPolicyEnum = Field(
+        default=MissingPolicyEnum.IGNORE,
+        description="元素不存在时：ignore=按空值成功返回（默认），fail=直接失败",
+    )
+    timeout: float = Field(
+        default=0,
+        ge=0,
+        le=300000,
+        description=(
+            "等待元素出现（attached）的最大时间（毫秒）；"
+            "0=不等待立即读取（默认，探针模式）"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_attribute_required(self) -> "ElementStateParams":
+        """kind=attribute 时必须提供属性名，否则读不到任何有意义的值。"""
+        if self.kind is ElementStateKindEnum.ATTRIBUTE and not self.attribute.strip():
+            raise ValueError("kind=attribute 时必须提供 attribute")
+        return self
+
+    output_variables: ClassVar[list[VariableSpec]] = [
+        VariableSpec(
+            name="state_value",
+            description=(
+                "读取结果：attribute/input_value 为字符串，count 为整数，"
+                "visible/enabled 为布尔；元素不存在且 missing=ignore 时为空值"
+            ),
+        ),
+    ]
+
+
+class SelectOptionParams(SelectorActionParams):
+    """原生下拉选择参数 - 对应 locator.select_option()
+
+    ``by`` 决定 ``values`` 的解释方式：value / label / index。
+    只支持原生 ``<select>``；自定义下拉（div 模拟）应使用 click 动作。
+    """
+
+    selector: str = Field(
+        min_length=1, max_length=500, description="用于定位 select 元素的选择器"
+    )
+    by: SelectOptionByEnum = Field(
+        default=SelectOptionByEnum.VALUE,
+        description="values 的解释方式：value=选项值，label=显示文本，index=从 0 开始的下标",
+    )
+    values: list[str] = Field(
+        min_length=1,
+        max_length=50,
+        description="要选中的目标列表，至少 1 个；多个时按多选下拉处理",
+    )
+
+    @field_validator("values")
+    @classmethod
+    def check_values_not_blank(cls, v: list[str]) -> list[str]:
+        """空串/纯空白没有任何选择意义，提前拦掉，避免 Playwright 报错难以定位。"""
+        if any(not str(item).strip() for item in v):
+            raise ValueError("values 中不允许出现空字符串")
+        return v
+
+    output_variables: ClassVar[list[VariableSpec]] = [
+        VariableSpec(name="selected", type="array", description="实际选中的选项 value 列表"),
+        VariableSpec(name="selected_count", type="number", description="实际选中的选项数量"),
+    ]
+
+
+class WaitForResponseParams(BaseActionParams):
+    """等待 HTTP 响应参数 - 对应 page.expect_response()
+
+    ⚠️ 与 ``wait`` 的语义**相反**：这里超时即**失败**（等不到响应说明请求没发出/没回来，
+    继续往下走只会拿到过期状态），由 on_error / retry 接管。
+
+    匹配口径：URL（glob 或 regex）命中即返回，**先命中先返回**；同一 URL 的多次请求
+    （轮询、重试）无法区分先后，需要更精确时应把 ``url_pattern`` 写得更窄。
+
+    **必须优先使用 ``trigger_selector``**：Playwright 的响应监听只对「注册之后到达」的
+    响应生效，而 ``click`` 本身是重的（要等元素可点、滚动稳定、动画结束，实测动辄 2~3s），
+    请求往往在 ``click`` 返回前就已回包。若把「点击」与「等响应」拆成两个步骤，
+    监听注册时响应早已过去，只会等满 timeout。为此本动作支持在**等待窗口内**执行一次
+    点击：先注册监听，再点 ``trigger_selector``，最后等响应，从根上消除这个竞态。
+
+    ``trigger_selector`` 留空时退化为「纯等待」（兼容旧用法），只适用于请求由
+    **其它异步来源**触发（如页面轮询、定时刷新）的场景。
+    """
+
+    url_pattern: str = Field(
+        min_length=1,
+        max_length=2048,
+        description="响应 URL 的匹配式：glob 通配符或正则（由 pattern_type 决定）",
+    )
+    pattern_type: UrlPatternTypeEnum = Field(
+        default=UrlPatternTypeEnum.GLOB, description="匹配方式：glob=通配符，regex=正则"
+    )
+    method: HttpMethodEnum | None = Field(
+        default=None,
+        description="只接受该 HTTP 方法的响应；为空时不限制方法",
+    )
+    include_body: bool = Field(
+        default=False,
+        description="是否读取响应体文本（默认不读，避免大响应拖慢与内存占用）",
+    )
+    trigger_selector: str = Field(
+        default="",
+        max_length=500,
+        description=(
+            "在等待窗口内先点击的元素选择器（推荐：与等待合成一步，避免点击耗时"
+            "吞掉响应导致监听注册过晚）；留空则只等待、不触发"
+        ),
+    )
+    trigger_timeout: float = Field(
+        default=15000,
+        ge=1000,
+        le=300000,
+        description="trigger_selector 点击操作的超时时间（毫秒），仅在提供选择器时生效",
+    )
+    timeout: float = Field(
+        default=30000, ge=1000, le=300000, description="等待响应的超时时间（毫秒）"
+    )
+
+    output_variables: ClassVar[list[VariableSpec]] = [
+        VariableSpec(name="response_status", type="number", description="响应状态码"),
+        VariableSpec(name="response_ok", type="boolean", description="状态码是否为 2xx"),
+        VariableSpec(name="response_url", description="命中的响应 URL"),
+        VariableSpec(
+            name="response_text",
+            description="响应体文本（include_body=true 时提供，超长截断到 20000 字符）",
+        ),
+    ]
+
+
+class WaitForUrlParams(BaseActionParams):
+    """等待 URL 参数 - 对应 page.wait_for_url()
+
+    超时即**失败**（URL 没变成预期值说明页面没走到该步骤，继续执行只会操作错页面）。
+    """
+
+    url_pattern: str = Field(
+        min_length=1,
+        max_length=2048,
+        description="目标 URL 的匹配式：glob 通配符或正则（由 pattern_type 决定）",
+    )
+    pattern_type: UrlPatternTypeEnum = Field(
+        default=UrlPatternTypeEnum.GLOB, description="匹配方式：glob=通配符，regex=正则"
+    )
+    timeout: float = Field(
+        default=30000, ge=1000, le=300000, description="等待 URL 的超时时间（毫秒）"
+    )
+
+    output_variables: ClassVar[list[VariableSpec]] = [
+        VariableSpec(name="matched_url", description="命中后的当前页面 URL"),
+    ]
+
+
+# endregion
 
 
 class GetTextParams(SelectorActionParams):
@@ -458,6 +714,23 @@ class LLMParams(BaseActionParams):
     )
     timeout: float = Field(
         default=120000, ge=1000, le=600000, description="请求超时时间(毫秒)"
+    )
+    strip_whitespace: bool = Field(
+        default=True,
+        description=(
+            "文本模式下是否去除输出内容首尾空白。"
+            "模型经常在正文前后多输出换行/空格，直接写进变量会污染后续输入"
+            "（例如评论以换行开头会被站点判为空内容而拒绝提交）"
+        ),
+    )
+    max_content_length: int | None = Field(
+        default=None,
+        ge=1,
+        le=100000,
+        description=(
+            "文本模式下输出内容的最大字符数；超出视为调用失败（交由 on_error 降级），"
+            "用于拦截模型把思维链/说明书整段当答案输出的情况。None=不限制"
+        ),
     )
     # 结构化输出
     response_schema: dict | None = Field(
@@ -761,7 +1034,10 @@ class PrintParams(BaseActionParams):
 
     message: str = Field(
         default="",
-        max_length=10000,
+        # 调试打印经常拼长文本（如整段评论列表 / LLM 原始输出），
+        # 10000 上限会把「打印」这一步变成校验失败，反而掩盖真正的业务问题；
+        # 实际落库长度由日志的 max_payload_length 控制，这里只做防失控兜底。
+        max_length=50000,
         description="要打印的内容（支持 {{var}} 变量替换），执行时仅打印不执行其他操作",
     )
     dump_variables: bool = Field(
@@ -1220,6 +1496,11 @@ AllActionParams = (
     | OpenPageParams
     | ClosePageParams
     | ParallelParams
+    | PressParams
+    | WaitForResponseParams
+    | ElementStateParams
+    | SelectOptionParams
+    | WaitForUrlParams
 )
 
 # endregion
@@ -1259,4 +1540,9 @@ BUILTIN_ACTION_PARAMS_MAP: dict[str, Type[AllActionParams]] = {
     "open_page": OpenPageParams,
     "close_page": ClosePageParams,
     "parallel": ParallelParams,
+    "press": PressParams,
+    "wait_for_response": WaitForResponseParams,
+    "element_state": ElementStateParams,
+    "select_option": SelectOptionParams,
+    "wait_for_url": WaitForUrlParams,
 }

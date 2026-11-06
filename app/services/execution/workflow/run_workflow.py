@@ -30,6 +30,7 @@ from app.models.database.workflow.models import (
     WorkflowRunTriggerEnum,
 )
 from app.models.execution.request_params import WorkflowExecutionRequest
+from app.models.execution.resource_stats import RunResourceStats
 from app.models.runtime.workflow_progress import (
     LoopRunSummary,
     WorkflowRunProgressData,
@@ -37,6 +38,9 @@ from app.models.runtime.workflow_progress import (
 )
 from app.services.execution.cancellation import cancellation_registry
 from app.services.execution.crud_service import workflow_run_crud_svr
+from app.services.execution.crud_service.resource_record_crud import (
+    ResourceRecordService,
+)
 from app.services.execution.run_events import WorkflowRunSummary
 from app.services.execution.run_tasks import workflow_run_tasks
 from app.services.RPA_browser.session.live_service import live_service
@@ -59,6 +63,95 @@ from app.services.execution.workflow.precheck import (
 from app.services.execution.workflow_progress import WorkflowRunProgressReporter
 
 
+def _resolve_run_counts(
+    *, results_data: list[dict[str, Any]], progress_success: int, progress_failed: int
+) -> tuple[int, int, int]:
+    """汇总运行结束时的步骤计数，返回 (成功数, 失败数, 致命失败数)。
+
+    **不要用 results_data 的条数去加进度计数**：两边统计的是同一批顶层步骤，
+    相加会翻倍（历史 run 记录 `total=18 / success=36` 即由此而来，通知文案也
+    跟着写成「成功 36 / 失败 0（共 18 步）」）。
+
+    - 成功 / 失败：以进度上报器为准（它是每个顶层步骤的唯一终态来源，
+      断点恢复时已带上继承值）；
+    - 致命失败：只看本次返回里「未被 on_error=continue 标记 tolerated」的失败，
+      用于决定运行结论（重试耗尽 / on_error=stop / 未捕获异常都属于这一类）。
+      进度计数里混着被容忍的失败，不能直接拿来判结论。
+    """
+    fatal = len(
+        [
+            r
+            for r in results_data
+            if not r.get("success") and not r.get("tolerated")
+        ]
+    )
+    return progress_success, progress_failed, fatal
+
+
+def _build_resource_failure_message(
+    stats: RunResourceStats, threshold: int
+) -> str:
+    """资源级失败文案（运行结论的主判据）
+
+    步骤全绿但资源失败，是业务工作流最常见的「假成功」；文案必须把
+    「成功/失败/跳过」三个口径都写出来，并说明失败会被下一轮重试。
+    """
+    return (
+        f"{stats.describe()}，其中 {stats.failed} 条资源处理失败"
+        f"（阈值 {threshold}），判定为失败；失败资源下一轮会被重新捞起重试"
+    )
+
+
+async def _collect_resource_stats(run_id: str) -> RunResourceStats:
+    """读取本次运行的资源记录统计
+
+    统计失败绝不能让收口流程异常（否则运行永远停在 RUNNING），
+    查询异常时退化为空统计，运行结论回到步骤级判定。
+    """
+    try:
+        return await ResourceRecordService.count_by_execution(run_id)
+    except Exception as exc:  # noqa: BLE001 - 统计失败降级为无资源数据
+        logger.warning(
+            f"[WorkflowRunner] 资源统计失败，退回步骤级判定: run={run_id}, {exc}"
+        )
+        return RunResourceStats()
+
+
+def _should_trip_tolerated_breaker(
+    *,
+    tolerated_count: int,
+    threshold: int,
+    signature_count: int,
+    loop_summaries: list[LoopRunSummary],
+    max_ratio: float,
+) -> tuple[bool, float]:
+    """容错熔断是否成立（返回 (是否判失败, 循环体内失败占比)）。
+
+    旧口径只看「容忍失败绝对次数」：批量循环里同一处降级（如 LLM 额度耗尽→
+    回抄评论）会在每条数据上重复一次，200 条数据就是 200 次，必然误判
+    （2026-11-06 run 4e7b37d：62 成功 / 13 失败被判成运行失败）。
+
+    现在的口径（两者取其一即熔断）：
+    1. **不同错误类型数**达阈值——说明是多处能力同时坏了，必须提醒；
+    2. **循环体内失败占比**超 `max_ratio`——说明是「大面积失败」，仍然要拦。
+    没有循环的流程（body_total=0）保持旧语义（达阈值即判失败），避免放宽过度。
+    """
+    if threshold <= 0 or tolerated_count < threshold:
+        return False, 0.0
+
+    body_total = sum(s.body_success + s.body_failed for s in loop_summaries)
+    if body_total <= 0:
+        # 无循环聚合：沿用旧行为（占比按 100% 计），不因缺少统计而放宽
+        return True, 1.0
+
+    failure_ratio = tolerated_count / body_total
+    if max_ratio > 0 and failure_ratio < max_ratio:
+        # 占比不高时，只有「问题种类足够多」才值得判失败
+        if signature_count < threshold:
+            return False, failure_ratio
+    return True, failure_ratio
+
+
 def _build_tolerated_breaker_message(
     *,
     success_count: int,
@@ -67,6 +160,8 @@ def _build_tolerated_breaker_message(
     threshold: int,
     loop_summaries: list[LoopRunSummary],
     samples: list[str],
+    failure_ratio: float | None = None,
+    signature_count: int | None = None,
 ) -> str:
     """容错熔断的失败原因文案（步骤级 + 循环级全量上下文，见计划书 §D4）。
 
@@ -78,11 +173,19 @@ def _build_tolerated_breaker_message(
     loop_part = render_loop_summaries(loop_summaries)
     if loop_part:
         loop_part = f"；{loop_part}"
+    # 判失败依据（占比 / 不同错误类型数）：只在调用方传入时展示，
+    # 保持旧调用（测试）文案不变
+    reason_parts: list[str] = []
+    if failure_ratio is not None:
+        reason_parts.append(f"循环体内失败占比 {failure_ratio * 100:.1f}%")
+    if signature_count is not None:
+        reason_parts.append(f"不同错误 {signature_count} 类")
+    reason = f"（{'，'.join(reason_parts)}）" if reason_parts else ""
     hint = f"；示例: {'；'.join(samples[:2])}" if samples else ""
     return (
         f"步骤成功 {success_count}/{total}，"
         f"{tolerated_count} 次失败被容错跳过（熔断阈值 {threshold}）"
-        f"{loop_part}，判定为失败{hint}"
+        f"{loop_part}{reason}，判定为失败{hint}"
     )
 
 
@@ -574,19 +677,15 @@ async def run_workflow(
     # 这里只把「可计费时长」随摘要带进事件；billed_started 为空表示没拿到会话、不计费。
     # 恢复运行时 results_data 只包含本次实际执行的步骤，计数需叠加旧运行的累计值
     total = len(steps)
-    new_success = len([r for r in results_data if r.get("success")])
-    new_failed = len([r for r in results_data if not r.get("success")])
-    # 只有「未被显式容忍」的失败才决定运行结论；未知异常 / on_error=stop（含重试耗尽）
-    # 打的失败不带 tolerated 标记。被 continue 跳过的失败仍计数、仍展示，只是不算结论。
-    new_fatal = len(
-        [
-            r
-            for r in results_data
-            if not r.get("success") and not r.get("tolerated")
-        ]
+    # 步骤计数以「进度上报器」为唯一口径：它在每个顶层步骤 finally 里累加一次终态，
+    # 断点恢复时还带着上一个运行的继承值。`results_data` 是同一批步骤的原始返回，
+    # 再叠加一次就会翻倍（历史现象：total=18 却 success=36，通知里写成
+    # 「成功 36 / 失败 0（共 18 步）」）。
+    success_count, failed_count, new_fatal = _resolve_run_counts(
+        results_data=results_data,
+        progress_success=int(progress_data.success_count or 0),
+        progress_failed=int(progress_data.failed_count or 0),
     )
-    success_count = progress_data.success_count + new_success
-    failed_count = progress_data.failed_count + new_failed
     if not results_data and total > resume_step and status == WorkflowRunStatusEnum.SUCCESS:
         # 引擎未返回任何结果（理论上不会）：按失败处理，避免"假成功"
         status = WorkflowRunStatusEnum.FAILED
@@ -615,14 +714,43 @@ async def run_workflow(
             f"run={run.run_id}, loop_aborts={progress_reporter.loop_abort_count}"
         )
 
-    # 容错熔断：`on_error=continue` 允许失败，但不允许「几乎全失败还报成功」。
-    # 达阈值即降级为 failed（原因写清容忍条数与示例），避免用户被假绿灯误导。
-    tolerated_threshold = int(settings.workflow_tolerated_fail_failed_threshold or 0)
-    tolerated_count = progress_reporter.tolerated_count
+    # ── 资源级判定（业务工作流的**主要**成败指标）──
+    # 步骤成功只说明「动作跑完了」：`mark_resource_result` 记 failed 时动作本身仍然
+    # 成功返回，于是全部动态都参与失败、运行却显示成功的假绿灯。
+    # 有资源记录时，以资源 failed 数为主判据；资源全绿则不再看容错失败（那些是
+    # 过程噪声，例如 LLM 降级），避免「同一处降级重复上百次」再次误判。
+    resource_stats = await _collect_resource_stats(run.run_id)
+    resource_threshold = int(settings.workflow_resource_fail_failed_threshold or 0)
     if (
         status == WorkflowRunStatusEnum.SUCCESS
-        and tolerated_threshold > 0
-        and tolerated_count >= tolerated_threshold
+        and resource_stats.has_data
+        and resource_threshold > 0
+        and resource_stats.failed >= resource_threshold
+    ):
+        status = WorkflowRunStatusEnum.FAILED
+        error_message = _build_resource_failure_message(resource_stats, resource_threshold)
+        logger.warning(
+            f"[WorkflowRunner] 资源处理失败达到阈值，运行判失败: "
+            f"run={run.run_id}, failed={resource_stats.failed}, "
+            f"total={resource_stats.total}, threshold={resource_threshold}"
+        )
+
+    # 容错熔断：`on_error=continue` 允许失败，但不允许「几乎全失败还报成功」。
+    # 只在**没有资源统计**（纯步骤型工作流）时生效：有资源记录时上面已按资源
+    # 结论判过，过程降级不该再翻转一次结论。
+    tolerated_threshold = int(settings.workflow_tolerated_fail_failed_threshold or 0)
+    tolerated_count = progress_reporter.tolerated_count
+    tolerating_breaker_tripped, failure_ratio = _should_trip_tolerated_breaker(
+        tolerated_count=tolerated_count,
+        threshold=tolerated_threshold,
+        signature_count=progress_reporter.tolerated_signature_count,
+        loop_summaries=progress_reporter.loop_summaries,
+        max_ratio=float(settings.workflow_tolerated_fail_max_ratio or 0.0),
+    )
+    if (
+        status == WorkflowRunStatusEnum.SUCCESS
+        and not resource_stats.has_data
+        and tolerating_breaker_tripped
     ):
         status = WorkflowRunStatusEnum.FAILED
         error_message = _build_tolerated_breaker_message(
@@ -632,11 +760,15 @@ async def run_workflow(
             threshold=tolerated_threshold,
             loop_summaries=progress_reporter.loop_summaries,
             samples=progress_reporter.tolerated_samples,
+            failure_ratio=failure_ratio,
+            signature_count=progress_reporter.tolerated_signature_count,
         )
         logger.warning(
             f"[WorkflowRunner] 容错失败超过阈值，运行降级为失败: "
             f"run={run.run_id}, tolerated={tolerated_count}, "
-            f"threshold={tolerated_threshold}"
+            f"threshold={tolerated_threshold}, "
+            f"ratio={failure_ratio:.3f}, "
+            f"signatures={progress_reporter.tolerated_signature_count}"
         )
 
     duration_ms = (time.time() - started) * 1000
@@ -653,6 +785,10 @@ async def run_workflow(
         tolerated_count=progress_reporter.tolerated_count,
         tolerated_samples=progress_reporter.tolerated_samples,
         loop_summaries=progress_reporter.loop_summaries,
+        resource_total=resource_stats.total,
+        resource_success=resource_stats.success,
+        resource_failed=resource_stats.failed,
+        resource_skipped=resource_stats.skipped,
     )
     # 断点：仅「非用户主动、非执行失败」的中断才可恢复（服务重启 / 关停取消 / 崩溃）
     checkpoint_step = min(progress_reporter.data.completed_steps, total)
@@ -694,7 +830,9 @@ async def run_workflow(
     logger.info(
         f"[WorkflowRunner] 运行结束: workflow={workflow.workflow_id}, "
         f"trigger={trigger_source}, status={status.value}, "
-        f"success={success_count}/{total}, cost={duration_ms:.0f}ms"
+        f"success={success_count}/{total}, "
+        f"resources={resource_stats.success}/{resource_stats.failed}/"
+        f"{resource_stats.skipped}, cost={duration_ms:.0f}ms"
     )
 
     # 运行记录与内存标记均已收口，此处再重新抛出原始终止信号（如 CancelledError），

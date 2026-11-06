@@ -55,6 +55,15 @@ def _run_notify_content(
             f"执行结果：成功 {summary.get('success', 0)} / "
             f"失败 {summary.get('failed', 0)}（共 {summary.get('total', 0)} 步）"
         )
+        # 资源级结果：业务工作流真正关心的指标（步骤成功 ≠ 业务办成）
+        resource_total = int(summary.get("resource_total", 0) or 0)
+        if resource_total > 0:
+            lines.append(
+                f"资源结果：成功 {summary.get('resource_success', 0)} / "
+                f"失败 {summary.get('resource_failed', 0)} / "
+                f"跳过 {summary.get('resource_skipped', 0)}"
+                f"（共 {resource_total}）"
+            )
     if duration_ms is not None:
         lines.append(f"耗时：{duration_ms / 1000:.1f} 秒")
     if error_message:

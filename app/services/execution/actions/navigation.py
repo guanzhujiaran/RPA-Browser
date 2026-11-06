@@ -6,19 +6,24 @@ from typing import Dict, Any, List
 
 import contextlib
 import asyncio
+import re
 import traceback
 import socket
 import ipaddress
 from urllib.parse import urlparse
 import time
 from loguru import logger
+from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
 from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.models.execution.action_params import (
     NavigateParams,
     NewPageParams,
     NavigateResult,
     NewPageResult,
+    WaitForUrlParams,
+    WaitForUrlResult,
 )
+from app.models.execution.enums import NavigateModeEnum, UrlPatternTypeEnum
 from app.models.core.browser.security import SecurityCheckResult
 from app.config import settings
 from app.models.database.workflow.models import BuiltinActionType
@@ -281,9 +286,16 @@ class NavigateAction(BaseAction[NavigateParams]):
                 action_name=self.metadata.name,
             )
 
-        url = validated_params.url
+        mode = validated_params.mode
+        url = validated_params.url or ""
         wait_until = validated_params.wait_until
         timeout = validated_params.timeout
+
+        # reload / back / forward 复用当前页面历史，不使用 url 与 wait_until（见参数模型）
+        if mode is not NavigateModeEnum.GOTO:
+            return await self._navigate_history(
+                mode=mode, timeout=timeout, start_time=start_time
+            )
 
         try:
             # 验证 URL 格式
@@ -322,7 +334,7 @@ class NavigateAction(BaseAction[NavigateParams]):
 
             return ActionResult(
                 success=True,
-                data=NavigateResult(status=response.status if response else None),
+                data=NavigateResult(status=response.status if response else 0),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
@@ -341,6 +353,43 @@ class NavigateAction(BaseAction[NavigateParams]):
                     f"NavigateAction failed with exception: {str(e)}",
                     f"Traceback:\n{error_traceback}",
                 ],
+            )
+
+    async def _navigate_history(
+        self, mode: NavigateModeEnum, timeout: float, start_time: float
+    ) -> ActionResult[NavigateResult]:
+        """复用当前页面历史的导航（reload / back / forward）。
+
+        这三个模式由浏览器直接基于当前历史动作，不经过 URL 组装与 URL 安全检查
+        （没有新地址需要校验）；``status`` 统一按「无 HTTP 响应」返回 0。
+        """
+        try:
+            if mode is NavigateModeEnum.RELOAD:
+                response = await self.page.reload(timeout=timeout)
+            elif mode is NavigateModeEnum.BACK:
+                response = await self.page.go_back(timeout=timeout)
+            else:
+                response = await self.page.go_forward(timeout=timeout)
+
+            logger.info(
+                f"[NavigateAction] {mode.value} 完成: url={self.page.url} "
+                f"status={response.status if response else 0}"
+            )
+            return ActionResult(
+                success=True,
+                data=NavigateResult(status=response.status if response else 0),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+        except Exception as e:
+            logger.warning(f"[NavigateAction] {mode.value} 执行异常: {e}")
+            return ActionResult(
+                success=False,
+                error=str(e),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
             )
 
 
@@ -507,7 +556,75 @@ class NewPageAction(BaseAction[NewPageParams]):
             )
 
 
+class WaitForUrlAction(BaseAction[WaitForUrlParams]):
+    """等待页面 URL 匹配（命中即返回，超时即失败）"""
+
+    action_id: BuiltinActionType = BuiltinActionType.WAIT_FOR_URL
+    action_type: BuiltinActionType = BuiltinActionType.WAIT_FOR_URL
+    params: WaitForUrlParams
+
+    async def _execute(self) -> ActionResult[WaitForUrlResult]:
+        start_time = time.time()
+
+        try:
+            _, _, params = self.validate_params_with_model(self.params)
+        except ValueError as exc:
+            return ActionResult(
+                success=False,
+                error=str(exc),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+        # glob 交给 Playwright 原生匹配；regex 传编译后的 Pattern（Playwright 支持）
+        pattern: str | re.Pattern[str]
+        if params.pattern_type is UrlPatternTypeEnum.REGEX:
+            try:
+                pattern = re.compile(params.url_pattern)
+            except re.error as exc:
+                return ActionResult(
+                    success=False,
+                    error=f"url_pattern 不是合法的正则表达式: {exc}",
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+        else:
+            pattern = params.url_pattern
+
+        try:
+            await self.page.wait_for_url(pattern, timeout=params.timeout)
+        except PlaywrightTimeoutError as exc:
+            logger.warning(
+                f"[WaitForUrlAction] 等待 URL 超时: pattern={params.url_pattern} "
+                f"pattern_type={params.pattern_type} current={self.page.url}"
+            )
+            return ActionResult(
+                success=False,
+                error=(
+                    f"等待 URL 超时（{params.timeout}ms 内未匹配）: "
+                    f"pattern={params.url_pattern}；当前 URL={self.page.url}"
+                ),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+                logs=[f"{exc}"],
+            )
+
+        matched_url = self.page.url
+        logger.info(f"[WaitForUrlAction] 命中 URL: {matched_url}")
+        return ActionResult(
+            success=True,
+            data=WaitForUrlResult(matched_url=matched_url),
+            execution_time=time.time() - start_time,
+            action_id=self.metadata.id,
+            action_name=self.metadata.name,
+        )
+
+
 # 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
 
 register_action_class(NavigateAction)
 register_action_class(NewPageAction)
+register_action_class(WaitForUrlAction)

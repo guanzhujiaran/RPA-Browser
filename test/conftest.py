@@ -86,6 +86,20 @@ def _init_test_db():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_llm_model_cooldown():
+    """隔离 LLM 模型健康冷却（进程级状态）
+
+    `_MODEL_COOLDOWN` 是跨用例共享的模块级字典，某个用例让模型进入冷却后，
+    后续用例构造回退链时会被静默跳过，表现为「莫名少了一个模型」。
+    """
+    from app.services.execution.actions.llm import reset_model_cooldown
+
+    reset_model_cooldown()
+    yield
+    reset_model_cooldown()
+
+
 @pytest.fixture(scope="session")
 async def shared_browser(chromium_executable: str):
     """会话级别的共享浏览器 - 整个测试会话只启动一次

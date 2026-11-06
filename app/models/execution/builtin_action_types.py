@@ -68,6 +68,11 @@ class BuiltinActionDesc(StrEnumAutoDoc):
     BILI_RESERVE = "参与 B 站空间预约抽奖"
     PICK_LINE = "按行切分文本后随机取一条"
     NOTIFY = "发送站内 / 外部通知（支持按天去重）"
+    PRESS = "按下键盘按键（可先聚焦指定元素）"
+    WAIT_FOR_RESPONSE = "等待匹配的 HTTP 响应（超时即失败）"
+    ELEMENT_STATE = "读取元素状态（属性 / 数量 / 可见 / 可用 / 输入值）"
+    SELECT_OPTION = "选择原生下拉框选项（value / label / index）"
+    WAIT_FOR_URL = "等待页面 URL 匹配（glob / regex，超时即失败）"
 
     OPEN_PAGE = "按别名打开页面（页面满时等待空位，不会关闭其它页面）"
     CLOSE_PAGE = "关闭指定别名的页面并释放容量"
@@ -104,6 +109,11 @@ class BuiltinActionName(StrEnumAutoDoc):
     BILI_RESERVE = "预约抽奖"
     PICK_LINE = "按行取值"
     NOTIFY = "发送通知"
+    PRESS = "按键"
+    WAIT_FOR_RESPONSE = "等待响应"
+    ELEMENT_STATE = "元素状态"
+    SELECT_OPTION = "下拉选择"
+    WAIT_FOR_URL = "等待 URL"
     OPEN_PAGE = "打开页面"
     CLOSE_PAGE = "关闭页面"
     PARALLEL = "并行分支"
@@ -146,6 +156,14 @@ class BuiltinActionIconId(IntEnumAutoDoc):
     BILI_RESERVE = 50  # 贞德·Alter·Santa·Lily
     PICK_LINE = 53  # 阿尔托莉雅·潘德拉贡〔圣诞Alter〕
     NOTIFY = 90  # 未占用编号，缺资源时前端回落内置图标
+    # 以下 5 个为第一批 + 第二批新增动作，编号自 124 起（此前占用到 121）。
+    # ⚠️ 这些编号在 `s_33_FGO状态图` 里可能尚未收录对应素材，前端会回落内置图标；
+    # 补素材时只改编号，不要改动已占用编号。
+    PRESS = 124
+    WAIT_FOR_RESPONSE = 125
+    ELEMENT_STATE = 126
+    SELECT_OPTION = 127
+    WAIT_FOR_URL = 128
     LOOP = 23  # 莫德雷德（红装马尾）
     COMPOSITE = 115  # 谜之偶像X〔Alter〕（霓虹绿 + 眼镜）
     IF_ELSE = 84  # 贞德〔Alter〕（白发黑红）
@@ -154,7 +172,7 @@ class BuiltinActionIconId(IntEnumAutoDoc):
 # 内置操作默认图标的系列编号：**复用现有图库系列** `Saber脸/s_33_FGO状态图`
 # （不保留专属号，避免占用/阻塞图库的全局连续编号）；
 # 编号由 BuiltinActionIconId 分配（见其 docstring：一动作一角色、取各角色最终形态）。
-# ⚠️ 内置动作引用的编号（见 BuiltinActionIconId，当前 22 个）自此被常驻引用，不可再重排。
+# ⚠️ 内置动作引用的编号（见 BuiltinActionIconId，当前 28 个）自此被常驻引用，不可再重排。
 BUILTIN_ACTION_ICON_SERIES = 33
 
 
@@ -181,6 +199,11 @@ class BuiltinActionType(StrEnumAutoDoc):
     BILI_RESERVE = "bili_reserve"
     PICK_LINE = "pick_line"
     NOTIFY = "notify"
+    PRESS = "press"
+    WAIT_FOR_RESPONSE = "wait_for_response"
+    ELEMENT_STATE = "element_state"
+    SELECT_OPTION = "select_option"
+    WAIT_FOR_URL = "wait_for_url"
 
     OPEN_PAGE = "open_page"
     CLOSE_PAGE = "close_page"

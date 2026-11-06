@@ -17,8 +17,13 @@ from app.models.runtime.workflow_progress import WorkflowRunProgressData
 from app.services.execution.run_events import WorkflowRunSummary
 from app.services.execution.workflow.notify import _run_notify_content
 from app.services.execution.workflow.run_workflow import (
+    _build_resource_failure_message,
     _build_tolerated_breaker_message,
+    _collect_resource_stats,
+    _resolve_run_counts,
+    _should_trip_tolerated_breaker,
 )
+from app.models.execution.resource_stats import RunResourceStats
 from app.services.execution.workflow_progress import (
     WorkflowRunProgressReporter,
     workflow_run_reporters,
@@ -74,6 +79,19 @@ class TestToleratedStats:
 
         assert len(reporter.tolerated_samples[0]) == 200
 
+    def test_signatures_dedupe_same_error(self):
+        """同一错误反复发生只算 1 类问题（熔断按「问题种类」而不是次数）。"""
+        reporter = make_reporter()
+
+        for _ in range(60):
+            reporter._record_tolerated(
+                SimpleNamespace(tolerated=True), "[LLM(llm)] 429 额度耗尽"
+            )
+        reporter._record_tolerated(SimpleNamespace(tolerated=True), "点击超时")
+
+        assert reporter.tolerated_count == 61
+        assert reporter.tolerated_signature_count == 2
+
 
 class TestRunNotifyContent:
     def _workflow(self):
@@ -113,6 +131,37 @@ class TestRunNotifyContent:
         assert summary.tolerated_count == 0
         assert summary.tolerated_samples == []
         assert summary.loop_summaries == []
+        assert summary.resource_total == 0
+        assert summary.resource_failed == 0
+
+    def test_resource_result_line(self):
+        """资源级结果是业务工作流的主指标，通知必须能看到。"""
+        content = _run_notify_content(
+            self._workflow(),
+            browser_id=1,
+            run_id="run-res",
+            summary={
+                "total": 18,
+                "success": 18,
+                "failed": 0,
+                "resource_total": 77,
+                "resource_success": 62,
+                "resource_failed": 13,
+                "resource_skipped": 2,
+            },
+        )
+
+        assert "资源结果：成功 62 / 失败 13 / 跳过 2（共 77）" in content
+
+    def test_no_resource_line_without_resource_records(self):
+        content = _run_notify_content(
+            self._workflow(),
+            browser_id=1,
+            run_id="run-nores",
+            summary={"total": 4, "success": 4, "failed": 0},
+        )
+
+        assert "资源结果" not in content
 
     def test_alert_section_with_loop_stats(self):
         content = _run_notify_content(
@@ -353,3 +402,179 @@ class TestToleratedBreakerMessage:
         )
 
         assert msg == "步骤成功 12/16，8 次失败被容错跳过（熔断阈值 10），判定为失败"
+
+
+class TestResolveRunCounts:
+    """运行步骤计数：进度上报器是唯一口径，不能与 results_data 叠加
+
+    历史问题：`total=18` 的运行被写成 `success=36`（进度记 18 次 + 返回值又算 18 次），
+    通知正文出现「成功 36 / 失败 0（共 18 步）」。
+    """
+
+    def test_progress_counts_are_not_double_counted(self):
+        results = [{"success": True} for _ in range(18)]
+        success, failed, fatal = _resolve_run_counts(
+            results_data=results, progress_success=18, progress_failed=0
+        )
+        assert (success, failed, fatal) == (18, 0, 0)
+
+    def test_tolerated_failure_is_counted_but_not_fatal(self):
+        results = [
+            {"success": True},
+            {"success": False, "tolerated": True},
+        ]
+        success, failed, fatal = _resolve_run_counts(
+            results_data=results, progress_success=1, progress_failed=1
+        )
+        assert (success, failed) == (1, 1), "被容忍的失败也要计入失败数（便于展示）"
+        assert fatal == 0, "被容忍的失败不决定运行结论"
+
+    def test_fatal_failure_decides_run_status(self):
+        results = [
+            {"success": False, "tolerated": False},
+            {"success": False},
+        ]
+        _, _, fatal = _resolve_run_counts(
+            results_data=results, progress_success=0, progress_failed=2
+        )
+        assert fatal == 2
+
+    def test_resume_inherits_previous_counts(self):
+        """断点恢复：进度计数已含继承值，结果只含本次执行的步骤。"""
+        results = [{"success": True} for _ in range(13)]
+        success, failed, fatal = _resolve_run_counts(
+            results_data=results, progress_success=18, progress_failed=0
+        )
+        assert (success, failed, fatal) == (18, 0, 0)
+
+
+class TestResourceFailureJudgement:
+    """资源失败是运行结论的主判据（步骤成功 ≠ 业务办成）"""
+
+    def test_message_contains_all_three_buckets(self):
+        stats = RunResourceStats(total=77, success=62, failed=13, skipped=2)
+        msg = _build_resource_failure_message(stats, threshold=1)
+
+        assert "成功 62 / 失败 13 / 跳过 2（共 77）" in msg
+        assert "13 条资源处理失败（阈值 1）" in msg
+        assert "下一轮会被重新捞起" in msg
+
+    def test_stats_helpers(self):
+        empty = RunResourceStats()
+        assert not empty.has_data
+        assert empty.failed_ratio == 0.0
+
+        stats = RunResourceStats(total=4, success=2, failed=1, skipped=1)
+        assert stats.has_data
+        assert stats.failed_ratio == 0.25
+
+    async def test_collect_falls_back_to_empty_on_error(self, monkeypatch):
+        """统计查询失败不能拖垮运行收口：退化为无资源数据。"""
+
+        async def _boom(_run_id: str):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(
+            "app.services.execution.crud_service.resource_record_crud."
+            "ResourceRecordService.count_by_execution",
+            _boom,
+        )
+        stats = await _collect_resource_stats("run-x")
+        assert not stats.has_data
+
+
+class TestToleratedBreakerDecision:
+    """熔断判定：按「不同错误类型 + 循环体内失败占比」，不再只看绝对次数
+
+    历史问题（2026-11-06 run 4e7b37d）：75 条数据里 62 条成功，
+    仅因 LLM 额度耗尽在每条数据上降级一次（共 60 次 + 空列表 2 次）
+    就触发阈值 10，整轮被标成 FAILED。
+    """
+
+    def _summaries(self, success: int, failed: int):
+        return [
+            LoopRunSummary(
+                name="批量参与",
+                depth=1,
+                rounds=1,
+                rounds_planned=1,
+                body_success=success,
+                body_failed=failed,
+            )
+        ]
+
+    def test_below_threshold_never_trips(self):
+        tripped, _ = _should_trip_tolerated_breaker(
+            tolerated_count=9,
+            threshold=10,
+            signature_count=9,
+            loop_summaries=self._summaries(100, 9),
+            max_ratio=0.3,
+        )
+        assert not tripped
+
+    def test_same_error_repeated_low_ratio_does_not_trip(self):
+        """同一降级点重复 62 次、占比 1.3% → 不判失败（本轮真实数据）。"""
+        tripped, ratio = _should_trip_tolerated_breaker(
+            tolerated_count=62,
+            threshold=10,
+            signature_count=5,
+            loop_summaries=self._summaries(4691, 62),
+            max_ratio=0.3,
+        )
+        assert not tripped
+        assert 0 < ratio < 0.3
+
+    def test_high_failure_ratio_trips_even_with_one_signature(self):
+        """「几乎全失败」仍然要拦：1 类错误 + 100% 失败占比。"""
+        tripped, ratio = _should_trip_tolerated_breaker(
+            tolerated_count=100,
+            threshold=10,
+            signature_count=1,
+            loop_summaries=self._summaries(0, 100),
+            max_ratio=0.3,
+        )
+        assert tripped
+        assert ratio == 1.0
+
+    def test_many_distinct_errors_trip(self):
+        """低占比但多种能力同时坏了（不同错误数达阈值）→ 判失败。"""
+        tripped, _ = _should_trip_tolerated_breaker(
+            tolerated_count=12,
+            threshold=10,
+            signature_count=12,
+            loop_summaries=self._summaries(1000, 12),
+            max_ratio=0.3,
+        )
+        assert tripped
+
+    def test_no_loop_keeps_old_semantics(self):
+        tripped, ratio = _should_trip_tolerated_breaker(
+            tolerated_count=10,
+            threshold=10,
+            signature_count=1,
+            loop_summaries=[],
+            max_ratio=0.3,
+        )
+        assert tripped
+        assert ratio == 1.0
+
+    def test_ratio_zero_falls_back_to_absolute_threshold(self):
+        tripped, _ = _should_trip_tolerated_breaker(
+            tolerated_count=10,
+            threshold=10,
+            signature_count=1,
+            loop_summaries=self._summaries(1000, 10),
+            max_ratio=0.0,
+        )
+        assert tripped
+
+    def test_threshold_zero_disables_breaker(self):
+        tripped, _ = _should_trip_tolerated_breaker(
+            tolerated_count=999,
+            threshold=0,
+            signature_count=99,
+            loop_summaries=self._summaries(0, 999),
+            max_ratio=0.3,
+        )
+        assert not tripped

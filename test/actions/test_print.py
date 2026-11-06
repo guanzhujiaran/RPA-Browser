@@ -45,6 +45,27 @@ class TestPrintAction:
         assert result.data.message == ""
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_print_long_message_not_rejected(self):
+        """调试打印长文本不得因长度校验直接失败
+
+        2026-11-06 那轮：模型把整段思维链当评论输出，`评论内容=` 调试打印
+        因为超过 10000 字直接校验失败，掩盖了真正的问题。
+        """
+        from app.services.execution.actions.debug import PrintAction
+
+        message = "长" * 20000
+        action = PrintAction.new_action(
+            mid=1,
+            page=None,
+            variables={},
+            params=PrintParams(message=message),
+        )
+
+        result = await action.execute()
+        assert result.success
+        assert result.data.message == message
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_print_without_params(self):
         """测试无参数（params=None，使用默认值）"""
         from app.services.execution.actions.debug import PrintAction

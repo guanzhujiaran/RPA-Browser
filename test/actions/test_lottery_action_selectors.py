@@ -329,9 +329,17 @@ class TestSelectorsStatic:
                 continue
             if_else = body[3]["params"]
 
-            page_fail = if_else["TrueBranch"][0]["params"]
-            assert page_fail.get("success") is False, "页面未就绪必须记为失败（可重试）"
-            assert page_fail.get("status") == "failed"
+            # TrueBranch 里现在先有 404 判定（print / 终态 skipped）再有失败记录，
+            # 所以按动作类型定位，不能按下标取。
+            page_fail_steps = [
+                s
+                for s in _flatten_steps(if_else["TrueBranch"])
+                if s.get("action_id") == "mark_resource_result"
+                and (s.get("params") or {}).get("status") == "failed"
+            ]
+            assert page_fail_steps, "页面未就绪必须记为失败（可重试）"
+            page_fail = page_fail_steps[0]["params"]
+            assert page_fail.get("success") is False
             assert page_fail.get("fail_reason")
 
             flat = _flatten_steps(if_else["FalseBranch"])
@@ -461,7 +469,7 @@ class TestSelectorsStatic:
             i
             for i, s in enumerate(exec_branch)
             if s.get("action_id") == "input"
-            and (s.get("params") or {}).get("selector") == "bili-comments #commentbox .brt-editor"
+            and (s.get("params") or {}).get("selector") == ".brt-editor:visible"
         ][0]
         check = exec_branch[input_index + 3]
         assert check.get("action_id") == "if_else"
@@ -471,8 +479,10 @@ class TestSelectorsStatic:
         # 输入框内容取自编辑器文本
         reader = exec_branch[input_index + 2]
         assert reader.get("action_id") == "get_text"
-        assert (reader.get("params") or {}).get("selector") == "bili-comments #commentbox .brt-editor"
+        assert (reader.get("params") or {}).get("selector") == ".brt-editor:visible"
         assert "editor_text" in (reader.get("output_vars") or [])
+        # 输入必须去首尾空白：模型输出常带前导换行，B 站会判空内容而拒绝发布
+        assert (exec_branch[input_index].get("params") or {}).get("trim") is True
 
         refill_ids = [s.get("action_id") for s in check["params"].get("FalseBranch") or []]
         assert "input" in refill_ids, "内容不一致必须重填"
@@ -491,7 +501,7 @@ class TestSelectorsStatic:
             i
             for i, s in enumerate(exec_branch)
             if s.get("action_id") == "click"
-            and (s.get("params") or {}).get("selector") == "bili-comments #commentbox #pub button"
+            and (s.get("params") or {}).get("selector") == "bili-comments #pub button:visible"
         ][0]
         assert pub_index > input_index + 3
 
@@ -503,7 +513,7 @@ class TestSelectorsStatic:
         """
         selectors = {
             "关注": ".space-head-follow .space-follow-btn",
-            "评论": "bili-comments #commentbox #pub button",
+            "评论": "bili-comments #pub button:visible",
             "转发": ".bili-dyn-share-publishing__action",
             "点赞": ".side-toolbar__action.like",
         }
@@ -528,6 +538,43 @@ class TestSelectorsStatic:
             ]
             assert len(positions) >= 3, positions
             assert positions == sorted(positions), f"动作顺序不对: {positions}"
+
+    def test_follow_failure_must_not_abort_participation(self, action_data):
+        """关注按钮缺失/点击超时不得中断整条参与流程
+
+        历史问题（2026-11-06 那轮）：空间页 `.space-head-follow .space-follow-btn`
+        8s 内没出现（空间页未渲染/风控），后面的 click 超时把整条动态打成
+        「本轮未完成参与(中途异常)」，评论 / 转发 / 点赞全部没做。
+        现在要求：等待步骤产出 `follow_ready`、缺按钮先重载一次再判、
+        且关注 click 必须 `on_error=continue`。
+        """
+        branches = _exec_branches(action_data)
+        assert len(branches) == 2, len(branches)
+        for branch in branches:
+            flat = _flatten_steps(branch)
+            follow_waits = [
+                s
+                for s in flat
+                if s.get("action_id") == "wait"
+                and (s.get("params") or {}).get("selector")
+                == ".space-head-follow .space-follow-btn"
+            ]
+            assert follow_waits, "缺少关注按钮等待"
+            assert any(
+                "follow_ready" in (s.get("output_vars") or []) for s in follow_waits
+            ), "关注按钮等待必须产出 follow_ready，供后续闸门判断"
+            follow_clicks = [
+                s
+                for s in flat
+                if s.get("action_id") == "click"
+                and (s.get("params") or {}).get("selector")
+                == ".space-head-follow .space-follow-btn"
+            ]
+            assert follow_clicks, "缺少关注点击"
+            for click in follow_clicks:
+                assert click.get("on_error") == "continue", (
+                    "关注失败不得中断整条参与流程（否则评论/转发/点赞全丢）"
+                )
 
     def test_steps_compile(self, action_data):
         """步骤能通过参数模型归一化，并编译成 Pipeline"""

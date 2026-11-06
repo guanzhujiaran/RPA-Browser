@@ -21,10 +21,17 @@ from app.services.execution.actions.interaction import (  # noqa: F401
     HoverAction,
     GetTextAction,
     GetWindowAction,
+    PressAction,
+    ElementStateAction,
+    SelectOptionAction,
 )
 from app.services.execution.actions.navigation import (  # noqa: F401
     NavigateAction,
     NewPageAction,
+    WaitForUrlAction,
+)
+from app.services.execution.actions.wait_for_response import (  # noqa: F401
+    WaitForResponseAction,
 )
 from app.services.execution.actions.page_actions import (  # noqa: F401
     ClosePageAction,

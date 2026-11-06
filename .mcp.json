@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rpa": {
+      "type": "http",
+      "url": "http://127.0.0.1:9923/api/v1/rpa/mcp",
+      "headers": {
+        "Cookie": "bili_jwt=<必填：浏览器里的 bili_jwt Cookie 值>"
+      }
+    }
+  }
+}

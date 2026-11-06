@@ -248,6 +248,46 @@ MCP 工具调用会挂住，按 operation_id 排除；排除清单在 `--selftes
 > debug 模式是**用户级开关**（工作流 / 动作的 `log_debug`），没有 env 配置，
 > 见 §5.2。
 
+### 5.3 新动作的 MCP 冒烟（第一批 + 第二批内置动作）
+
+新增的 5 个内置动作（`press` / `wait_for_response` / `element_state` /
+`select_option` / `wait_for_url`，见 `docs/动作补齐与MCP同步实施计划书.md`）
+**不新增 MCP 工具**（`EXPECTED_TOOLS` 保持 8 项），只通过既有两个工具验证：
+
+1. **动作面板齐全**：`rpa_debug_actions_list` 返回的内置动作数应为 **31**
+   （改造前 26），且含上述 5 个；等价离线校验是
+   `get_all_actions_metadata()` 的长度，以及 `scripts/check_action_consistency.py`
+   打印的 `types=31 meta=31`。
+2. **内联步骤可校验**：把下面这段 `steps` 传给 `rpa_debug_steps_validate`，
+   应 `ok=true`（同时验证判别联合已收录新 `action_type`）：
+
+```json
+[
+  {"action_id": "press", "params": {"selector": "#kw", "key": "Enter"}},
+  {"action_id": "element_state", "params": {"selector": "#kw", "kind": "input_value"}, "output_vars": ["kw_value"]},
+  {"action_id": "select_option", "params": {"selector": "#sel", "by": "label", "values": ["Two"]}},
+  {"action_id": "wait_for_url", "params": {"url_pattern": "**/result*", "timeout": 15000}},
+  {"action_id": "wait_for_response", "params": {"url_pattern": "**/api/submit**", "method": "POST", "include_body": true, "trigger_selector": "#submit", "trigger_timeout": 8000, "timeout": 15000}},
+  {"action_id": "navigate", "params": {"mode": "reload"}}
+]
+```
+
+3. **语义差异必须记住**：
+   - `wait_for_response` / `wait_for_url` **超时即失败**（`wait` 是超时也算成功），
+     失败会进入 `on_error` / `retry` 分支；
+   - `wait_for_response` **务必用 `trigger_selector` 把点击合进等待窗口**：Playwright 的
+     响应监听只对「注册之后到达」的响应生效，而 `click` 本身很重（要等元素可点 / 滚动
+     稳定 / 动画结束，真实站点实测 2~3s），请求往往在 `click` 返回前就回包。若把
+     `click` 和 `wait_for_response` 拆成两个步骤，第二个步骤注册监听时响应早已过去，
+     只会等满 timeout（实测 4/4 超时）；合并成一步后同一页面实测 2/2 命中；
+   - `element_state` 默认 `missing=ignore`，元素不存在时按空值（`""` / `0` / `false`）
+     成功返回，只输出一个变量 `state_value`；
+   - `navigate` 的 `mode=reload|back|forward` 不读 `url`，`status` 恒为 0。
+4. **生效前提**：新动作由进程启动时的注册表决定，**必须重启 RPA-Browser 进程**
+   （debugpy 会话不会热加载），否则 `rpa_debug_actions_list` 仍是 26 个。
+   同理，给已有动作**新增参数**（如 `wait_for_response.trigger_selector`）后也必须重启，
+   否则旧进程的 pydantic 模型不认识该字段。
+
 ## 涉及文件
 
 - 新增 `app/mcp/mount.py`、`app/mcp/exposure.py`（暴露面 + schema 兼容补丁）、

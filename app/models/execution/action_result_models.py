@@ -69,10 +69,64 @@ class GetWindowResult(SQLModel):
     )
 
 
+class PressResult(SQLModel):
+    """按键操作结果"""
+
+    pressed: bool = Field(default=True, description="是否成功按下按键")
+
+
+class ElementStateResult(SQLModel):
+    """元素状态读取结果（固定单一输出变量 state_value）"""
+
+    state_value: str | int | bool = Field(
+        default="",
+        description=(
+            "读取结果：attribute/input_value 为字符串，count 为整数，visible/enabled 为布尔；"
+            "元素不存在且 missing=ignore 时为空串 / 0 / False"
+        ),
+    )
+    state_type: str = Field(
+        default="string",
+        description="state_value 的实际类型（string/number/boolean），便于下游判断",
+    )
+
+
+class SelectOptionResult(SQLModel):
+    """下拉选择结果"""
+
+    selected: list[str] = Field(
+        default_factory=list, description="实际选中的选项 value 列表"
+    )
+    selected_count: int = Field(default=0, description="实际选中的选项数量")
+
+
+class WaitForResponseResult(SQLModel):
+    """等待 HTTP 响应结果"""
+
+    response_status: int = Field(default=0, description="响应状态码")
+    response_ok: bool = Field(default=False, description="状态码是否为 2xx")
+    response_url: str = Field(default="", description="命中的响应 URL")
+    response_text: str = Field(
+        default="", description="响应体文本（include_body=true 时提供，超长截断）"
+    )
+
+
+class WaitForUrlResult(SQLModel):
+    """等待 URL 结果"""
+
+    matched_url: str = Field(default="", description="命中后的当前页面 URL")
+
+
 class NavigateResult(SQLModel):
     """导航操作结果"""
 
-    status: int | None = Field(default=None, description="HTTP 状态码")
+    status: int = Field(
+        default=0,
+        description=(
+            "HTTP 状态码；0 表示本次导航没有可读取的 HTTP 响应"
+            "（mode=reload/back/forward 属于复用当前历史，一律为 0）"
+        ),
+    )
 
 
 class NewPageResult(SQLModel):
@@ -247,6 +301,11 @@ AllActionResult = (
     | LoopResult
     | IfElseResult
     | CompositeResult
+    | PressResult
+    | ElementStateResult
+    | SelectOptionResult
+    | WaitForResponseResult
+    | WaitForUrlResult
 )
 
 # endregion
@@ -278,4 +337,9 @@ BUILTIN_ACTION_RESULT_MAP: dict[str, Type[AllActionResult]] = {
     "loop": LoopResult,
     "if_else": IfElseResult,
     "composite": CompositeResult,
+    "press": PressResult,
+    "element_state": ElementStateResult,
+    "select_option": SelectOptionResult,
+    "wait_for_response": WaitForResponseResult,
+    "wait_for_url": WaitForUrlResult,
 }

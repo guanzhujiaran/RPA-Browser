@@ -40,6 +40,7 @@ from app.services.execution.workflow_scheduler import (
     sync_workflow_job,
     remove_workflow_job,
     compute_next_run,
+    disable_workflow_schedule,
 )
 from app.services.execution.workflow_runner import (
     finalize_run_after_task,

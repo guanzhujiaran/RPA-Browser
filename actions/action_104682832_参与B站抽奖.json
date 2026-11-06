@@ -556,12 +556,13 @@
               "TrueBranch": [
                 {
                   "params": {
-                    "state": "visible",
-                    "timeout": 1500,
-                    "selector": ".error-panel.error-404"
+                    "selector": ".error-panel.error-404",
+                    "kind": "visible",
+                    "missing": "ignore",
+                    "timeout": 0
                   },
-                  "action_id": "wait",
-                  "action_type": "wait",
+                  "action_id": "element_state",
+                  "action_type": "element_state",
                   "output_vars": [
                     "is_404_page"
                   ]
@@ -648,30 +649,59 @@
                     "selector": ".space-head-follow .space-follow-btn"
                   },
                   "action_id": "wait",
-                  "action_type": "wait"
+                  "action_type": "wait",
+                  "output_vars": [
+                    "follow_ready"
+                  ]
                 },
                 {
                   "params": {
-                    "state": "visible",
-                    "timeout": 3000,
-                    "selector": ".space-follow-btn.gray"
+                    "expression": "follow_ready == false",
+                    "TrueBranch": [
+                      {
+                        "retry": 1,
+                        "params": {
+                          "url": "https://space.bilibili.com/{{off_item.sender_uid}}/dynamic",
+                          "timeout": 30000,
+                          "wait_until": "domcontentloaded"
+                        },
+                        "action_id": "navigate",
+                        "action_type": "navigate"
+                      },
+                      {
+                        "params": {
+                          "state": "visible",
+                          "timeout": 8000,
+                          "selector": ".space-head-follow .space-follow-btn"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "output_vars": [
+                          "follow_ready"
+                        ]
+                      }
+                    ],
+                    "FalseBranch": []
                   },
-                  "action_id": "wait",
-                  "action_type": "wait",
+                  "action_id": "if_else",
+                  "action_type": "if_else"
+                },
+                {
+                  "params": {
+                    "selector": ".space-follow-btn.gray",
+                    "kind": "visible",
+                    "missing": "ignore",
+                    "timeout": 0
+                  },
+                  "action_id": "element_state",
+                  "action_type": "element_state",
                   "output_vars": [
                     "already_followed"
                   ]
                 },
                 {
                   "params": {
-                    "condition": {
-                      "logic": "AND",
-                      "condition": {
-                        "field": "already_followed",
-                        "condition_value": false,
-                        "condition_value_type": "BOOLEAN"
-                      }
-                    },
+                    "expression": "already_followed == false and follow_ready == true",
                     "TrueBranch": [
                       {
                         "retry": 1,
@@ -681,9 +711,27 @@
                         },
                         "action_id": "click",
                         "action_type": "click",
+                        "on_error": "continue",
                         "input_vars": {
                           "action_follow": "已关注"
                         }
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "message": "【抽奖】未检测到可点击的关注按钮（follow_ready={{follow_ready}} already_followed={{already_followed}}），跳过关注并继续参与：{{off_item.dynId}}",
+                          "log": {
+                            "enabled": true,
+                            "record_params": false,
+                            "record_result": true,
+                            "record_variables": false,
+                            "only_on_error": false,
+                            "max_payload_length": 4000
+                          }
+                        },
+                        "action_id": "print",
+                        "action_type": "print"
                       }
                     ]
                   },
@@ -736,16 +784,28 @@
                   "action_type": "wait"
                 },
                 {
-                  "retry": 1,
                   "params": {
-                    "timeout": 5000,
-                    "selector": ".bili-dyn-share-publishing__action"
+                    "url_pattern": "**/x/dynamic/feed/create/dyn**",
+                    "pattern_type": "glob",
+                    "method": "POST",
+                    "include_body": true,
+                    "trigger_selector": ".bili-dyn-share-publishing__action",
+                    "trigger_timeout": 8000,
+                    "timeout": 15000
                   },
-                  "action_id": "click",
-                  "action_type": "click",
+                  "action_id": "wait_for_response",
+                  "action_type": "wait_for_response",
+                  "on_error": "continue",
                   "input_vars": {
+                    "fwd_ok": false,
                     "action_forward": "已转发"
-                  }
+                  },
+                  "output_vars": [
+                    "fwd_status",
+                    "fwd_ok",
+                    "fwd_url",
+                    "fwd_body"
+                  ]
                 },
                 {
                   "params": {
@@ -761,14 +821,7 @@
                 },
                 {
                   "params": {
-                    "condition": {
-                      "logic": "AND",
-                      "condition": {
-                        "field": "share_ok",
-                        "condition_value_type": "BOOLEAN",
-                        "condition_value": true
-                      }
-                    },
+                    "expression": "share_ok == true or fwd_ok == true",
                     "TrueBranch": [
                       {
                         "params": {
@@ -812,12 +865,13 @@
                 },
                 {
                   "params": {
-                    "state": "visible",
-                    "timeout": 3000,
-                    "selector": ".side-toolbar__action.like:not(.is-active)"
+                    "selector": ".side-toolbar__action.like:not(.is-active)",
+                    "kind": "visible",
+                    "missing": "ignore",
+                    "timeout": 0
                   },
-                  "action_id": "wait",
-                  "action_type": "wait",
+                  "action_id": "element_state",
+                  "action_type": "element_state",
                   "output_vars": [
                     "need_like"
                   ]
@@ -1042,12 +1096,13 @@
               "TrueBranch": [
                 {
                   "params": {
-                    "state": "visible",
-                    "timeout": 1500,
-                    "selector": ".error-panel.error-404"
+                    "selector": ".error-panel.error-404",
+                    "kind": "visible",
+                    "missing": "ignore",
+                    "timeout": 0
                   },
-                  "action_id": "wait",
-                  "action_type": "wait",
+                  "action_id": "element_state",
+                  "action_type": "element_state",
                   "output_vars": [
                     "is_404_page"
                   ]
@@ -1134,30 +1189,59 @@
                     "selector": ".space-head-follow .space-follow-btn"
                   },
                   "action_id": "wait",
-                  "action_type": "wait"
+                  "action_type": "wait",
+                  "output_vars": [
+                    "follow_ready"
+                  ]
                 },
                 {
                   "params": {
-                    "state": "visible",
-                    "timeout": 3000,
-                    "selector": ".space-follow-btn.gray"
+                    "expression": "follow_ready == false",
+                    "TrueBranch": [
+                      {
+                        "retry": 1,
+                        "params": {
+                          "url": "https://space.bilibili.com/{{oth_item.up_uid}}/dynamic",
+                          "timeout": 30000,
+                          "wait_until": "domcontentloaded"
+                        },
+                        "action_id": "navigate",
+                        "action_type": "navigate"
+                      },
+                      {
+                        "params": {
+                          "state": "visible",
+                          "timeout": 8000,
+                          "selector": ".space-head-follow .space-follow-btn"
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "output_vars": [
+                          "follow_ready"
+                        ]
+                      }
+                    ],
+                    "FalseBranch": []
                   },
-                  "action_id": "wait",
-                  "action_type": "wait",
+                  "action_id": "if_else",
+                  "action_type": "if_else"
+                },
+                {
+                  "params": {
+                    "selector": ".space-follow-btn.gray",
+                    "kind": "visible",
+                    "missing": "ignore",
+                    "timeout": 0
+                  },
+                  "action_id": "element_state",
+                  "action_type": "element_state",
                   "output_vars": [
                     "already_followed"
                   ]
                 },
                 {
                   "params": {
-                    "condition": {
-                      "logic": "AND",
-                      "condition": {
-                        "field": "already_followed",
-                        "condition_value": false,
-                        "condition_value_type": "BOOLEAN"
-                      }
-                    },
+                    "expression": "already_followed == false and follow_ready == true",
                     "TrueBranch": [
                       {
                         "retry": 1,
@@ -1167,9 +1251,27 @@
                         },
                         "action_id": "click",
                         "action_type": "click",
+                        "on_error": "continue",
                         "input_vars": {
                           "action_follow": "已关注"
                         }
+                      }
+                    ],
+                    "FalseBranch": [
+                      {
+                        "params": {
+                          "message": "【抽奖】未检测到可点击的关注按钮（follow_ready={{follow_ready}} already_followed={{already_followed}}），跳过关注并继续参与：{{oth_item.dynId}}",
+                          "log": {
+                            "enabled": true,
+                            "record_params": false,
+                            "record_result": true,
+                            "record_variables": false,
+                            "only_on_error": false,
+                            "max_payload_length": 4000
+                          }
+                        },
+                        "action_id": "print",
+                        "action_type": "print"
                       }
                     ]
                   },
@@ -1317,6 +1419,7 @@
                           "prompt": "【我的昵称】{{self_nickname}}\n【UP主昵称】{{up_name}}\n【动态正文】\n{{dyn_content}}\n【热门评论（仅供风格参考，禁止照抄）】\n{{dyn_comments}}\n\n请直接输出一条 10~40 字的单行中文短评。",
                           "api_key": "{{llm_api_key}}",
                           "timeout": 120000,
+                          "max_content_length": 200,
                           "server_url": "{{llm_server_url}}",
                           "system_prompt": "{{llm_system_prompt}}",
                           "fallbacks_json": "{{llm_fallbacks}}"
@@ -1627,7 +1730,8 @@
                   "params": {
                     "value": "{{comment_text}}",
                     "timeout": 5000,
-                    "selector": ".brt-editor:visible"
+                    "selector": ".brt-editor:visible",
+                    "trim": true
                   },
                   "action_id": "input",
                   "action_type": "input"
@@ -1688,7 +1792,8 @@
                         "params": {
                           "value": "{{comment_text}}",
                           "timeout": 5000,
-                          "selector": ".brt-editor:visible"
+                          "selector": ".brt-editor:visible",
+                          "trim": true
                         },
                         "action_id": "input",
                         "action_type": "input",
@@ -1757,13 +1862,27 @@
                   "action_type": "wait"
                 },
                 {
-                  "retry": 1,
                   "params": {
-                    "timeout": 5000,
-                    "selector": "bili-comments #pub button:visible"
+                    "url_pattern": "**/x/v2/reply/add**",
+                    "pattern_type": "glob",
+                    "method": "POST",
+                    "include_body": true,
+                    "trigger_selector": "bili-comments #pub button:visible",
+                    "trigger_timeout": 8000,
+                    "timeout": 3000
                   },
-                  "action_id": "click",
-                  "action_type": "click"
+                  "action_id": "wait_for_response",
+                  "action_type": "wait_for_response",
+                  "on_error": "continue",
+                  "input_vars": {
+                    "reply_ok": false
+                  },
+                  "output_vars": [
+                    "reply_status",
+                    "reply_ok",
+                    "reply_url",
+                    "reply_body"
+                  ]
                 },
                 {
                   "params": {
@@ -2023,16 +2142,28 @@
                         "action_type": "wait"
                       },
                       {
-                        "retry": 1,
                         "params": {
-                          "timeout": 5000,
-                          "selector": ".bili-dyn-share-publishing__action"
+                          "url_pattern": "**/x/dynamic/feed/create/dyn**",
+                          "pattern_type": "glob",
+                          "method": "POST",
+                          "include_body": true,
+                          "trigger_selector": ".bili-dyn-share-publishing__action",
+                          "trigger_timeout": 8000,
+                          "timeout": 15000
                         },
-                        "action_id": "click",
-                        "action_type": "click",
+                        "action_id": "wait_for_response",
+                        "action_type": "wait_for_response",
+                        "on_error": "continue",
                         "input_vars": {
+                          "fwd_ok": false,
                           "action_forward": "已转发"
-                        }
+                        },
+                        "output_vars": [
+                          "fwd_status",
+                          "fwd_ok",
+                          "fwd_url",
+                          "fwd_body"
+                        ]
                       },
                       {
                         "params": {
@@ -2048,14 +2179,7 @@
                       },
                       {
                         "params": {
-                          "condition": {
-                            "logic": "AND",
-                            "condition": {
-                              "field": "share_ok",
-                              "condition_value_type": "BOOLEAN",
-                              "condition_value": true
-                            }
-                          },
+                          "expression": "share_ok == true or fwd_ok == true",
                           "TrueBranch": [
                             {
                               "params": {
@@ -2099,12 +2223,13 @@
                       },
                       {
                         "params": {
-                          "state": "visible",
-                          "timeout": 3000,
-                          "selector": ".side-toolbar__action.like:not(.is-active)"
+                          "selector": ".side-toolbar__action.like:not(.is-active)",
+                          "kind": "visible",
+                          "missing": "ignore",
+                          "timeout": 0
                         },
-                        "action_id": "wait",
-                        "action_type": "wait",
+                        "action_id": "element_state",
+                        "action_type": "element_state",
                         "output_vars": [
                           "need_like"
                         ]
@@ -2192,7 +2317,7 @@
                       },
                       {
                         "params": {
-                          "message": "【第三方评论抽奖】评论未生效：评论区作者={{latest_comment_users_text}}、我的昵称={{self_nickname}}、出现验证码={{captcha_shown}} → 无验证码记skipped终态防重复评论，有验证码下一轮重试",
+                          "message": "【第三方评论抽奖】评论未生效：评论区作者={{latest_comment_users_text}}、我的昵称={{self_nickname}}、出现验证码={{captcha_shown}}、评论接口 ok={{reply_ok}}/status={{reply_status}} → 无验证码记skipped终态防重复评论，有验证码下一轮重试",
                           "log": {
                             "enabled": true,
                             "record_params": false,

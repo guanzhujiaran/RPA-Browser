@@ -199,6 +199,69 @@ class TestLLMActionText:
         assert result.data.content == ""
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_strips_surrounding_whitespace(self):
+        """模型输出前后的换行/空格必须去掉
+
+        2026-11-06 那轮：GLM 输出的评论带前导换行，直接填进 B 站评论框后
+        站点判空内容拒绝发布（64 条动态记 failed）。
+        """
+        mock_msg = _make_text_aimessage("\n  希望中奖  \n")
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={},
+            params=_make_llm_params(prompt="写一条短评"),
+        )
+        with _patch_chatopenai_text(mock_msg):
+            result = await action.execute()
+        assert result.success
+        assert result.data.content == "希望中奖"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_strip_whitespace_can_be_disabled(self):
+        mock_msg = _make_text_aimessage("\n保留空白\n")
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={},
+            params=_make_llm_params(prompt="x", strip_whitespace=False),
+        )
+        with _patch_chatopenai_text(mock_msg):
+            result = await action.execute()
+        assert result.success
+        assert result.data.content == "\n保留空白\n"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_max_content_length_rejects_chain_of_thought(self):
+        """输出超长（模型把思维链当答案）必须按失败处理，交给 on_error 降级"""
+        mock_msg = _make_text_aimessage("1. **Analyze the Request:**\n" + "废话" * 200)
+        action = LLMAction.new_action(
+            mid=1,
+            page=None,
+            variables={},
+            params=_make_llm_params(prompt="x", max_content_length=50),
+        )
+        with _patch_chatopenai_text(mock_msg):
+            result = await action.execute()
+        assert not result.success
+        assert "超过上限" in (result.error or "")
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_all_models_cooling_fails_fast(self):
+        """所有模型都在冷却期时不再发请求，直接失败（省掉 20~130s 空等）"""
+        from app.services.execution.actions.llm import _cooldown_model
+
+        params = _make_llm_params(prompt="x")
+        _cooldown_model(params.model, "api.openai.com", "402 余额不足", "no money")
+        action = LLMAction.new_action(
+            mid=1, page=None, variables={}, params=params
+        )
+        result = await action.execute()
+        assert not result.success
+        assert "冷却" in (result.error or "")
+        assert "402 余额不足" in (result.error or "")
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_missing_prompt(self):
         action = LLMAction.new_action(
             mid=1,

@@ -119,6 +119,52 @@ class TestInputAction:
         )
 
     @pytest.mark.asyncio(loop_scope="session")
+    async def test_input_trim(self):
+        """trim=true 时去掉首尾空白/换行
+
+        2026-11-06 那轮：评论变量是模型输出，带前导换行，B 站评论框会判空内容
+        导致发布无效（输入框仍保留文本），这里保证输入前已规范化。
+        """
+        from app.services.execution.actions.interaction import InputAction
+
+        await self.page.set_content(
+            "<html><body><textarea id='box'></textarea></body></html>"
+        )
+
+        action = InputAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={},
+            params=InputParams(
+                selector="#box", value="\n  希望中奖  \n", trim=True
+            ),
+        )
+
+        result = await action.execute()
+        assert result.success
+        assert result.data.value_length == len("希望中奖")
+        assert await self.page.input_value("#box") == "希望中奖"
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_input_trim_disabled_keeps_value(self):
+        from app.services.execution.actions.interaction import InputAction
+
+        await self.page.set_content(
+            "<html><body><textarea id='box'></textarea></body></html>"
+        )
+
+        action = InputAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={},
+            params=InputParams(selector="#box", value="  保留空格  "),
+        )
+
+        result = await action.execute()
+        assert result.success
+        assert await self.page.input_value("#box") == "  保留空格  "
+
+    @pytest.mark.asyncio(loop_scope="session")
     async def test_input_without_selector(self):
         """测试无 focus 时直接输入到已聚焦元素"""
         from app.services.execution.actions.interaction import InputAction

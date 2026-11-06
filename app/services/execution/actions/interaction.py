@@ -1,5 +1,5 @@
 """
-交互类 Action - Click, Input, Scroll, Wait, Hover
+交互类 Action - Click, Input, Scroll, Wait, Hover, Press, ElementState, SelectOption
 """
 
 from typing import Dict, Any, List
@@ -12,6 +12,9 @@ from app.models.execution.action_params import (
     ScrollParams,
     GetTextParams,
     GetWindowParams,
+    PressParams,
+    ElementStateParams,
+    SelectOptionParams,
     ClickResult,
     InputResult,
     ScrollResult,
@@ -19,14 +22,24 @@ from app.models.execution.action_params import (
     HoverResult,
     GetTextResult,
     GetWindowResult,
+    PressResult,
+    ElementStateResult,
+    SelectOptionResult,
 )
 import asyncio
+import contextlib
 import time
 from loguru import logger
 from playwright.async_api import Locator
 from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.models.database.workflow.models import BuiltinActionType
-from app.models.execution.enums import ElementStateEnum, WaitMatchEnum
+from app.models.execution.enums import (
+    ElementStateEnum,
+    ElementStateKindEnum,
+    MissingPolicyEnum,
+    SelectOptionByEnum,
+    WaitMatchEnum,
+)
 from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
 
 
@@ -157,6 +170,11 @@ class InputAction(BaseAction[InputParams]):
         value = validated_params.value
         force = validated_params.force
         timeout = validated_params.timeout
+        # 首尾空白规范化（默认关闭，由动作 JSON 显式开启）：
+        # 输入类控件对首尾换行/空格敏感（如评论框以换行开头会被站点判为空内容），
+        # 这里只做「去首尾空白」这一确定性变换，不改变文本中间的内容。
+        if validated_params.trim:
+            value = value.strip()
 
         try:
             # 构建 fill 参数字典（符合 Playwright API）
@@ -732,6 +750,265 @@ class GetWindowAction(BaseAction[GetWindowParams]):
             )
 
 
+class PressAction(BaseAction[PressParams]):
+    """按键操作（可先聚焦 selector，无 selector 则发给当前焦点）"""
+
+    action_id: BuiltinActionType = BuiltinActionType.PRESS
+    action_type: BuiltinActionType = BuiltinActionType.PRESS
+    params: PressParams
+
+    async def _execute(self) -> ActionResult[PressResult]:
+        start_time = time.time()
+
+        try:
+            _, _, params = self.validate_params_with_model(self.params)
+        except ValueError as exc:
+            return ActionResult(
+                success=False,
+                error=str(exc),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+        selector = (params.selector or "").strip()
+        modifiers = [str(m) for m in params.modifiers] if params.modifiers else []
+        # Playwright 的 press 没有 modifiers 形参：修饰键是写进 key 里的（"Control+A"）。
+        # 这里统一把 modifiers 拼成组合键，selector / 无 selector 两种路径口径一致。
+        combo = "+".join([*modifiers, params.key]) if modifiers else params.key
+
+        try:
+            if selector:
+                # Locator.press 内部会先聚焦该元素再按键，等价于「先 focus 再 press」，
+                # 因此 contenteditable / 输入框等需要焦点的场景只需提供 selector 即可。
+                await self.page.locator(selector).press(
+                    combo, timeout=params.timeout
+                )
+            else:
+                await self.page.keyboard.press(combo)
+
+            logger.info(
+                f"[PressAction] 按键完成: combo={combo} selector={selector or '<焦点>'} "
+                f"modifiers={modifiers}"
+            )
+            return ActionResult(
+                success=True,
+                data=PressResult(pressed=True),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+        except Exception as e:
+            logger.warning(f"[PressAction] 按键操作执行异常: {e}")
+            return ActionResult(
+                success=False,
+                error=str(e),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+
+class ElementStateAction(BaseAction[ElementStateParams]):
+    """读取元素状态（属性 / 数量 / 可见 / 可用 / 输入值），输出固定变量 state_value"""
+
+    action_id: BuiltinActionType = BuiltinActionType.ELEMENT_STATE
+    action_type: BuiltinActionType = BuiltinActionType.ELEMENT_STATE
+    params: ElementStateParams
+
+    async def _execute(self) -> ActionResult[ElementStateResult]:
+        start_time = time.time()
+
+        try:
+            _, _, params = self.validate_params_with_model(self.params)
+        except ValueError as exc:
+            return ActionResult(
+                success=False,
+                error=str(exc),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+        locator = self.page.locator(params.selector)
+
+        try:
+            # timeout 只用于「等元素出现（attached）」，不参与判定元素是否「满足某状态」；
+            # 0 表示不等待，直接读当前页面状态（探针模式的常用取值）。
+            if params.timeout > 0:
+                with contextlib.suppress(PlaywrightTimeoutError):
+                    # 等不到不算失败：是否允许缺失由 missing 策略决定（见下）
+                    await locator.first.wait_for(
+                        state="attached", timeout=params.timeout
+                    )
+
+            count = await locator.count()
+            if count == 0:
+                return self._handle_missing(params, start_time)
+
+            # count 统计的是整批命中数，不能落到单元素（locator.first 恒为 1）上读
+            if params.kind is ElementStateKindEnum.COUNT:
+                value: str | int | bool = count
+                value_type = "number"
+            else:
+                value, value_type = await self._read_value(
+                    locator.first, params.kind, params.attribute, params.timeout
+                )
+            logger.info(
+                f"[ElementStateAction] selector={params.selector} kind={params.kind.value} "
+                f"value={value!r}"
+            )
+            return ActionResult(
+                success=True,
+                data=ElementStateResult(state_value=value, state_type=value_type),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+        except Exception as e:
+            logger.warning(f"[ElementStateAction] 读取元素状态异常: {e}")
+            return ActionResult(
+                success=False,
+                error=str(e),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+    def _handle_missing(
+        self, params: ElementStateParams, start_time: float
+    ) -> ActionResult[ElementStateResult]:
+        """元素不存在时的统一出口：missing=ignore 返回空值成功，missing=fail 直接失败。"""
+        if params.missing is MissingPolicyEnum.FAIL:
+            return ActionResult(
+                success=False,
+                error=f"元素不存在（missing=fail）: {params.selector}",
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+        empty_value, value_type = self._empty_value(params.kind)
+        logger.info(
+            f"[ElementStateAction] 元素不存在，按空值返回: selector={params.selector} "
+            f"kind={params.kind.value}"
+        )
+        return ActionResult(
+            success=True,
+            data=ElementStateResult(state_value=empty_value, state_type=value_type),
+            execution_time=time.time() - start_time,
+            action_id=self.metadata.id,
+            action_name=self.metadata.name,
+        )
+
+    @staticmethod
+    def _empty_value(kind: ElementStateKindEnum) -> tuple[str | int | bool, str]:
+        """元素缺失时的「空值」及其类型标记（与 kind 的取值类型保持一致）。"""
+        if kind is ElementStateKindEnum.COUNT:
+            return 0, "number"
+        if kind in (ElementStateKindEnum.VISIBLE, ElementStateKindEnum.ENABLED):
+            return False, "boolean"
+        return "", "string"
+
+    @staticmethod
+    async def _read_value(
+        element: Locator,
+        kind: ElementStateKindEnum,
+        attribute: str,
+        timeout: float,
+    ) -> tuple[str | int | bool, str]:
+        """按 kind 读取首个命中元素的状态，返回 (值, 类型标记)。"""
+        if kind is ElementStateKindEnum.ATTRIBUTE:
+            # get_attribute 找不到属性返回 None，统一成空串，便于当探针判空
+            return (await element.get_attribute(attribute)) or "", "string"
+        if kind is ElementStateKindEnum.INPUT_VALUE:
+            kwargs = {"timeout": timeout} if timeout > 0 else {}
+            return await element.input_value(**kwargs), "string"
+        if kind is ElementStateKindEnum.VISIBLE:
+            return await element.is_visible(), "boolean"
+        if kind is ElementStateKindEnum.ENABLED:
+            return await element.is_enabled(), "boolean"
+        # COUNT 在 _execute 里按整批 locator 统计（见上），不会走到这里
+        raise ValueError(f"不支持的单元素读取类型: {kind.value}")
+
+
+class SelectOptionAction(BaseAction[SelectOptionParams]):
+    """原生下拉框选择（value / label / index）"""
+
+    action_id: BuiltinActionType = BuiltinActionType.SELECT_OPTION
+    action_type: BuiltinActionType = BuiltinActionType.SELECT_OPTION
+    params: SelectOptionParams
+
+    async def _execute(self) -> ActionResult[SelectOptionResult]:
+        start_time = time.time()
+
+        try:
+            _, _, params = self.validate_params_with_model(self.params)
+        except ValueError as exc:
+            return ActionResult(
+                success=False,
+                error=str(exc),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+        try:
+            select_kwargs = self._build_select_kwargs(params)
+        except ValueError as exc:
+            return ActionResult(
+                success=False,
+                error=str(exc),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+        try:
+            selected = await self.page.locator(params.selector).select_option(
+                **select_kwargs, timeout=params.timeout
+            )
+            logger.info(
+                f"[SelectOptionAction] selector={params.selector} by={params.by.value} "
+                f"selected={selected}"
+            )
+            return ActionResult(
+                success=True,
+                data=SelectOptionResult(
+                    selected=list(selected), selected_count=len(selected)
+                ),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+        except Exception as e:
+            logger.warning(f"[SelectOptionAction] 下拉选择执行异常: {e}")
+            return ActionResult(
+                success=False,
+                error=str(e),
+                execution_time=time.time() - start_time,
+                action_id=self.metadata.id,
+                action_name=self.metadata.name,
+            )
+
+    @staticmethod
+    def _build_select_kwargs(params: SelectOptionParams) -> Dict[str, Any]:
+        """按 by 组装 Playwright select_option 的关键字参数。
+
+        index 模式下 values 是字符串（变量与 JSON 都只有字符串），这里显式转 int，
+        非法值给出可读错误而不是把 Playwright 的底层报错抛给用户。
+        """
+        if params.by is SelectOptionByEnum.LABEL:
+            return {"label": params.values}
+        if params.by is SelectOptionByEnum.INDEX:
+            try:
+                return {"index": [int(str(v).strip()) for v in params.values]}
+            except ValueError as exc:
+                raise ValueError(
+                    f"by=index 时 values 必须是从 0 开始的整数下标，当前为 {params.values}"
+                ) from exc
+        return {"value": params.values}
+
+
 # 自注册进内置动作注册表（base 的依赖倒置槽位，供控制流策略层按 action_id 查找）
 
 register_action_class(ClickAction)
@@ -741,3 +1018,6 @@ register_action_class(WaitAction)
 register_action_class(HoverAction)
 register_action_class(GetTextAction)
 register_action_class(GetWindowAction)
+register_action_class(PressAction)
+register_action_class(ElementStateAction)
+register_action_class(SelectOptionAction)

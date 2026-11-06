@@ -143,18 +143,41 @@ class LLMAction(BaseAction[LLMParams]):
 
         # 回退链上下文：先声明再进 try，保证任何分支（含超时）都能安全引用
         failures: list[_LLMFailure] = []
-        fallbacks: list[Any] = []
+        configs: list[tuple[str, str, str]] = []
         budget_seconds = 0.0
         try:
+            # 先剔除处于失败冷却期的模型（欠费 / 密钥失效 / 模型下线 / 当日额度耗尽）。
+            # 这些错误本轮内不会自愈，重复调用只会让每一步都白等 20~130s。
+            configs, cooling = self._split_by_health(
+                self._model_configs(validated_params)
+            )
+            if cooling:
+                logger.warning(
+                    f"[LLMAction] 跳过处于冷却期的模型：{'；'.join(cooling)}"
+                )
+            if not configs:
+                error = (
+                    "所有 LLM 模型均处于失败冷却期（401/402/403/404/当日额度耗尽），"
+                    f"本次直接跳过调用，{int(_MODEL_COOLDOWN_SECONDS)}s 后自动重试："
+                    f"{'；'.join(cooling)}"
+                )
+                logger.error(f"[LLMAction] {error}")
+                return ActionResult(
+                    success=False,
+                    error=error,
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+
             # 主模型 + 备用模型 → LangChain 回退链（主模型抛异常时按顺序切下一个）
-            runnable = self._build_runnable(validated_params, failures)
-            fallbacks = self._resolve_fallbacks(validated_params)
+            runnable = self._build_runnable(validated_params, failures, configs)
             # 调用前先落一条日志：LLM 是整条工作流里最可能长时间阻塞的一步
             # （每模型各自 timeout，回退链成倍放大），不打印就会出现
             # 「循环卡住、后续步骤全不执行且没有任何报错」的观感。
             logger.info(
-                f"[LLMAction] 开始调用 LLM: 主模型={validated_params.model}, "
-                f"备用模型={len(fallbacks)} 个, "
+                f"[LLMAction] 开始调用 LLM: 模型链="
+                f"{[model for model, _url, _key in configs]}, "
                 f"单模型超时={validated_params.timeout}ms, "
                 f"结构化输出={bool(validated_params.response_schema)}"
             )
@@ -163,8 +186,9 @@ class LLMAction(BaseAction[LLMParams]):
             # 生效，一旦某次请求卡在读响应体上（TLS 读挂起 / 服务端只回头不回体），
             # 这一步既不会失败也不会返回，工作流就停在原地：后面的输入框填写、点发送、
             # 点赞、转发全都不执行，而且没有任何错误可报（因为「还没失败」）。
-            # 预算 = 单模型 timeout × 模型个数，超时即当作失败，交由 on_error 策略降级。
-            budget_seconds = validated_params.timeout / 1000.0 * (1 + len(fallbacks))
+            # 预算 = 单模型 timeout × 实际参与回退的模型数（冷却中的模型不算），
+            # 超时即当作失败，交由 on_error 策略降级。
+            budget_seconds = validated_params.timeout / 1000.0 * len(configs)
             if validated_params.response_schema:
                 call = self._call_structured(runnable, messages, validated_params)
             else:
@@ -183,7 +207,7 @@ class LLMAction(BaseAction[LLMParams]):
             error = (
                 f"LLM 调用整体超时：预算 {budget_seconds:.0f}s "
                 f"（单模型 {validated_params.timeout / 1000.0:.0f}s × "
-                f"{1 + len(fallbacks)} 个模型），已强制终止"
+                f"{len(configs)} 个模型），已强制终止"
             )
             logger.error(f"[LLMAction] {error}")
             if failures:
@@ -260,21 +284,57 @@ class LLMAction(BaseAction[LLMParams]):
             )
             return []
 
-    def _build_runnable(self, params: LLMParams, failures: list[_LLMFailure]):
+    def _model_configs(self, params: LLMParams) -> list[tuple[str, str, str]]:
+        """按「主模型 → 备用模型」展开配置三元组，供回退链与健康过滤共用"""
+        configs: list[tuple[str, str, str]] = [
+            (params.model, params.server_url, params.api_key)
+        ]
+        configs.extend(
+            (fb.model, fb.server_url, fb.api_key)
+            for fb in self._resolve_fallbacks(params)
+        )
+        return configs
+
+    @staticmethod
+    def _split_by_health(
+        configs: list[tuple[str, str, str]],
+    ) -> tuple[list[tuple[str, str, str]], list[str]]:
+        """把配置分成「可用」与「冷却中」两组
+
+        返回 (可用配置, 冷却说明)。可用为空时由调用方直接失败，不再发起任何请求，
+        从而把「整轮都拿同一个坏模型重试」的时间成本压到 0。
+        """
+        active: list[tuple[str, str, str]] = []
+        cooling: list[str] = []
+        for model, server_url, _api_key in configs:
+            endpoint = _endpoint_of(server_url)
+            state = _cooling_state(model, endpoint)
+            if state is None:
+                active.append((model, server_url, _api_key))
+            else:
+                kind, message = state
+                cooling.append(f"{model}@{endpoint}（{kind}：{message}）")
+        return active, cooling
+
+    def _build_runnable(
+        self,
+        params: LLMParams,
+        failures: list[_LLMFailure],
+        configs: list[tuple[str, str, str]] | None = None,
+    ):
         """构造「主模型 → 备用模型…」回退链（LangChain ``with_fallbacks``）
 
         - 无备用模型时直接返回主模型的可调用对象（行为与改造前一致）；
         - 有备用模型时，主模型抛异常（429 / 401 / 超时 / 5xx / 连接失败）自动按顺序
           尝试下一个，全部失败则抛出最后一个异常；
-        - 结构化输出模式下每个模型先各自 ``with_structured_output``，再组回退链。
+        - 结构化输出模式下每个模型先各自 ``with_structured_output``，再组回退链；
+        - ``configs`` 显式传入时以它为准（调用方会先剔除处于冷却期的模型），
+          不传则按「主模型 + 全部备用模型」构造。
 
         见 ``docs/LLM模型回退计划书.md``。
         """
-        fallback_cfgs = self._resolve_fallbacks(params)
-        configs: list[tuple[str, str, str]] = [
-            (params.model, params.server_url, params.api_key)
-        ]
-        configs.extend((fb.model, fb.server_url, fb.api_key) for fb in fallback_cfgs)
+        if configs is None:
+            configs = self._model_configs(params)
 
         runnables: list = []
         for index, (model, server_url, api_key) in enumerate(configs, start=1):
@@ -304,8 +364,8 @@ class LLMAction(BaseAction[LLMParams]):
             return runnables[0]
 
         logger.info(
-            f"[LLMAction] 启用模型回退链: 主={params.model}, "
-            f"备用={[fb.model for fb in fallback_cfgs]}"
+            f"[LLMAction] 启用模型回退链: "
+            f"{[model for model, _url, _key in configs]}"
         )
         return runnables[0].with_fallbacks(
             runnables[1:], exceptions_to_handle=(Exception,)
@@ -325,6 +385,13 @@ class LLMAction(BaseAction[LLMParams]):
             if isinstance(ai_message.content, str)
             else str(ai_message.content)
         )
+        if params.strip_whitespace:
+            content = content.strip()
+        if params.max_content_length and len(content) > params.max_content_length:
+            raise ValueError(
+                f"LLM 输出长度 {len(content)} 超过上限 {params.max_content_length}，"
+                f"疑似把思维链/说明整段当成答案输出，已按失败处理以便回退"
+            )
         response_model = ai_message.response_metadata.get("model_name", params.model)
         # 尽力而为的启发式：应答模型名与主模型不一致 → 说明用到了备用模型
         fallback_used = bool(params.fallbacks) and response_model != params.model
@@ -399,6 +466,11 @@ class _LLMFailure:
 
 #: 错误文本 → 类别的兜底匹配表（HTTP 状态在 _classify_llm_error 里优先处理）
 _LLM_ERROR_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # 402 必须排在 429 前面：`insufficient_quota` 同时含 "quota"，放后面会被误判成限流
+    (
+        "402 余额不足",
+        ("402", "insufficient balance", "insufficient_quota", "payment required"),
+    ),
     ("429 限流", ("429", "rate limit", "rate_limit", "too many requests", "quota")),
     (
         "401 鉴权失败",
@@ -451,7 +523,24 @@ def _classify_llm_error(exc: BaseException) -> str:
         response = getattr(exc, "response", None)
         status = getattr(response, "status_code", None)
     if isinstance(status, int):
+        if status == 402:
+            return "402 余额不足"
         if status == 429:
+            # 「当天免费额度用尽」与「瞬时被限流」处置不同：前者继续重试只会白等，
+            # 必须识别出来交给模型健康冷却（见 _cooldown_model）。
+            text = str(exc).lower()
+            if any(
+                needle in text
+                for needle in (
+                    "free-models-per-day",
+                    "per day",
+                    "daily",
+                    "quota",
+                    "credit",
+                    "insufficient",
+                )
+            ):
+                return "429 额度耗尽"
             return "429 限流"
         if status == 401:
             return "401 鉴权失败"
@@ -468,6 +557,68 @@ def _classify_llm_error(exc: BaseException) -> str:
         if any(needle in text for needle in needles):
             return kind
     return "调用失败"
+
+
+# ── 模型健康冷却（进程内） ─────────────────────────────────
+#
+# 背景（2026-11-06 run 4e7b37d）：主模型 openrouter free 当日额度耗尽、备用
+# siliconflow 余额不足（402），75 次调用里有 60 次失败，其中慢的 130s，累计
+# 1730s（占整轮 27%），但每次失败都是「换个模型再来一遍」的固定流程。
+# 这类错误（401/402/403/404/额度耗尽）在几分钟内不可能自愈，本轮内重复调用
+# 只是浪费墙钟时间。这里用一个进程内冷却表：某模型命中致命错误后进入冷却，
+# 后续步骤在构造回退链时直接跳过它；冷却到期自动恢复（进程重启也会恢复）。
+#
+# 注意：只冷却「确定性失败」，瞬时 429 限流 / 超时 / 5xx 不进冷却——它们本来
+# 就靠回退链即时切换，冷却反而会把可用模型锁死。
+
+#: key = f"{model}@{endpoint}", value = (monotonic 截止时间, 错误类别, 错误摘要)
+_MODEL_COOLDOWN: dict[str, tuple[float, str, str]] = {}
+
+#: 冷却时长（秒）：额度耗尽通常按天恢复，但冷却过长会让「刚充值」也继续被跳过，
+#: 10 分钟是「足够省掉一大批重复调用、又能较快自愈」的折中。
+_MODEL_COOLDOWN_SECONDS = 600.0
+
+#: 命中即冷却的错误类别
+_COOLDOWN_KINDS: frozenset[str] = frozenset(
+    {"401 鉴权失败", "402 余额不足", "403 无权限", "404 模型或端点不存在", "429 额度耗尽"}
+)
+
+
+def reset_model_cooldown() -> None:
+    """清空模型冷却表（测试与「配置变更后立即重试」用）"""
+    _MODEL_COOLDOWN.clear()
+
+
+def _cooldown_key(model: str, endpoint: str) -> str:
+    return f"{model}@{endpoint}"
+
+
+def _cooling_state(model: str, endpoint: str) -> tuple[str, str] | None:
+    """模型处于冷却期时返回 (类别, 摘要)，否则返回 None（过期项顺手清理）"""
+    key = _cooldown_key(model, endpoint)
+    item = _MODEL_COOLDOWN.get(key)
+    if item is None:
+        return None
+    until, kind, message = item
+    if until <= time.monotonic():
+        _MODEL_COOLDOWN.pop(key, None)
+        return None
+    return kind, message
+
+
+def _cooldown_model(model: str, endpoint: str, kind: str, message: str) -> None:
+    """把模型标记为短路状态；非致命类别直接忽略"""
+    if kind not in _COOLDOWN_KINDS:
+        return
+    _MODEL_COOLDOWN[_cooldown_key(model, endpoint)] = (
+        time.monotonic() + _MODEL_COOLDOWN_SECONDS,
+        kind,
+        message,
+    )
+    logger.warning(
+        f"[LLMAction] 模型 {model}@{endpoint} 命中 {kind}，"
+        f"本次运行内冷却 {_MODEL_COOLDOWN_SECONDS:.0f}s（后续调用直接跳过）"
+    )
 
 
 def _format_llm_failures(
@@ -537,6 +688,9 @@ def _remember_failure(
             message = " ".join(_scrub_secrets(str(exc)).split())[:200]
             failures.append(_LLMFailure(label=label, kind=kind, message=message))
             logger.warning(f"[LLMAction] 模型 {label} 调用失败（{kind}）: {message}")
+            # 确定性失败（密钥失效 / 欠费 / 模型下线 / 当日额度耗尽）→ 本轮内跳过该模型，
+            # 避免「每条数据都拿同一个坏模型重试一遍」把整轮时间耗光。
+            _cooldown_model(model, endpoint, kind, message)
             raise
 
     return RunnableLambda(_run)

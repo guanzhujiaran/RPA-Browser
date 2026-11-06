@@ -322,6 +322,10 @@ class WorkflowRunProgressReporter:
         # 因此单独计数并在运行结束通知里汇总（见 docs/通知动作与运行告警计划书.md）。
         self._tolerated_count = 0
         self._tolerated_samples: list[str] = []
+        # 不同错误「指纹」集合：同一个坏配置在 75 条数据上各失败一次，是 1 个问题
+        # 而不是 75 个问题。熔断判定要用「不同问题的数量」，否则批量任务必然误判
+        # （2026-11-06 run 4e7b37d：60 次 LLM 额度耗尽被判成运行失败）。
+        self._tolerated_signatures: set[str] = set()
         # ── 循环中断计数：循环因体内步骤失败提前中断的次数 ──
         # 命中 >0 时整次运行直接判失败（不看容忍失败阈值/占比），见 run_workflow 汇总段。
         self._loop_abort_count = 0
@@ -350,6 +354,15 @@ class WorkflowRunProgressReporter:
     def tolerated_samples(self) -> list[str]:
         """前几条（去重、截断）容忍失败的错误摘要，供结束通知展示。"""
         return list(self._tolerated_samples)
+
+    @property
+    def tolerated_signature_count(self) -> int:
+        """容忍失败的**不同错误类型**数量（同一错误反复发生只算 1）。
+
+        用于容错熔断：批量循环里「同一个配置坏了」会重复失败上百次，
+        按次数熔断会把正常运行打成失败；按「问题种类」才接近用户直觉。
+        """
+        return len(self._tolerated_signatures)
 
     @property
     def loop_abort_count(self) -> int:
@@ -390,6 +403,9 @@ class WorkflowRunProgressReporter:
         self._tolerated_count += 1
         text = (error or getattr(result, "error", None) or "未知错误").strip()
         text = text[:200]
+        if text:
+            # 指纹取前 80 字符：错误里常带资源 id / 动态 id，截断后才能归到同一类问题
+            self._tolerated_signatures.add(text[:80])
         if text and text not in self._tolerated_samples:
             if len(self._tolerated_samples) < 3:
                 self._tolerated_samples.append(text)

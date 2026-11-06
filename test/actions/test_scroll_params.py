@@ -33,6 +33,9 @@ class FakePage:
         self.locators.append(selector)
         locator = MagicMock()
         locator.scroll_into_view_if_needed = AsyncMock()
+        # ScrollAction 走 `locator.first.scroll_into_view_if_needed(...)`（单元素 API），
+        # `.first` 未显式配置时会退化成 MagicMock（不可 await），测试会误报失败。
+        locator.first = locator
         return locator
 
     async def evaluate(self, script: str):

@@ -326,6 +326,17 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 全部成功，也把运行结论降级为 failed：避免「跑了 200 条、失败 190 条、结论成功」
     # 这种假成功。0 = 关闭该熔断（只保留运行告警与计数）。
     workflow_tolerated_fail_failed_threshold: int = 10
+    # 熔断的「失败占比」下限：仅在达阈值**且**循环体内失败占比超过该值时判失败。
+    # 背景：批量任务里同一处降级（如 LLM 额度耗尽→回抄评论）会在每条数据上重复出现，
+    # 按绝对次数熔断会把「62 成功 / 13 失败」的正常运行打成失败。
+    # 设为 0 表示只按绝对次数熔断（退回旧行为）。
+    workflow_tolerated_fail_max_ratio: float = 0.3
+
+    # ── 资源失败熔断（业务工作流的**主要**成败判据）──
+    # 资源记录（workflowresourcerecord）的 failed 数达到该阈值时，即使所有步骤都执行
+    # 成功，运行结论也判 failed：步骤成功只代表动作跑完，业务是否真的办成要看资源结果。
+    # 有资源记录时该判据优先于「容错失败熔断」；0 = 关闭（退回纯步骤级判定）。
+    workflow_resource_fail_failed_threshold: int = 1
 
     # ── 重启断点恢复（同一计划书 §10.6）──
     workflow_resume_on_startup: bool = True  # 总开关：启动时执行自动恢复扫描

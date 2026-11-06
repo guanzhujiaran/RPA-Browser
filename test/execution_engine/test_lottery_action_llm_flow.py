@@ -104,6 +104,8 @@ def _build_scope(items_count: int = 4) -> Scope:
         "already_liked": "",
         "need_like": "",
         "already_followed": "",
+        # 关注按钮是否出现（动作 JSON 新增的探针变量，见 2026-11-06 关注容错改造）
+        "follow_ready": "",
         "action_like": "",
         "action_follow": "",
         "action_forward": "",
