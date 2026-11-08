@@ -58,14 +58,13 @@ class BuiltinActionDesc(StrEnumAutoDoc):
     HOVER = "悬停在元素上"
     NEW_PAGE = "打开新页面"
     GET_TEXT = "获取元素文本"
-    GET_WINDOW = "获取窗口属性"
+    GET_WINDOW = "读取 window 对象上的属性（禁止函数调用）"
     FETCH_EXTERNAL_DATA = "获取外部数据"
     MARK_RESOURCE_RESULT = "记录资源处理结果"
     RANDOM_PICK = "随机取值（从列表中随机选取）"
     PRINT = "打印变量替换后的参数（仅调试用，不执行实际操作）"
     SHUFFLE_LIST = "原地随机打乱一个列表变量"
     SORT_LIST = "按指定字段对列表变量排序"
-    BILI_RESERVE = "参与 B 站空间预约抽奖"
     PICK_LINE = "按行切分文本后随机取一条"
     NOTIFY = "发送站内 / 外部通知（支持按天去重）"
     PRESS = "按下键盘按键（可先聚焦指定元素）"
@@ -99,14 +98,13 @@ class BuiltinActionName(StrEnumAutoDoc):
     HOVER = "悬停"
     NEW_PAGE = "新页面"
     GET_TEXT = "获取文本"
-    GET_WINDOW = "获取窗口"
+    GET_WINDOW = "获取 window 属性"
     FETCH_EXTERNAL_DATA = "获取外部数据"
     MARK_RESOURCE_RESULT = "记录资源结果"
     RANDOM_PICK = "随机取值"
     PRINT = "打印参数"
     SHUFFLE_LIST = "打乱列表"
     SORT_LIST = "列表排序"
-    BILI_RESERVE = "预约抽奖"
     PICK_LINE = "按行取值"
     NOTIFY = "发送通知"
     PRESS = "按键"
@@ -136,6 +134,8 @@ class BuiltinActionIconId(IntEnumAutoDoc):
     """
 
     # 最终形态 = `s_33` 内该角色的 `i_*_<角色>_3.png`
+    # ⚠️ `s_33` 实际编号为 `1..121`（见前端 `actionIconManifest.ts`）：编号必须落在
+    #    该范围内且互不重复，越界时前端会回落成兜底图标，等于没配图标。
     CLICK = 28  # 冲田总司（粉发 + 武士刀）
     INPUT = 65  # 阿尔托莉雅·卡斯特（白甲金冠 + 蓝缎带）
     WAIT = 87  # 摩根（白发黑冠）
@@ -153,17 +153,18 @@ class BuiltinActionIconId(IntEnumAutoDoc):
     PRINT = 41  # 贞德（银冠 + 蓝绿礼服）
     SHUFFLE_LIST = 32  # 拉克什米·芭伊
     SORT_LIST = 35  # 冲田总司〔Alter〕
-    BILI_RESERVE = 50  # 贞德·Alter·Santa·Lily
     PICK_LINE = 53  # 阿尔托莉雅·潘德拉贡〔圣诞Alter〕
-    NOTIFY = 90  # 未占用编号，缺资源时前端回落内置图标
-    # 以下 5 个为第一批 + 第二批新增动作，编号自 124 起（此前占用到 121）。
-    # ⚠️ 这些编号在 `s_33_FGO状态图` 里可能尚未收录对应素材，前端会回落内置图标；
-    # 补素材时只改编号，不要改动已占用编号。
-    PRESS = 124
-    WAIT_FOR_RESPONSE = 125
-    ELEMENT_STATE = 126
-    SELECT_OPTION = 127
-    WAIT_FOR_URL = 128
+    NOTIFY = 90  # 贞德〔Alter〕（真实存在于 s_33）
+    # 第一批 / 第二批动作 + 历史缺编号的 3 个动作：统一取 `s_33` 内
+    # 未被占用、真实存在且为「最终形态」的编号。
+    PRESS = 20  # 尼禄·克劳狄乌斯〔新娘〕_3
+    WAIT_FOR_RESPONSE = 38  # 阿尔托莉雅·潘德拉贡_3
+    ELEMENT_STATE = 44  # 阿尔托莉雅·潘德拉贡〔Alter〕_3
+    SELECT_OPTION = 47  # 阿尔托莉雅·潘德拉贡_3
+    WAIT_FOR_URL = 56  # 莫德雷德_3
+    OPEN_PAGE = 59  # 阿尔托莉雅·潘德拉贡〔Alter〕_3
+    CLOSE_PAGE = 62  # 尼禄·克劳狄乌斯_3
+    PARALLEL = 78  # 冲田总司_3
     LOOP = 23  # 莫德雷德（红装马尾）
     COMPOSITE = 115  # 谜之偶像X〔Alter〕（霓虹绿 + 眼镜）
     IF_ELSE = 84  # 贞德〔Alter〕（白发黑红）
@@ -172,7 +173,7 @@ class BuiltinActionIconId(IntEnumAutoDoc):
 # 内置操作默认图标的系列编号：**复用现有图库系列** `Saber脸/s_33_FGO状态图`
 # （不保留专属号，避免占用/阻塞图库的全局连续编号）；
 # 编号由 BuiltinActionIconId 分配（见其 docstring：一动作一角色、取各角色最终形态）。
-# ⚠️ 内置动作引用的编号（见 BuiltinActionIconId，当前 28 个）自此被常驻引用，不可再重排。
+# ⚠️ 内置动作引用的编号（见 BuiltinActionIconId，当前 30 个）自此被常驻引用，不可再重排。
 BUILTIN_ACTION_ICON_SERIES = 33
 
 
@@ -196,7 +197,6 @@ class BuiltinActionType(StrEnumAutoDoc):
     PRINT = "print"
     SHUFFLE_LIST = "shuffle_list"
     SORT_LIST = "sort_list"
-    BILI_RESERVE = "bili_reserve"
     PICK_LINE = "pick_line"
     NOTIFY = "notify"
     PRESS = "press"

@@ -235,15 +235,6 @@ class PickLineResult(SQLModel):
     total: int = Field(default=0, description="切分并过滤空行后的行数")
 
 
-class BiliReserveResult(SQLModel):
-    """预约抽奖操作结果"""
-
-    value: bool = Field(default=False, description="是否参与成功（含此前已参与）")
-    joined: bool = Field(default=False, description="是否参与成功")
-    already: bool = Field(default=False, description="此前是否已参与")
-    found: bool = Field(default=False, description="是否定位到预约卡片")
-
-
 class LoopResult(SQLModel):
     """循环操作结果"""
     iterations: int = Field(default=0, description="迭代次数")
@@ -296,7 +287,6 @@ AllActionResult = (
     | ShuffleListResult
     | SortListResult
     | PickLineResult
-    | BiliReserveResult
     | NotifyResult
     | LoopResult
     | IfElseResult
@@ -333,7 +323,6 @@ BUILTIN_ACTION_RESULT_MAP: dict[str, Type[AllActionResult]] = {
     "sort_list": SortListResult,
     "pick_line": PickLineResult,
     "notify": NotifyResult,
-    "bili_reserve": BiliReserveResult,
     "loop": LoopResult,
     "if_else": IfElseResult,
     "composite": CompositeResult,

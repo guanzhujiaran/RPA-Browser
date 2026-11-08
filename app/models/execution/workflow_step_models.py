@@ -19,7 +19,6 @@ from sqlmodel import SQLModel
 
 from app.models.execution.action_param_models import (
     AllActionParams,
-    BiliReserveParams,
     BUILTIN_ACTION_PARAMS_MAP,
     ClickParams,
     CompositeParams,
@@ -169,7 +168,7 @@ class GetTextWorkflowStep(BaseWorkflowStep[GetTextParams]):
 
 
 class GetWindowWorkflowStep(BaseWorkflowStep[GetWindowParams]):
-    """获取窗口属性步骤"""
+    """读取 window 属性步骤"""
 
     action_type: Literal[BuiltinActionType.GET_WINDOW] = BuiltinActionType.GET_WINDOW  # type: ignore[assignment]
 
@@ -230,12 +229,6 @@ class SortListWorkflowStep(BaseWorkflowStep[SortListParams]):
     """列表排序步骤"""
 
     action_type: Literal[BuiltinActionType.SORT_LIST] = BuiltinActionType.SORT_LIST  # type: ignore[assignment]
-
-
-class BiliReserveWorkflowStep(BaseWorkflowStep[BiliReserveParams]):
-    """预约抽奖步骤"""
-
-    action_type: Literal[BuiltinActionType.BILI_RESERVE] = BuiltinActionType.BILI_RESERVE  # type: ignore[assignment]
 
 
 class PickLineWorkflowStep(BaseWorkflowStep[PickLineParams]):
@@ -408,7 +401,6 @@ WorkflowStep = (
     | ShuffleListWorkflowStep
     | SortListWorkflowStep
     | PickLineWorkflowStep
-    | BiliReserveWorkflowStep
     | PrintWorkflowStep
     | NotifyWorkflowStep
     | LoopWorkflowStep
@@ -446,7 +438,6 @@ _WORKFLOW_STEP_CLASS_MAP: dict[BuiltinActionType, type[BaseWorkflowStep[Any]]] =
     BuiltinActionType.SHUFFLE_LIST: ShuffleListWorkflowStep,
     BuiltinActionType.SORT_LIST: SortListWorkflowStep,
     BuiltinActionType.PICK_LINE: PickLineWorkflowStep,
-    BuiltinActionType.BILI_RESERVE: BiliReserveWorkflowStep,
     BuiltinActionType.PRINT: PrintWorkflowStep,
     BuiltinActionType.NOTIFY: NotifyWorkflowStep,
     BuiltinActionType.LOOP: LoopWorkflowStep,
@@ -518,7 +509,6 @@ for _params_model in (
 __all__ = [
     "AllActionParams",
     "BaseWorkflowStep",
-    "BiliReserveWorkflowStep",
     "ClickWorkflowStep",
     "CompositeWorkflowStep",
     "ElementStateWorkflowStep",

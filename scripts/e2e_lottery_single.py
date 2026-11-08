@@ -90,7 +90,7 @@ def build_item(
         if not up_uid:
             raise SystemExit("官方抽奖（--kind official）需要 --up-uid <UP主UID>")
         return {"dynId": extract_dyn_id(target), "sender_uid": up_uid}
-    # reserve：步骤 9 的 bili_reserve 需要 reserve_sid + reserve_url
+    # reserve：步骤 9 的通用 DOM 步骤需要 reserve_sid + reserve_url
     if not reserve_sid:
         raise SystemExit("预约类抽奖（--kind reserve）需要 --reserve-sid <sid>")
     return {"reserve_sid": reserve_sid, "reserve_url": target}

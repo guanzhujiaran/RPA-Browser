@@ -141,7 +141,9 @@ def upgrade() -> None:
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=200), nullable=False),
     sa.Column('version', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
     sa.Column('content_hash', sqlmodel.sql.sqltypes.AutoString(length=64), nullable=False),
-    sa.Column('action_type', sa.Enum('CLICK', 'INPUT', 'WAIT', 'SCROLL', 'NAVIGATE', 'SCREENSHOT', 'LLM', 'HOVER', 'NEW_PAGE', 'GET_TEXT', 'GET_WINDOW', 'FETCH_EXTERNAL_DATA', 'MARK_RESOURCE_RESULT', 'RANDOM_PICK', 'PRINT', 'SHUFFLE_LIST', 'SORT_LIST', 'BILI_RESERVE', 'PICK_LINE', 'NOTIFY', 'OPEN_PAGE', 'CLOSE_PAGE', 'LOOP', 'COMPOSITE', 'IF_ELSE', 'PARALLEL', name='builtinactiontype'), nullable=False),
+    # 站点专属的「预约抽奖」内置动作已移除（DOM 流程改由动作 JSON 表达），
+    # 该 ENUM 标签不再下发；已建库不受影响，新库按此基线创建。
+    sa.Column('action_type', sa.Enum('CLICK', 'INPUT', 'WAIT', 'SCROLL', 'NAVIGATE', 'SCREENSHOT', 'LLM', 'HOVER', 'NEW_PAGE', 'GET_TEXT', 'GET_WINDOW', 'FETCH_EXTERNAL_DATA', 'MARK_RESOURCE_RESULT', 'RANDOM_PICK', 'PRINT', 'SHUFFLE_LIST', 'SORT_LIST', 'PICK_LINE', 'NOTIFY', 'OPEN_PAGE', 'CLOSE_PAGE', 'LOOP', 'COMPOSITE', 'IF_ELSE', 'PARALLEL', name='builtinactiontype'), nullable=False),
     sa.Column('parameters_schema', sa.JSON(), nullable=True),
     sa.Column('steps', sa.JSON(), nullable=True),
     sa.Column('is_composite', sa.Boolean(), nullable=False),

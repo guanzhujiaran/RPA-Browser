@@ -3,7 +3,7 @@
 断言 7 件事（对应 ``docs/动作补齐与MCP同步实施计划书.md`` P6）：
 
 1. ``len(BuiltinActionType) == len(Name) == len(Desc)``，且每个 type 都有 Name/Desc；
-2. 每个 type 都有 Icon（历史缺成员的 3 个动作在 ``ICON_ALLOWLIST`` 里显式列出）；
+2. 每个 type 都有 Icon，且 Icon 表没有多余成员（``ICON_ALLOWLIST`` 已清空）；
 3. Icon 编号唯一（前端按编号找素材，重复会导致图标错乱）；
 4. ``get_all_actions_metadata()`` 条目数 == type 数，且每条 name/desc/params_schema 非空；
 5. ``set(type) - set(BUILTIN_ACTION_MAP) == {"composite"}``（其余内置动作都必须有注册类）；
@@ -40,10 +40,10 @@ from app.services.execution.actions.all_actions import (  # noqa: E402
 )
 from app.services.execution.pipeline import PipelineBuilder  # noqa: E402
 
-#: 历史上就没有 Icon 成员的动作（前端会回落到内置图标）。
-#: 只允许这 3 个例外；新增动作必须补 BuiltinActionIconId。
+#: 允许缺少 Icon 成员的动作：2026-11-07 图标全覆盖后不再有任何例外，
+#: 每个内置动作都必须有 BuiltinActionIconId（且编号唯一、指向真实图库资源）。
 #: 用枚举**成员名**（大写）比对，与 BuiltinActionName/Desc/IconId 的 name 口径一致。
-ICON_ALLOWLIST: frozenset[str] = frozenset({"OPEN_PAGE", "CLOSE_PAGE", "PARALLEL"})
+ICON_ALLOWLIST: frozenset[str] = frozenset()
 
 #: 没有注册动作类的内置类型（复合动作由自定义动作表驱动，不需要内置类）。
 NO_CLASS_ALLOWLIST: frozenset[str] = frozenset({"composite"})
@@ -80,6 +80,9 @@ def _check_enum_tables(problems: list[str]) -> None:
         problems.append(
             f"BuiltinActionIconId 缺少成员（非 allowlist）: {missing_icons}"
         )
+    extra_icons = sorted(icons - types)
+    if extra_icons:
+        problems.append(f"BuiltinActionIconId 存在多余成员（无对应 type）: {extra_icons}")
     stray_allowlisted = sorted(ICON_ALLOWLIST & icons)
     if stray_allowlisted:
         problems.append(

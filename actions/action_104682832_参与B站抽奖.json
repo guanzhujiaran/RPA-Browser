@@ -12,7 +12,7 @@
   "id": 2,
   "action_id": 104682832,
   "name": "参与B站抽奖",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "action_type": "COMPOSITE",
   "parameters_schema": [],
   "steps": [
@@ -402,19 +402,217 @@
             }
           },
           {
-            "retry": 1,
             "params": {
-              "reserve_sid": "{{rs_item.reserve_sid}}",
-              "reserve_url": "{{rs_item.reserve_url}}"
+              "message": "初始化本轮预约抽奖变量",
+              "log": {
+                "enabled": true,
+                "record_params": false,
+                "record_result": false,
+                "max_payload_length": 2000
+              }
             },
-            "action_id": "bili_reserve",
-            "action_type": "bili_reserve",
+            "action_id": "print",
+            "action_type": "print",
+            "input_vars": {
+              "rs_value": false,
+              "rs_joined": false,
+              "rs_already": false,
+              "rs_found": false,
+              "rs_card_count": 0,
+              "rs_joined_count": 0,
+              "action_reserve": ""
+            }
+          },
+          {
+            "params": {
+              "mode": "goto",
+              "url": "{{rs_item.reserve_url}}",
+              "wait_until": "domcontentloaded",
+              "timeout": 30000
+            },
+            "action_id": "navigate",
+            "action_type": "navigate",
+            "on_error": "continue"
+          },
+          {
+            "params": {
+              "selector": ".subscribe-section-warp",
+              "state": "attached",
+              "timeout": 15000
+            },
+            "action_id": "wait",
+            "action_type": "wait"
+          },
+          {
+            "params": {
+              "selector": ".subscribe-section-warp",
+              "kind": "count",
+              "missing": "ignore",
+              "timeout": 0
+            },
+            "action_id": "element_state",
+            "action_type": "element_state",
             "output_vars": [
-              "rs_value",
-              "rs_joined",
-              "rs_already",
-              "rs_found"
+              "rs_card_count"
             ]
+          },
+          {
+            "params": {
+              "expression": "rs_card_count > 0",
+              "TrueBranch": [
+                {
+                  "params": {
+                    "message": "预约模块已找到"
+                  },
+                  "action_id": "print",
+                  "action_type": "print",
+                  "input_vars": {
+                    "rs_found": true
+                  }
+                },
+                {
+                  "params": {
+                    "name": "预约点击重试 {{rs_item.reserve_sid}}",
+                    "loop_source": "fixed_count",
+                    "count": 3,
+                    "break_condition": {
+                      "logic": "AND",
+                      "condition": {
+                        "field": "rs_joined",
+                        "condition_value_type": "BOOLEAN",
+                        "condition_value": true
+                      }
+                    },
+                    "loopBranch": [
+                      {
+                        "params": {
+                          "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")",
+                          "kind": "count",
+                          "missing": "ignore",
+                          "timeout": 0
+                        },
+                        "action_id": "element_state",
+                        "action_type": "element_state",
+                        "output_vars": [
+                          "rs_joined_count"
+                        ]
+                      },
+                      {
+                        "params": {
+                          "expression": "rs_joined_count > 0",
+                          "TrueBranch": [
+                            {
+                              "params": {
+                                "message": "检测到「已预约」，本轮无需点击"
+                              },
+                              "action_id": "print",
+                              "action_type": "print",
+                              "input_vars": {
+                                "rs_value": true,
+                                "rs_joined": true,
+                                "rs_already": true,
+                                "rs_found": true,
+                                "action_reserve": "已预约"
+                              }
+                            }
+                          ],
+                          "FalseBranch": [
+                            {
+                              "params": {
+                                "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn",
+                                "timeout": 15000
+                              },
+                              "action_id": "click",
+                              "action_type": "click",
+                              "on_error": "continue",
+                              "input_vars": {
+                                "rs_already": false
+                              }
+                            },
+                            {
+                              "params": {
+                                "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")",
+                                "state": "attached",
+                                "timeout": 4000
+                              },
+                              "action_id": "wait",
+                              "action_type": "wait"
+                            },
+                            {
+                              "params": {
+                                "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")",
+                                "kind": "count",
+                                "missing": "ignore",
+                                "timeout": 0
+                              },
+                              "action_id": "element_state",
+                              "action_type": "element_state",
+                              "output_vars": [
+                                "rs_joined_count"
+                              ]
+                            },
+                            {
+                              "params": {
+                                "expression": "rs_joined_count > 0",
+                                "TrueBranch": [
+                                  {
+                                    "params": {
+                                      "message": "预约点击已生效"
+                                    },
+                                    "action_id": "print",
+                                    "action_type": "print",
+                                    "input_vars": {
+                                      "rs_value": true,
+                                      "rs_joined": true,
+                                      "rs_found": true,
+                                      "action_reserve": "已预约"
+                                    }
+                                  }
+                                ],
+                                "FalseBranch": [
+                                  {
+                                    "params": {
+                                      "message": "点击后未出现「已预约」，准备重试"
+                                    },
+                                    "action_id": "print",
+                                    "action_type": "print"
+                                  }
+                                ]
+                              },
+                              "action_id": "if_else",
+                              "action_type": "if_else"
+                            },
+                            {
+                              "params": {
+                                "timeout": 1000
+                              },
+                              "action_id": "wait",
+                              "action_type": "wait"
+                            }
+                          ]
+                        },
+                        "action_id": "if_else",
+                        "action_type": "if_else"
+                      }
+                    ]
+                  },
+                  "action_id": "loop",
+                  "action_type": "loop",
+                  "on_error": "continue"
+                }
+              ],
+              "FalseBranch": [
+                {
+                  "params": {
+                    "message": "未找到预约模块/卡片，本轮跳过"
+                  },
+                  "action_id": "print",
+                  "action_type": "print"
+                }
+              ]
+            },
+            "action_id": "if_else",
+            "action_type": "if_else"
           },
           {
             "params": {

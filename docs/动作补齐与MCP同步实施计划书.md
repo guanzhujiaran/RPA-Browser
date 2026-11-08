@@ -2,6 +2,11 @@
 
 > 用途：移交新会话执行。执行方只按本文件 + 文末提示词作业。
 > 仓库：`/home/minato/BilibiliExplosion/RPA-Browser`（Python 3.13 / FastAPI / Playwright）。
+>
+> ⚠️ 后续变更（2026-11-07）：`bili_reserve` 站点专属内置动作已移除，其 DOM 流程改由动作 JSON 表达，
+> 内置动作数 **31 → 30**；`get_window` 显示名改为「获取 window 属性」；图标编号已全量覆盖 `s_33` 真实编号。
+> 本文中的「31 个动作 / rpa_debug_actions_list 返回 31」为当时基线，现以
+> `docs/内置动作通用化与图标全覆盖计划书.md` 与 `scripts/check_action_consistency.py` 的实际输出为准。
 
 ---
 

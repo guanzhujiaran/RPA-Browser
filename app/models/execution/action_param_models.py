@@ -1159,75 +1159,6 @@ class PickLineParams(BaseActionParams):
     )
 
 
-class BiliReserveParams(BaseActionParams):
-    """参与 B 站空间预约抽奖参数 - DOM 流程
-
-    导航到预约页面（space 空间页），在预约卡片列表中定位到未参与的预约并点击“预约”按钮，
-    通过点击后是否出现“取消预约”按钮判断是否参与成功。
-    """
-
-    reserve_url: str = Field(
-        max_length=2048, description="预约所在的空间页面地址（如 https://space.bilibili.com/xxx）"
-    )
-    reserve_sid: str | None = Field(
-        default=None,
-        max_length=128,
-        description="直播预约 sid（可选）；提供且卡片带 sid 属性时用于精确定位",
-    )
-    card_selector: str = Field(
-        default=".subscribe-section-warp",
-        max_length=300,
-        description="预约卡片列表项选择器（空间页「预约」模块的单个卡片）",
-    )
-    sid_attr: str = Field(
-        default="data-sid",
-        max_length=100,
-        description="卡片上存放 sid 的属性名（用于按 reserve_sid 精确定位）",
-    )
-    join_button_selector: str = Field(
-        default="button.btn",
-        max_length=300,
-        description="预约（参与）按钮选择器；相对卡片定位，勿写全路径",
-    )
-    cancel_button_selector: str = Field(
-        default="button.btn:has-text('已预约')",
-        max_length=300,
-        description="已参与按钮选择器；相对卡片定位，已参与态文案为「已预约」",
-    )
-    wait_timeout: float = Field(
-        default=15000,
-        ge=1000,
-        le=120000,
-        description="等待卡片/按钮出现的超时时间（毫秒）",
-    )
-    click_retries: int = Field(
-        default=3,
-        ge=1,
-        le=5,
-        description=(
-            "点击「预约」后未出现「已预约」时的最大尝试次数。"
-            "空间页首屏渲染完成后会重新挂载预约模块，紧贴卡片出现的那次点击"
-            "会被页面重渲染吞掉（Playwright 报 clicked=true 但业务无效），"
-            "因此需要重试一次才真正生效"
-        ),
-    )
-    verify_timeout: float = Field(
-        default=4000,
-        ge=500,
-        le=15000,
-        description=(
-            "每次点击后轮询「已预约」按钮出现的时长（毫秒）；"
-            "超时仍未出现则判定本次点击被吞，进入下一次尝试"
-        ),
-    )
-    retry_interval: float = Field(
-        default=1000,
-        ge=200,
-        le=5000,
-        description="两次点击尝试之间的间隔（毫秒）",
-    )
-
-
 class LoopParams(BaseActionParams):
     """循环控制流操作参数
 
@@ -1488,7 +1419,6 @@ AllActionParams = (
     | ShuffleListParams
     | SortListParams
     | PickLineParams
-    | BiliReserveParams
     | NotifyParams
     | LoopParams
     | IfElseParams
@@ -1533,7 +1463,6 @@ BUILTIN_ACTION_PARAMS_MAP: dict[str, Type[AllActionParams]] = {
     "sort_list": SortListParams,
     "pick_line": PickLineParams,
     "notify": NotifyParams,
-    "bili_reserve": BiliReserveParams,
     "loop": LoopParams,
     "if_else": IfElseParams,
     "composite": CompositeParams,

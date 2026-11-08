@@ -32,7 +32,6 @@ from app.models.execution.action_param_models import (
     ActionLogOption,
     AllActionParams,
     BaseActionParams,
-    BiliReserveParams,
     BUILTIN_ACTION_PARAMS_MAP,
     ClickParams,
     CompositeParams,
@@ -72,7 +71,6 @@ from app.models.execution.action_param_models import (
 )
 from app.models.execution.action_result_models import (
     AllActionResult,
-    BiliReserveResult,
     BUILTIN_ACTION_RESULT_MAP,
     ClickResult,
     CompositeResult,
@@ -118,7 +116,6 @@ from app.models.execution.variable_specs import (
 )
 from app.models.execution.workflow_step_models import (
     BaseWorkflowStep,
-    BiliReserveWorkflowStep,
     ClickWorkflowStep,
     CompositeWorkflowStep,
     ElementStateWorkflowStep,
@@ -178,7 +175,6 @@ __all__ = [
     "ActionLogOption",
     "AllActionParams",
     "BaseActionParams",
-    "BiliReserveParams",
     "BUILTIN_ACTION_PARAMS_MAP",
     "ClickParams",
     "CompositeParams",
@@ -217,7 +213,6 @@ __all__ = [
     "WaitParams",
     # action_result_models
     "AllActionResult",
-    "BiliReserveResult",
     "BUILTIN_ACTION_RESULT_MAP",
     "ClickResult",
     "CompositeResult",
@@ -248,7 +243,6 @@ __all__ = [
     "WaitResult",
     # workflow_step_models
     "BaseWorkflowStep",
-    "BiliReserveWorkflowStep",
     "ClickWorkflowStep",
     "CompositeWorkflowStep",
     "ElementStateWorkflowStep",
