@@ -10,12 +10,32 @@
 状态口径（见 `ResourceProcessStatus`）：
     - success：处理成功（终态，下次默认跳过）
     - skipped：显式跳过（终态，如 404/活动结束），**不算失败**
-    - failed：处理失败（下次仍会被捞起重试），**计入失败**
+    - failed：处理失败（下次仍会被捞起重试），按 `fail_reason` 再分两类：
+        * 可重试软失败（soft_failed）：明确「下一轮重试 / 结果未确认」这类过程性失败，
+          只留痕与告警，不改变运行结论；
+        * 致命失败（fatal_failed）：其余全部失败，仍按阈值决定运行结论。
+
+分类关键词由配置注入（见 `settings.workflow_resource_soft_fail_keywords`），
+本模块只提供纯判定函数，不内置任何业务文案。
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel, Field
+
+
+def is_retryable_failure(fail_reason: str | None, keywords: Sequence[str]) -> bool:
+    """判断一条失败原因是否属于「可重试软失败」。
+
+    采用**白名单 + fail-safe**：只有命中调用方注入的关键词才算软失败；
+    原因为空、未配置关键词或未命中，一律返回 False（按致命失败处理），
+    避免新出现的未知错误被静默放过。
+    """
+    if not fail_reason or not keywords:
+        return False
+    return any(keyword and keyword in fail_reason for keyword in keywords)
 
 
 class RunResourceStats(BaseModel):
@@ -25,6 +45,14 @@ class RunResourceStats(BaseModel):
     success: int = Field(default=0, description="成功数（终态）")
     failed: int = Field(default=0, description="失败数（下一轮会重试）")
     skipped: int = Field(default=0, description="终态跳过数（如 404，不算失败）")
+    soft_failed: int = Field(
+        default=0, description="失败中按 fail_reason 判定的可重试软失败数"
+    )
+
+    @property
+    def fatal_failed(self) -> int:
+        """致命失败数（只有它参与运行结论降级）"""
+        return max(self.failed - self.soft_failed, 0)
 
     @property
     def failed_ratio(self) -> float:
@@ -46,4 +74,4 @@ class RunResourceStats(BaseModel):
         )
 
 
-__all__ = ["RunResourceStats"]
+__all__ = ["RunResourceStats", "is_retryable_failure"]

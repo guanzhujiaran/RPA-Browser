@@ -69,6 +69,14 @@ class WorkflowRunProgressData(SQLModel):
     resume_count: int = Field(default=0, description="连续恢复次数")
     error_message: str | None = Field(default=None, description="失败/中断原因")
 
+    # === 结果计数（终态帧下发）===
+    # 运行展示不再给「成功/失败」结论，只给可数结果：有资源记录时按资源成功数
+    # 报「成功循环 N 轮」，纯步骤工作流按成功步骤数报「成功 N 步」。
+    resource_total: int = Field(default=0, description="本次运行处理的资源总数")
+    resource_success: int = Field(default=0, description="资源处理成功数（= 成功循环轮次）")
+    resource_failed: int = Field(default=0, description="资源处理失败数")
+    resource_skipped: int = Field(default=0, description="资源跳过数")
+
     @property
     def is_terminal(self) -> bool:
         """是否已到终态（终态帧推送后服务端关闭 SSE）"""
@@ -108,6 +116,10 @@ class WorkflowRunProgressData(SQLModel):
             resume_of=run.resume_of,
             resume_count=run.resume_count,
             error_message=run.error_message,
+            resource_total=run.resource_total,
+            resource_success=run.resource_success,
+            resource_failed=run.resource_failed,
+            resource_skipped=run.resource_skipped,
         )
 
 

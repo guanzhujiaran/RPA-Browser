@@ -12,6 +12,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.models.runtime.workflow_progress import LoopRunSummary, render_loop_summaries
 from app.models.runtime.workflow_progress import WorkflowRunProgressData
 from app.services.execution.run_events import WorkflowRunSummary
@@ -22,8 +24,9 @@ from app.services.execution.workflow.run_workflow import (
     _collect_resource_stats,
     _resolve_run_counts,
     _should_trip_tolerated_breaker,
+    _soft_fail_keywords,
 )
-from app.models.execution.resource_stats import RunResourceStats
+from app.models.execution.resource_stats import RunResourceStats, is_retryable_failure
 from app.services.execution.workflow_progress import (
     WorkflowRunProgressReporter,
     workflow_run_reporters,
@@ -113,7 +116,7 @@ class TestRunNotifyContent:
 
         assert "运行告警：91 个步骤失败但已容错继续" in content
         assert "[LLM(llm)] Error code: 429" in content
-        assert "不改变运行结论" in content
+        assert "不影响本次结果统计" in content
 
     def test_no_alert_when_none_tolerated(self):
         content = _run_notify_content(
@@ -151,7 +154,9 @@ class TestRunNotifyContent:
             },
         )
 
-        assert "资源结果：成功 62 / 失败 13 / 跳过 2（共 77）" in content
+        # 运行不再给成功/失败结论，按资源成功数报「成功循环 N 轮」
+        assert "处理结果：成功循环 62 轮（共 77 条资源，跳过 2）" in content
+        assert "成功 18 / 失败" not in content
 
     def test_no_resource_line_without_resource_records(self):
         content = _run_notify_content(
@@ -456,22 +461,84 @@ class TestResourceFailureJudgement:
         msg = _build_resource_failure_message(stats, threshold=1)
 
         assert "成功 62 / 失败 13 / 跳过 2（共 77）" in msg
-        assert "13 条资源处理失败（阈值 1）" in msg
+        assert "13 条资源处理失败" in msg
+        assert "致命 13 条触发阈值 1" in msg
         assert "下一轮会被重新捞起" in msg
+
+    def test_message_separates_retryable_soft_failures(self):
+        """致命与可重试软失败必须分开写，否则用户看不懂判定依据。"""
+        stats = RunResourceStats(
+            total=153, success=134, failed=18, skipped=1, soft_failed=17
+        )
+        msg = _build_resource_failure_message(stats, threshold=1)
+
+        assert stats.fatal_failed == 1
+        assert "致命 1 条触发阈值 1" in msg
+        assert "另有 17 条可重试软失败不计入判定" in msg
 
     def test_stats_helpers(self):
         empty = RunResourceStats()
         assert not empty.has_data
         assert empty.failed_ratio == 0.0
+        assert empty.fatal_failed == 0
 
         stats = RunResourceStats(total=4, success=2, failed=1, skipped=1)
         assert stats.has_data
         assert stats.failed_ratio == 0.25
+        assert stats.fatal_failed == 1
+
+    def test_all_soft_failures_never_reach_threshold(self):
+        """2026-11-08 run de801661：18 条失败全是软失败，不该整轮判失败。"""
+        stats = RunResourceStats(
+            total=153, success=134, failed=18, skipped=1, soft_failed=18
+        )
+
+        assert stats.failed == 18, "软失败仍计入失败总数，展示口径不变"
+        assert stats.fatal_failed == 0, "全部是可重试软失败时不触发降级"
+        assert stats.failed_ratio == pytest.approx(18 / 153)
+
+    def test_unknown_reason_is_fail_safe(self):
+        """白名单 + fail-safe：未知原因、空原因、未配置关键词都按致命处理。"""
+        keywords = ("下一轮重试", "可能未生效", "中途异常")
+
+        assert is_retryable_failure("评论未提交成功，下一轮重试", keywords)
+        assert is_retryable_failure("未检测到分享成功提示，转发可能未生效", keywords)
+        assert is_retryable_failure("本轮未完成参与(中途异常)", keywords)
+        assert not is_retryable_failure("页面未就绪(page_ok=false)", keywords)
+        assert not is_retryable_failure(None, keywords)
+        assert not is_retryable_failure("", keywords)
+        assert not is_retryable_failure("下一轮重试", ()), "未配置关键词 = 关闭分类"
+
+    def test_soft_fail_keywords_from_settings(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.config.settings.workflow_resource_soft_fail_keywords",
+            " 下一轮重试 , ,可能未生效,",
+        )
+        assert _soft_fail_keywords() == ("下一轮重试", "可能未生效")
+
+    async def test_collect_injects_configured_keywords(self, monkeypatch):
+        seen: dict[str, object] = {}
+
+        async def _fake(run_id: str, *, soft_fail_keywords=()):
+            seen["run_id"] = run_id
+            seen["keywords"] = soft_fail_keywords
+            return RunResourceStats(total=1, failed=1, soft_failed=1)
+
+        monkeypatch.setattr(
+            "app.services.execution.crud_service.resource_record_crud."
+            "ResourceRecordService.count_by_execution",
+            _fake,
+        )
+        stats = await _collect_resource_stats("run-x")
+
+        assert seen["run_id"] == "run-x"
+        assert "下一轮重试" in seen["keywords"]
+        assert stats.fatal_failed == 0
 
     async def test_collect_falls_back_to_empty_on_error(self, monkeypatch):
         """统计查询失败不能拖垮运行收口：退化为无资源数据。"""
 
-        async def _boom(_run_id: str):
+        async def _boom(_run_id: str, *, soft_fail_keywords=()):
             raise RuntimeError("db down")
 
         monkeypatch.setattr(

@@ -80,16 +80,34 @@ def register_background_tasks():
         coalesce=True,
     )
 
-    # 操作日志过期清理 - 每 action_log_cleanup_interval 秒执行一次（默认 24h）
-    # 按 started_at 删除超过 settings.action_log_default_retention_days（默认 7 天）
-    # 的步骤级操作日志，防止日志表无限增长占满硬盘；retention=0 时任务空转。
+    # 操作日志清理 - 每 action_log_cleanup_interval 秒执行一次（默认 24h）
+    # 双重约束：① 按 started_at 删除超过 action_log_default_retention_days（默认 7 天）
+    # 的过期日志；② 时间窗口管不住「窗口内写多少」，再按 action_log_max_rows
+    # （默认 200 万行）从旧到新删除超额行。两者都只告警不阻塞调度。
     from app.services.execution.crud_service import action_log_crud_svr
 
     scheduler_manager_ist.add_interval_job(
-        func=action_log_crud_svr.cleanup_expired,
+        func=action_log_crud_svr.cleanup,
         seconds=settings.action_log_cleanup_interval,
         id="action_log_cleanup",
-        name="操作日志过期清理",
+        name="操作日志过期与容量清理",
+        misfire_grace_time=None,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # 资源记录容量清理 - 每 resource_record_cleanup_interval 秒执行一次（默认 24h）
+    # 去重记录只增不减，按 last_processed_at 从旧到新删除超过
+    # resource_record_max_rows（默认 200 万行）的记录，防止磁盘被历史去重数据占满。
+    from app.services.execution.crud_service.resource_record_crud import (
+        ResourceRecordService,
+    )
+
+    scheduler_manager_ist.add_interval_job(
+        func=ResourceRecordService.enforce_row_cap,
+        seconds=settings.resource_record_cleanup_interval,
+        id="resource_record_cleanup",
+        name="资源记录容量清理",
         misfire_grace_time=None,
         max_instances=1,
         coalesce=True,

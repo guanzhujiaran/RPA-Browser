@@ -31,6 +31,57 @@ class ElementStateEnum(StrEnumAutoDoc):
     DETACHED = "detached"
 
 
+class LocatorStrategyEnum(StrEnumAutoDoc):
+    """元素定位策略枚举（与站点无关的通用定位机制）
+
+    只描述「用哪种方式找元素」，不含任何具体站点规则；业务差异一律由动作 JSON 表达。
+    """
+
+    CSS = "css"
+    """CSS 选择器（默认，兼容历史动作 JSON）"""
+
+    TEXT = "text"
+    """按可见文本定位（对应 Playwright ``get_by_text``）"""
+
+    ROLE = "role"
+    """按 ARIA role 定位（对应 ``get_by_role``，value 写 role 名如 button/link）"""
+
+    TESTID = "testid"
+    """按 ``data-testid`` 定位（对应 ``get_by_test_id``）"""
+
+    LABEL = "label"
+    """按表单控件的关联 label 文本定位（对应 ``get_by_label``）"""
+
+    PLACEHOLDER = "placeholder"
+    """按输入框 placeholder 定位（对应 ``get_by_placeholder``）"""
+
+    XPATH = "xpath"
+    """XPath 定位（对应 ``xpath=`` 引擎）"""
+
+
+class LocatorPickEnum(StrEnumAutoDoc):
+    """定位命中多个元素时的取值策略
+
+    Playwright 单元素 API 默认严格模式：多命中直接抛错。真实动态页里同构节点
+    常常成组出现（列表容器、隐藏的响应式副本），需要显式声明取哪一个。
+    """
+
+    STRICT = "strict"
+    """严格模式：要求恰好命中一个，多命中即报错（单元素动作的默认值）"""
+
+    FIRST = "first"
+    """取第一个命中元素"""
+
+    LAST = "last"
+    """取最后一个命中元素"""
+
+    NTH = "nth"
+    """取第 nth 个命中元素（需同时提供 ``nth``，从 0 开始）"""
+
+    ALL = "all"
+    """不做收窄：交给动作按整批处理（读取类动作的默认值）"""
+
+
 class WaitMatchEnum(StrEnumAutoDoc):
     """等待动作的多元素匹配范围
 
@@ -109,9 +160,14 @@ class ElementStateKindEnum(StrEnumAutoDoc):
 
 
 class MissingPolicyEnum(StrEnumAutoDoc):
-    """目标元素不存在时的处理策略"""
+    """目标元素不存在（定位器所有候选都没命中）时的处理策略
 
-    IGNORE = "ignore"  # 按空值成功返回（当作探针，默认）
+    - 探针类动作（``element_state``）默认 ``ignore``：按空值成功返回；
+    - 必须打到元素的动作（``click`` / ``input`` 等）默认 ``fail``：
+      交由 retry / on_error 接管，避免「没点到却记成功」。
+    """
+
+    IGNORE = "ignore"  # 按空值成功返回（当作探针）
     FAIL = "fail"  # 直接失败（交由 retry / on_error 接管）
 
 

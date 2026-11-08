@@ -69,6 +69,14 @@ class WorkflowRunSummary(SQLModel):
     resource_skipped: int = Field(
         default=0, description="资源终态跳过数（如 404，不算失败）"
     )
+    # 按 fail_reason 分类：软失败只告警，只有致命失败参与运行结论降级
+    #（见 docs/通知动作与运行告警计划书.md §D5.1）
+    resource_soft_failed: int = Field(
+        default=0, description="可重试软失败数（不改变运行结论）"
+    )
+    resource_fatal_failed: int = Field(
+        default=0, description="致命资源失败数（运行结论的实际判据）"
+    )
 
 
 class WorkflowRunStatusChanged(SQLModel):

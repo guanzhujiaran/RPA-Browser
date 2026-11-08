@@ -294,6 +294,18 @@ class UserWorkflow(CommunityResourceBase, table=True):
     last_run_status: str | None = Field(
         default=None, max_length=20, description="上次运行状态: running/success/failed"
     )
+    # 上次运行的可数结果快照：卡片不再展示「成功/失败」结论，只展示
+    # 「成功循环 N 轮」（有资源记录）或「成功 N 步」（纯步骤工作流）。
+    last_run_success_count: int = Field(
+        default=0, description="上次运行成功步骤数（纯步骤工作流的展示口径）"
+    )
+    last_run_total: int = Field(default=0, description="上次运行步骤总数")
+    last_run_resource_total: int = Field(
+        default=0, description="上次运行处理的资源总数（>0 = 批量循环口径）"
+    )
+    last_run_resource_success: int = Field(
+        default=0, description="上次运行资源成功数（= 成功循环轮次）"
+    )
     next_run_at: NaiveDatetime | None = Field(
         default=None, description="下次计划运行时间（由 cron 推导，仅供展示）"
     )
@@ -459,6 +471,21 @@ class WorkflowRunRecord(SQLModel, table=True):
             "时长结算标记（秒）：None=未结算；心跳预扣与最终结算累加，"
             "非 None 表示已结算（幂等依据，见计划书 §8）"
         ),
+    )
+    # === 资源级结果快照（见 docs/通知动作与运行告警计划书.md §D5.1）===
+    # 运行记录原本只存步骤口径，会出现「18/18 步骤成功」却 status=failed 的展示矛盾；
+    # 终态落库时把资源四元组与失败分类固化，列表 / 详情无需再 join 资源表。
+    resource_total: int = Field(default=0, description="本次运行处理的资源总数")
+    resource_success: int = Field(default=0, description="资源处理成功数")
+    resource_failed: int = Field(
+        default=0, description="资源处理失败数（含可重试软失败）"
+    )
+    resource_skipped: int = Field(default=0, description="资源终态跳过数")
+    resource_soft_failed: int = Field(
+        default=0, description="可重试软失败数（不参与运行结论降级）"
+    )
+    resource_fatal_failed: int = Field(
+        default=0, description="致命资源失败数（运行结论的实际判据）"
     )
 
 

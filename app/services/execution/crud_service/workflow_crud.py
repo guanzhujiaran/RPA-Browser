@@ -785,8 +785,16 @@ class WorkflowCrudService:
         status: str | None = None,
         last_run_at: datetime | None = None,
         next_run_at: datetime | None = None,
+        last_run_success_count: int | None = None,
+        last_run_total: int | None = None,
+        last_run_resource_total: int | None = None,
+        last_run_resource_success: int | None = None,
     ) -> bool:
-        """更新工作流的运行状态（定时调度与手动运行共用）"""
+        """更新工作流的运行状态（定时调度与手动运行共用）
+
+        ``last_run_success_count / last_run_resource_*`` 是「上次运行可数结果」快照，
+        供卡片展示「成功循环 N 轮 / 成功 N 步」，不再展示成功/失败结论。
+        """
         values: Dict[str, Any] = {}
         if status is not None:
             values["last_run_status"] = status
@@ -794,6 +802,14 @@ class WorkflowCrudService:
             values["last_run_at"] = last_run_at
         if next_run_at is not None:
             values["next_run_at"] = next_run_at
+        if last_run_success_count is not None:
+            values["last_run_success_count"] = last_run_success_count
+        if last_run_total is not None:
+            values["last_run_total"] = last_run_total
+        if last_run_resource_total is not None:
+            values["last_run_resource_total"] = last_run_resource_total
+        if last_run_resource_success is not None:
+            values["last_run_resource_success"] = last_run_resource_success
         if not values:
             return False
 

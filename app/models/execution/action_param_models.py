@@ -2,8 +2,9 @@
 
 从 ``action_params`` 拆出。包含：
 
-- 参数基类：``BaseActionParams`` / ``SelectorActionParams`` / ``MouseActionParams``
-  （类级 ClassVar 声明变量契约，见 ``variable_specs``）；
+- 参数基类：``BaseActionParams`` / ``ElementTargetParams`` / ``ElementActionParams`` /
+  ``MouseActionParams``（类级 ClassVar 声明变量契约，见 ``variable_specs``）；
+- 元素定位器：``LocatorSpec``（策略 / 多命中选择 / 作用域 / 定位即等待）；
 - 各内置操作的参数模型（``ClickParams`` ~ ``CompositeParams``）与联合类型
   ``AllActionParams``；
 - ``BUILTIN_ACTION_PARAMS_MAP``：动作类型 → 参数模型的注册表。
@@ -29,6 +30,8 @@ from app.models.execution.enums import (
     HttpBodyTypeEnum,
     HttpMethodEnum,
     KeyboardModifierEnum,
+    LocatorPickEnum,
+    LocatorStrategyEnum,
     MissingPolicyEnum,
     MouseButtonEnum,
     NavigateModeEnum,
@@ -134,15 +137,150 @@ class BaseActionParams(SQLModel):
     output_variables: ClassVar[list[VariableSpec]] = []
 
 
-class SelectorActionParams(BaseActionParams):
-    """带元素选择器的操作参数基类"""
+class LocatorSpec(SQLModel):
+    """元素定位器（站点无关的通用定位描述）
 
-    selector: str | None = Field(
-        default=None, max_length=500, description="用于定位元素的选择器"
+    取代历史上的裸 ``selector: str``：一条 ``selector`` 只能表达「CSS 字符串」，
+    真实动态页需要策略（text/role/testid）、多命中选择、定位即等待、父元素/iframe
+    作用域。这里只描述**机制**，具体选择器取值仍然由动作 JSON 提供。
+
+    典型用法::
+
+        {"locator": {"value": ".side-toolbar__action.like", "pick": "first"}}
+        {"locator": {"strategy": "text", "value": "关注", "exact": true}}
+        {"locator": {"value": ".dyn-card", "pick": "nth", "nth": 2}}
+        {"locator": {"value": "#pub button", "within": "bili-comments"}}
+    """
+
+    strategy: LocatorStrategyEnum = Field(
+        default=LocatorStrategyEnum.CSS,
+        description="定位策略：css/text/role/testid/label/placeholder/xpath",
+    )
+    value: str = Field(
+        default="",
+        max_length=500,
+        description=(
+            "定位取值：css 选择器 / 可见文本 / role 名 / xpath 表达式等，"
+            "语义由 strategy 决定；支持 {{变量}} 模板"
+        ),
+    )
+    exact: bool = Field(
+        default=False,
+        description="text/label/placeholder 是否精确匹配（默认包含匹配）",
+    )
+    has_text: str | None = Field(
+        default=None,
+        max_length=500,
+        description="二次过滤：只保留内部包含该文本的命中元素（对应 locator.filter）",
+    )
+    pick: LocatorPickEnum | None = Field(
+        default=None,
+        description=(
+            "多命中时的取值策略：strict/first/last/nth/all。"
+            "留空按动作语义取默认值（单元素动作=strict，读取类动作=all）"
+        ),
+    )
+    nth: int | None = Field(
+        default=None,
+        ge=0,
+        le=1000,
+        description="pick=nth 时取第几个命中元素（从 0 开始）",
+    )
+    state: ElementStateEnum = Field(
+        default=ElementStateEnum.ATTACHED,
+        description=(
+            "定位前等待元素达到的状态（attached/visible/hidden/detached）。"
+            "默认 attached：只等元素进 DOM，可操作性交给 Playwright 自动等待"
+        ),
+    )
+    timeout_ms: float | None = Field(
+        default=None,
+        ge=0,
+        le=300000,
+        description="定位等待超时（毫秒）；留空沿用动作自身的 timeout",
+    )
+    within: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "父元素限定（CSS）：先用该 CSS 找到父元素，再在其内部定位。"
+            "用于「第 N 个条目内部」这类需要作用域的场景"
+        ),
+    )
+    frame: str | None = Field(
+        default=None,
+        max_length=500,
+        description="iframe 定位（CSS）：先进入该 iframe，再在其内部定位元素",
+    )
+
+    @model_validator(mode="after")
+    def check_pick_nth(self) -> "LocatorSpec":
+        """pick=nth 必须给出下标；其余策略忽略 nth，避免静默无效。"""
+        if self.pick is LocatorPickEnum.NTH and self.nth is None:
+            raise ValueError("pick=nth 时必须提供 nth（从 0 开始的下标）")
+        return self
+
+
+class ElementTargetParams(BaseActionParams):
+    """带定位器的操作参数基类（定位器 + 候选优先级链）
+
+    - ``locator``：主定位器；
+    - ``fallbacks``：候选优先级链（主定位器 0 命中时依次尝试），表达
+      「同一语义在不同页面结构下的多种写法」，**不是** CSS 逗号（逗号是并集语义，
+      多命中会直接踩严格模式）。
+    """
+
+    locator: LocatorSpec | None = Field(
+        default=None, description="元素定位器（定位策略/多命中选择/作用域/等待）"
+    )
+    fallbacks: list[LocatorSpec] = Field(
+        default_factory=list,
+        max_length=10,
+        description="候选定位器优先级链：主定位器 0 命中时按顺序尝试",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_selector(cls, data: Any) -> Any:
+        """把历史 ``{"selector": "..."}`` 入参就地转成 ``{"locator": {"value": ...}}``。
+
+        JSON / 数据库已迁移到新结构，这里保留一层容错：老动作 JSON、老日志回放、
+        外部调用方仍按 selector 传参时不会静默变成「没有定位器」。
+        """
+        if not isinstance(data, dict):
+            return data
+        if "selector" not in data:
+            return data
+        raw = data.get("selector")
+        legacy = raw.strip() if isinstance(raw, str) else ""
+        merged = {k: v for k, v in data.items() if k != "selector"}
+        if legacy and not merged.get("locator"):
+            merged["locator"] = {"value": legacy}
+        return merged
+
+    @model_validator(mode="after")
+    def normalize_empty_locator(self) -> "ElementTargetParams":
+        """``locator.value`` 为空的定位器等价于「没有定位器」。
+
+        参数表单会为嵌套对象预填 ``{"value": ""}``（用户还没填选择器），
+        这类空壳必须归一成 ``None``：否则 press / input / scroll 的
+        「无定位器」分支（发给当前焦点、滚整个页面）会被一个空壳挡住。
+        """
+        if self.locator is not None and not self.locator.value.strip():
+            self.locator = None
+        return self
+
+
+class ElementActionParams(ElementTargetParams):
+    """必须操作到元素的动作参数（在定位器之外声明「元素缺失」语义）"""
+
+    missing: MissingPolicyEnum = Field(
+        default=MissingPolicyEnum.FAIL,
+        description="所有候选定位器都没命中时：fail=失败（默认），ignore=按跳过处理",
     )
 
 
-class MouseActionParams(SelectorActionParams):
+class MouseActionParams(ElementActionParams):
     """鼠标操作参数基类"""
 
     position: Position | None = Field(
@@ -184,10 +322,12 @@ class ClickParams(MouseActionParams):
     )
 
 
-class InputParams(BaseActionParams):
-    """输入操作参数 - 对应 locator.fill()"""
+class InputParams(ElementActionParams):
+    """输入操作参数 - 对应 locator.fill()
 
-    selector: str = Field(max_length=500, description="用于定位输入框元素的选择器")
+    ``locator`` 留空时退化为「向当前焦点直接键入」（page.keyboard.type）。
+    """
+
     value: str = Field(max_length=10000, description="要输入的文本内容")
     force: bool = Field(default=False, description="是否绕过可操作性检查，默认为 false")
     trim: bool = Field(
@@ -254,30 +394,31 @@ class NewPageParams(BaseActionParams):
     )
 
 
-class ScrollParams(SelectorActionParams):
+class ScrollParams(ElementTargetParams):
     """滚动操作参数
 
     三种用法（见 ``docs/内置滚动动作参数扩展计划书.md``）：
 
     - **滚轮模式**：提供 ``x`` / ``y``（任一非 None）→ 分 ``steps`` 次调用
       ``page.mouse.wheel``，与站点无关，会正常触发懒加载 / IntersectionObserver；
-    - **元素模式**：提供 ``selector`` → ``locator.scroll_into_view_if_needed()``；
+    - **元素模式**：提供 ``locator`` → ``locator.scroll_into_view_if_needed()``
+      （语义是「把该元素滚进视野」，多命中时按 ``first`` 处理）；
     - **兜底模式**：都不提供 → ``window.scrollTo(0, 0)``（滚回顶部，历史行为）。
 
-    滚轮模式优先于 selector。
+    滚轮模式优先于 locator。
     """
 
     x: int | None = Field(
         default=None,
         ge=-100000,
         le=100000,
-        description="水平滚动像素（正数向右）；提供 x/y 时走滚轮相对滚动，忽略 selector",
+        description="水平滚动像素（正数向右）；提供 x/y 时走滚轮相对滚动，忽略 locator",
     )
     y: int | None = Field(
         default=None,
         ge=-100000,
         le=100000,
-        description="垂直滚动像素（正数向下）；提供 x/y 时走滚轮相对滚动，忽略 selector",
+        description="垂直滚动像素（正数向下）；提供 x/y 时走滚轮相对滚动，忽略 locator",
     )
     steps: int = Field(
         default=1,
@@ -293,14 +434,18 @@ class ScrollParams(SelectorActionParams):
     )
 
 
-class WaitParams(SelectorActionParams):
+class WaitParams(ElementTargetParams):
     """等待操作参数
 
-    语义是「选择器命中一批元素，其中是否已有满足 `state` 的」：
+    语义是「定位器命中一批元素，其中是否已有满足 `state` 的」：
     - `match` 缺省时，`visible`/`attached` 按 `any`（任一出现即满足），
       `hidden`/`detached` 按 `all`（全部消失才算消失）；
-    - 选择器命中多个元素（如一条评论一个自定义元素）不会因 Playwright 严格模式报错，
-      而是按上述范围等待。
+    - 定位器命中多个元素（如一条评论一个自定义元素）不会因 Playwright 严格模式报错，
+      而是按上述范围等待；
+    - 提供 `fallbacks` 时，「任一候选满足即返回」（出现类）/「所有候选都满足」（消失类）。
+
+    注意：等待的目标状态是本模型的 `state`；``locator.state`` 在这里不参与定位前等待，
+    避免「等什么状态」出现两个口径。
     """
 
     state: ElementStateEnum = Field(
@@ -326,18 +471,14 @@ class HoverParams(MouseActionParams):
 # 这些参数模型只描述「机制」（按键、读状态、选择、等待），站点差异一律由动作 JSON 表达。
 
 
-class PressParams(BaseActionParams):
+class PressParams(ElementActionParams):
     """按键操作参数 - 对应 locator.press() 或 page.keyboard.press()
 
-    ``selector`` 为空时把按键发给当前页面焦点（全局按键）；提供时先由 Playwright
+    ``locator`` 为空时把按键发给当前页面焦点（全局按键）；提供时先由 Playwright
     聚焦该元素再按键（``Locator.press`` 内部会聚焦，因此「先 focus 再按」是一步）。
     """
 
-    selector: str = Field(
-        default="",
-        max_length=500,
-        description="用于定位要按键的元素的选择器；为空时把按键发给当前焦点",
-    )
+
     key: str = Field(
         min_length=1,
         max_length=50,
@@ -355,7 +496,7 @@ class PressParams(BaseActionParams):
     ]
 
 
-class ElementStateParams(SelectorActionParams):
+class ElementStateParams(ElementTargetParams):
     """元素状态读取参数（探针动作）
 
     ``kind`` 用枚举分流，输出固定为单个变量 ``state_value``：
@@ -372,9 +513,6 @@ class ElementStateParams(SelectorActionParams):
     立即读取（探针模式的常用取值）。
     """
 
-    selector: str = Field(
-        min_length=1, max_length=500, description="用于定位元素的选择器"
-    )
     kind: ElementStateKindEnum = Field(
         default=ElementStateKindEnum.VISIBLE,
         description="读取类型：attribute/count/visible/enabled/input_value",
@@ -416,16 +554,13 @@ class ElementStateParams(SelectorActionParams):
     ]
 
 
-class SelectOptionParams(SelectorActionParams):
+class SelectOptionParams(ElementActionParams):
     """原生下拉选择参数 - 对应 locator.select_option()
 
     ``by`` 决定 ``values`` 的解释方式：value / label / index。
     只支持原生 ``<select>``；自定义下拉（div 模拟）应使用 click 动作。
     """
 
-    selector: str = Field(
-        min_length=1, max_length=500, description="用于定位 select 元素的选择器"
-    )
     by: SelectOptionByEnum = Field(
         default=SelectOptionByEnum.VALUE,
         description="values 的解释方式：value=选项值，label=显示文本，index=从 0 开始的下标",
@@ -459,13 +594,13 @@ class WaitForResponseParams(BaseActionParams):
     匹配口径：URL（glob 或 regex）命中即返回，**先命中先返回**；同一 URL 的多次请求
     （轮询、重试）无法区分先后，需要更精确时应把 ``url_pattern`` 写得更窄。
 
-    **必须优先使用 ``trigger_selector``**：Playwright 的响应监听只对「注册之后到达」的
+    **必须优先使用 ``trigger_locator``**：Playwright 的响应监听只对「注册之后到达」的
     响应生效，而 ``click`` 本身是重的（要等元素可点、滚动稳定、动画结束，实测动辄 2~3s），
     请求往往在 ``click`` 返回前就已回包。若把「点击」与「等响应」拆成两个步骤，
     监听注册时响应早已过去，只会等满 timeout。为此本动作支持在**等待窗口内**执行一次
-    点击：先注册监听，再点 ``trigger_selector``，最后等响应，从根上消除这个竞态。
+    点击：先注册监听，再点 ``trigger_locator``，最后等响应，从根上消除这个竞态。
 
-    ``trigger_selector`` 留空时退化为「纯等待」（兼容旧用法），只适用于请求由
+    ``trigger_locator`` 留空时退化为「纯等待」（兼容旧用法），只适用于请求由
     **其它异步来源**触发（如页面轮询、定时刷新）的场景。
     """
 
@@ -485,11 +620,10 @@ class WaitForResponseParams(BaseActionParams):
         default=False,
         description="是否读取响应体文本（默认不读，避免大响应拖慢与内存占用）",
     )
-    trigger_selector: str = Field(
-        default="",
-        max_length=500,
+    trigger_locator: LocatorSpec | None = Field(
+        default=None,
         description=(
-            "在等待窗口内先点击的元素选择器（推荐：与等待合成一步，避免点击耗时"
+            "在等待窗口内先点击的元素定位器（推荐：与等待合成一步，避免点击耗时"
             "吞掉响应导致监听注册过晚）；留空则只等待、不触发"
         ),
     )
@@ -497,7 +631,7 @@ class WaitForResponseParams(BaseActionParams):
         default=15000,
         ge=1000,
         le=300000,
-        description="trigger_selector 点击操作的超时时间（毫秒），仅在提供选择器时生效",
+        description="trigger_locator 点击操作的超时时间（毫秒），仅在提供定位器时生效",
     )
     timeout: float = Field(
         default=30000, ge=1000, le=300000, description="等待响应的超时时间（毫秒）"
@@ -540,14 +674,15 @@ class WaitForUrlParams(BaseActionParams):
 # endregion
 
 
-class GetTextParams(SelectorActionParams):
+class GetTextParams(ElementTargetParams):
     """获取元素文本参数 - 对应 locator.all_text_contents()
 
     两种读取方式：
 
-    - **平铺**（默认，item_selector 为空）：把 selector 命中的每个元素的文本收集成列表；
-    - **按条目**（提供 item_selector）：先按 item_selector 切出「条目」，再取每个条目内
-      selector 命中的第一个文本，一个条目产生一条结果。条目级还能用 exclude_selector
+    - **平铺**（默认，item_locator 为空）：把 ``locator`` 命中的每个元素的文本收集成列表
+      （``locator.pick`` 留空时按 ``all`` 处理）；
+    - **按条目**（提供 ``item_locator``）：先按它切出「条目」，再取每个条目内
+      ``locator`` 命中的第一个文本，一个条目产生一条结果。条目级还能用 ``exclude_locator``
       剔除整条（例如条目内部出现某个标记节点时跳过该条）。
 
     结果同时给出拼接文本（text）和原始列表（items），列表可直接交给 random_pick 随机取一条。
@@ -558,27 +693,24 @@ class GetTextParams(SelectorActionParams):
         max_length=50,
         description="多条文本拼成 text 时的分隔符，默认为换行符",
     )
-    item_selector: str = Field(
-        default="",
-        max_length=300,
+    item_locator: LocatorSpec | None = Field(
+        default=None,
         description=(
-            "条目选择器（可选）。提供时按条目分组读取：每个条目内只取 selector 的"
-            "第一个匹配文本，一个条目一条结果。留空则直接收集 selector 的所有匹配"
+            "条目定位器（可选）。提供时按条目分组读取：每个条目内只取 locator 的"
+            "第一个匹配文本，一个条目一条结果。留空则直接收集 locator 的所有匹配"
         ),
     )
-    exclude_selector: str = Field(
-        default="",
-        max_length=300,
+    exclude_locator: LocatorSpec | None = Field(
+        default=None,
         description=(
-            "条目排除选择器（可选，需配合 item_selector）。条目内部命中该选择器时"
-            "整条跳过（如置顶标记节点）；支持逗号并列多个选择器。留空表示不按节点排除"
+            "条目排除定位器（可选，需配合 item_locator）。条目内部命中该定位器时"
+            "整条跳过（如置顶标记节点）。留空表示不按节点排除"
         ),
     )
-    exclude_text_selector: str = Field(
-        default="",
-        max_length=300,
+    exclude_text_locator: LocatorSpec | None = Field(
+        default=None,
         description=(
-            "条目排除文本的选择器（可选，需配合 item_selector）。取条目内该选择器的文本，"
+            "条目排除文本的定位器（可选，需配合 item_locator）。取条目内该定位器的文本，"
             "与 exclude_text 完全一致（忽略首尾空白）时整条跳过。"
             "例如按用户名排除「UP 主本人的评论」"
         ),
@@ -644,7 +776,7 @@ class GetWindowParams(BaseActionParams):
         return self
 
 
-class ScreenshotParams(SelectorActionParams):
+class ScreenshotParams(ElementTargetParams):
     """截图操作参数 - 对应 locator.screenshot() 或 page.screenshot()"""
 
     type: ScreenshotTypeEnum = Field(
@@ -1169,8 +1301,8 @@ class LoopParams(BaseActionParams):
 
     参数映射 (param_mapping)：
         将循环项的字段映射到循环体内步骤的参数。
-        例如 { "selector": "loop_item.name", "url": "loop_item.link" }
-        表示将当前循环项的 name 字段值注入到子步骤的 selector 参数，
+        例如 { "locator.value": "loop_item.name", "url": "loop_item.link" }
+        表示将当前循环项的 name 字段值注入到子步骤的 locator.value，
         link 字段值注入到 url 参数。
 
         映射源路径支持点分隔嵌套访问，如 "loop_item.user.profile.id"。

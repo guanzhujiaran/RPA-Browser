@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
     # checkpoint 之后重新拉起（至少一次语义，循环内资源由处理记录去重）。
     # 放在 RPC 就绪之后：恢复出来的运行会立刻执行步骤，HTTP 类动作依赖 RPC 链路。
     from app.services.execution.workflow_runner import (
+        relaunch_unstarted_interrupted_runs,
         requeue_pending_runs,
         resume_interrupted_runs,
     )
@@ -103,6 +104,19 @@ async def lifespan(app: FastAPI):
             )
     except Exception as exc:  # noqa: BLE001 - 恢复失败不阻塞服务启动
         logger.exception(f"启动断点恢复失败（不阻塞启动）: {exc}")
+
+    # 0 步中断自动重跑：服务重启前尚未执行任何步骤、也没有资源记录的运行，
+    # 语义等同 QUEUED，整轮重跑一次避免用户看到非业务原因的意外失败。
+    # 必须在 resume_interrupted_runs 之后：两类候选互斥，且不打断断点恢复。
+    # 见 docs/同浏览器工作流排队计划书.md §4.1
+    try:
+        relaunched = await relaunch_unstarted_interrupted_runs()
+        if relaunched:
+            logger.warning(
+                f"⚠️ 已自动重跑 {len(relaunched)} 条 0 步中断运行: {relaunched[:20]}"
+            )
+    except Exception as exc:  # noqa: BLE001 - 自动重跑失败不阻塞服务启动
+        logger.exception(f"启动 0 步中断自动重跑失败（不阻塞启动）: {exc}")
 
     # 启动操作日志 MQ 消费端（可选：仅当 action_log_use_mq 开启时）。
     # 启动失败不阻塞服务：发布端在投递失败时会自动回落同步直写（日志不丢），

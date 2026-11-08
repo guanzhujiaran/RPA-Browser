@@ -20,11 +20,13 @@ from datetime import datetime
 from typing import Any, Iterable, Sequence
 
 import sqlalchemy as sa
+from loguru import logger
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func as sa_func
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlmodel import select
 
+from app.config import settings
 from app.models.base.base_sqlmodel import (
     BasePaginationReq,
     BasePaginationResp,
@@ -33,7 +35,8 @@ from app.models.database.workflow.resource_record import (
     ResourceProcessStatus,
     WorkflowResourceRecord,
 )
-from app.models.execution.resource_stats import RunResourceStats
+from app.models.execution.resource_stats import RunResourceStats, is_retryable_failure
+from app.utils.db_retention import trim_table_to_row_cap
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -86,7 +89,9 @@ class ResourceRecordService:
             return {r[0] for r in rows.all()}
 
     @staticmethod
-    async def count_by_execution(execution_id: str) -> RunResourceStats:
+    async def count_by_execution(
+        execution_id: str, *, soft_fail_keywords: Sequence[str] = ()
+    ) -> RunResourceStats:
         """按运行批次聚合资源处理结果（运行结论的主要判据）
 
         一次工作流运行的所有资源记录都以 `run_id` 作为 `execution_id` 写入，
@@ -94,28 +99,49 @@ class ResourceRecordService:
         注意：只统计本次运行**真正处理过**的资源（upsert 会刷新 execution_id），
         未被捞起的旧记录不会混进来。
 
+        额外按 `(status, fail_reason)` 细分：命中 `soft_fail_keywords` 的 failed
+        计为「可重试软失败」，只留痕不参与结论降级；未命中仍算致命失败。
+        关键词由调用方注入，本服务不内置任何业务文案。
+
         Args:
             execution_id: 运行批次 id（工作流运行场景下等于 WorkflowRunRecord.run_id）
+            soft_fail_keywords: 可重试软失败的 fail_reason 关键词（空 = 关闭分类）
         """
         # 多列 select 走 `session.exec`（SQLModel 的 AsyncSession.execute 只接受
-        # 单实体查询并会告警）；`exec` 对 (status, count) 这类元组行同样返回 Row。
+        # 单实体查询并会告警）；`exec` 对元组行同样返回 Row。
         stmt = (
             select(
                 WorkflowResourceRecord.status,
+                WorkflowResourceRecord.fail_reason,
                 sa_func.count(),
             )
             .where(WorkflowResourceRecord.execution_id == str(execution_id))
-            .group_by(WorkflowResourceRecord.status)
+            .group_by(
+                WorkflowResourceRecord.status,
+                WorkflowResourceRecord.fail_reason,
+            )
         )
         async with DatabaseSessionManager.async_session() as session:
             rows = await session.exec(stmt)  # type: ignore[attr-defined]
-            counts = {str(status): int(count) for status, count in rows.all()}
+            grouped = rows.all()
+
+        failed_key = str(ResourceProcessStatus.FAILED).lower()
+        counts: dict[str, int] = {}
+        soft_failed = 0
+        for status, fail_reason, count in grouped:
+            key = str(status).lower()
+            counts[key] = counts.get(key, 0) + int(count)
+            if key == failed_key and is_retryable_failure(
+                fail_reason, soft_fail_keywords
+            ):
+                soft_failed += int(count)
 
         return RunResourceStats(
             total=sum(counts.values()),
-            success=counts.get(str(ResourceProcessStatus.SUCCESS), 0),
-            failed=counts.get(str(ResourceProcessStatus.FAILED), 0),
-            skipped=counts.get(str(ResourceProcessStatus.SKIPPED), 0),
+            success=counts.get(str(ResourceProcessStatus.SUCCESS).lower(), 0),
+            failed=counts.get(failed_key, 0),
+            skipped=counts.get(str(ResourceProcessStatus.SKIPPED).lower(), 0),
+            soft_failed=soft_failed,
         )
 
     @staticmethod
@@ -390,6 +416,33 @@ class ResourceRecordService:
             result = await session.execute(stmt)
             await session.commit()
             return int(result.rowcount or 0)
+
+    # ---------------- 表容量上限 ----------------
+
+    @staticmethod
+    async def enforce_row_cap() -> int:
+        """资源记录表固定行数上限（`resource_record_max_rows`），返回删除条数。
+
+        去重记录只增不减：工作流越多、处理量越大，表越大。这里按 `last_processed_at`
+        从旧到新删除，保留最近被处理过的 max_rows 行。
+
+        注意：被删掉的资源会**重新参与取数**（去重记录没了），所以上限只是防磁盘打满
+        的兜底，不应设得比业务上还关心的历史窗口还小。
+        """
+        max_rows = int(settings.resource_record_max_rows or 0)
+        if max_rows <= 0:
+            return 0
+        try:
+            return await trim_table_to_row_cap(
+                model=WorkflowResourceRecord,
+                order_column="last_processed_at",
+                max_rows=max_rows,
+                batch_size=settings.record_cap_delete_batch_size,
+                label="ResourceRecord",
+            )
+        except Exception as exc:  # noqa: BLE001 - 清理失败不打断调度
+            logger.warning(f"[ResourceRecord] 行数上限清理失败: {exc}")
+            return 0
 
     @staticmethod
     async def list_history(

@@ -95,11 +95,20 @@ def _build_resource_failure_message(
 
     步骤全绿但资源失败，是业务工作流最常见的「假成功」；文案必须把
     「成功/失败/跳过」三个口径都写出来，并说明失败会被下一轮重试。
+    只有 `fatal_failed` 触发阈值，可重试软失败单独列出，避免把两类混为一谈。
     """
     return (
         f"{stats.describe()}，其中 {stats.failed} 条资源处理失败"
-        f"（阈值 {threshold}），判定为失败；失败资源下一轮会被重新捞起重试"
+        f"（致命 {stats.fatal_failed} 条触发阈值 {threshold}，"
+        f"另有 {stats.soft_failed} 条可重试软失败不计入判定），"
+        f"判定为失败；失败资源下一轮会被重新捞起重试"
     )
+
+
+def _soft_fail_keywords() -> tuple[str, ...]:
+    """解析可重试软失败的 fail_reason 关键词（逗号分隔，去空白与空项）"""
+    raw = str(settings.workflow_resource_soft_fail_keywords or "")
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
 async def _collect_resource_stats(run_id: str) -> RunResourceStats:
@@ -107,9 +116,12 @@ async def _collect_resource_stats(run_id: str) -> RunResourceStats:
 
     统计失败绝不能让收口流程异常（否则运行永远停在 RUNNING），
     查询异常时退化为空统计，运行结论回到步骤级判定。
+    软失败关键词由配置注入，执行体不内置业务文案。
     """
     try:
-        return await ResourceRecordService.count_by_execution(run_id)
+        return await ResourceRecordService.count_by_execution(
+            run_id, soft_fail_keywords=_soft_fail_keywords()
+        )
     except Exception as exc:  # noqa: BLE001 - 统计失败降级为无资源数据
         logger.warning(
             f"[WorkflowRunner] 资源统计失败，退回步骤级判定: run={run_id}, {exc}"
@@ -717,22 +729,32 @@ async def run_workflow(
     # ── 资源级判定（业务工作流的**主要**成败指标）──
     # 步骤成功只说明「动作跑完了」：`mark_resource_result` 记 failed 时动作本身仍然
     # 成功返回，于是全部动态都参与失败、运行却显示成功的假绿灯。
-    # 有资源记录时，以资源 failed 数为主判据；资源全绿则不再看容错失败（那些是
+    # 有资源记录时，以资源失败数为主判据；资源全绿则不再看容错失败（那些是
     # 过程噪声，例如 LLM 降级），避免「同一处降级重复上百次」再次误判。
+    # 2026-11-08 起按 fail_reason 分类：明确「下一轮重试 / 结果未确认」的失败是
+    # 可重试软失败，只留痕与告警，不触发降级；未命中关键词的致命失败才套用阈值。
+    # 阈值仍为 1，但批量工作流不会再因为少量软失败被整轮判失败（计划书 §D5.1）。
     resource_stats = await _collect_resource_stats(run.run_id)
     resource_threshold = int(settings.workflow_resource_fail_failed_threshold or 0)
     if (
         status == WorkflowRunStatusEnum.SUCCESS
         and resource_stats.has_data
         and resource_threshold > 0
-        and resource_stats.failed >= resource_threshold
+        and resource_stats.fatal_failed >= resource_threshold
     ):
         status = WorkflowRunStatusEnum.FAILED
         error_message = _build_resource_failure_message(resource_stats, resource_threshold)
         logger.warning(
-            f"[WorkflowRunner] 资源处理失败达到阈值，运行判失败: "
-            f"run={run.run_id}, failed={resource_stats.failed}, "
+            f"[WorkflowRunner] 致命资源失败达到阈值，运行判失败: "
+            f"run={run.run_id}, fatal_failed={resource_stats.fatal_failed}, "
+            f"soft_failed={resource_stats.soft_failed}, "
             f"total={resource_stats.total}, threshold={resource_threshold}"
+        )
+    elif status == WorkflowRunStatusEnum.SUCCESS and resource_stats.soft_failed > 0:
+        logger.warning(
+            f"[WorkflowRunner] 存在可重试软失败，不计入运行结论: "
+            f"run={run.run_id}, soft_failed={resource_stats.soft_failed}, "
+            f"fatal_failed={resource_stats.fatal_failed}, total={resource_stats.total}"
         )
 
     # 容错熔断：`on_error=continue` 允许失败，但不允许「几乎全失败还报成功」。
@@ -789,6 +811,8 @@ async def run_workflow(
         resource_success=resource_stats.success,
         resource_failed=resource_stats.failed,
         resource_skipped=resource_stats.skipped,
+        resource_soft_failed=resource_stats.soft_failed,
+        resource_fatal_failed=resource_stats.fatal_failed,
     )
     # 断点：仅「非用户主动、非执行失败」的中断才可恢复（服务重启 / 关停取消 / 崩溃）
     checkpoint_step = min(progress_reporter.data.completed_steps, total)
@@ -819,6 +843,11 @@ async def run_workflow(
     progress_data.success_count = success_count
     progress_data.failed_count = failed_count
     progress_data.completed_steps = checkpoint_step
+    # 结果计数随终态帧下发：前端不再展示运行成败结论，只展示「成功循环 N 轮 / 成功 N 步」
+    progress_data.resource_total = resource_stats.total
+    progress_data.resource_success = resource_stats.success
+    progress_data.resource_failed = resource_stats.failed
+    progress_data.resource_skipped = resource_stats.skipped
     await progress_reporter.flush(
         status=status,
         error_message=error_message,

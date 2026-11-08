@@ -25,6 +25,7 @@ from app.models.database.log.models import (
     ActionLogStatusEnum,
 )
 from app.models.log.models import ActionLogStatsItem, ActionLogStatsResponse
+from app.utils.db_retention import trim_table_to_row_cap
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -376,6 +377,36 @@ class ActionLogCrudService:
                 f"[ActionLog] 已清理 {deleted} 条超过 {retention} 天的操作日志"
             )
         return deleted
+
+    @staticmethod
+    async def enforce_row_cap() -> int:
+        """执行日志表固定行数上限（`action_log_max_rows`），返回删除条数。
+
+        时间窗口（`action_log_default_retention_days`）只管「多旧」，管不住「窗口内写多少」；
+        这里按 `started_at` 从旧到新删除，保留最新 max_rows 行，防止单日重负载把表写爆。
+        """
+        max_rows = int(settings.action_log_max_rows or 0)
+        if max_rows <= 0:
+            return 0
+        try:
+            deleted = await trim_table_to_row_cap(
+                model=ActionLogRecord,
+                order_column="started_at",
+                max_rows=max_rows,
+                batch_size=settings.record_cap_delete_batch_size,
+                label="ActionLog",
+            )
+        except Exception as exc:  # noqa: BLE001 - 清理失败不打断调度
+            logger.warning(f"[ActionLog] 行数上限清理失败: {exc}")
+            return 0
+        return deleted
+
+    @staticmethod
+    async def cleanup() -> int:
+        """周期清理总入口：先按时间窗口删除过期日志，再执行固定行数上限。"""
+        expired = await ActionLogCrudService.cleanup_expired()
+        capped = await ActionLogCrudService.enforce_row_cap()
+        return expired + capped
 
 
 action_log_crud_svr = ActionLogCrudService()

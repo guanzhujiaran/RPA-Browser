@@ -17,11 +17,16 @@ from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
 
 from app.models.database.workflow.models import BuiltinActionType
 from app.models.execution.action_params import WaitForResponseParams, WaitForResponseResult
-from app.models.execution.enums import UrlPatternTypeEnum
+from app.models.execution.enums import LocatorPickEnum, UrlPatternTypeEnum
 from app.services.execution.actions.base import (
     ActionResult,
     BaseAction,
     register_action_class,
+)
+from app.services.execution.locator import (
+    LocatorNotFoundError,
+    describe_spec,
+    resolve_target,
 )
 
 #: 响应体输出上限：再长对下游（if_else / llm / print）没有意义，还会撑大日志与变量池
@@ -108,7 +113,8 @@ class WaitForResponseAction(BaseAction[WaitForResponseParams]):
                 return True
             return str(response.request.method).upper() == expected_method
 
-        trigger_selector = (params.trigger_selector or "").strip()
+        trigger = params.trigger_locator
+        trigger_desc = describe_spec(trigger) if trigger is not None else "<无>"
         # 区分「点击触发失败」与「响应等不到」：两者都是 PlaywrightTimeoutError，
         # 但排障方向完全不同（元素不可点 vs 请求没回来），必须给出不同错误信息。
         trigger_done = False
@@ -120,22 +126,43 @@ class WaitForResponseAction(BaseAction[WaitForResponseParams]):
             async with self.page.expect_response(
                 _matches, timeout=params.timeout
             ) as response_info:
-                if trigger_selector:
-                    await self.page.locator(trigger_selector).click(
-                        timeout=params.trigger_timeout
-                    )
+                if trigger is not None:
+                    try:
+                        target = await resolve_target(
+                            self.page,
+                            trigger,
+                            None,
+                            timeout_ms=params.trigger_timeout,
+                            default_pick=LocatorPickEnum.STRICT,
+                        )
+                    except LocatorNotFoundError as exc:
+                        logger.warning(
+                            f"[WaitForResponseAction] 触发元素未命中: {trigger_desc}"
+                        )
+                        return ActionResult(
+                            success=False,
+                            error=(
+                                f"触发点击失败（{params.trigger_timeout}ms 内没有命中元素）: "
+                                f"定位器={trigger_desc}"
+                            ),
+                            execution_time=time.time() - start_time,
+                            action_id=self.metadata.id,
+                            action_name=self.metadata.name,
+                            logs=[str(exc)],
+                        )
+                    await target.locator.click(timeout=params.trigger_timeout)
                     trigger_done = True
             response = await response_info.value
         except PlaywrightTimeoutError as exc:
-            if trigger_selector and not trigger_done:
+            if trigger is not None and not trigger_done:
                 logger.warning(
-                    f"[WaitForResponseAction] 触发点击超时: selector={trigger_selector}"
+                    f"[WaitForResponseAction] 触发点击超时: 定位器={trigger_desc}"
                 )
                 return ActionResult(
                     success=False,
                     error=(
                         f"触发点击失败（{params.trigger_timeout}ms 内元素不可点击）: "
-                        f"selector={trigger_selector}"
+                        f"定位器={trigger_desc}"
                     ),
                     execution_time=time.time() - start_time,
                     action_id=self.metadata.id,
@@ -145,14 +172,14 @@ class WaitForResponseAction(BaseAction[WaitForResponseParams]):
             logger.warning(
                 f"[WaitForResponseAction] 等待响应超时: pattern={params.url_pattern} "
                 f"pattern_type={params.pattern_type} method={expected_method} "
-                f"trigger={trigger_selector or '<无>'}"
+                f"trigger={trigger_desc}"
             )
             return ActionResult(
                 success=False,
                 error=(
                     f"等待响应超时（{params.timeout}ms 内没有匹配的响应）: "
                     f"pattern={params.url_pattern} method={expected_method or 'ANY'} "
-                    f"trigger={trigger_selector or '<无>'}"
+                    f"trigger={trigger_desc}"
                 ),
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,

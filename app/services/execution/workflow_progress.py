@@ -819,18 +819,28 @@ class WorkflowRunProgressReporter:
             self._data.finished_at = datetime.now()
 
         # 先发「运行结束」消息，再发终态进度（终态进度会让 SSE 关闭连接）
+        # 文案只给可数结果，不下「成功/失败」结论：有资源记录时按资源成功数
+        # 报成功循环轮次，纯步骤工作流按成功步骤数报步骤。
         status_value = self._data.status
         level = {
-            "success": "success",
-            "failed": "error",
             "interrupted": "warn",
             "cancelled": "warn",
         }.get(status_value, "info")
-        summary = (
-            f"运行结束：{status_value}"
-            f"（成功 {self._data.success_count} / 失败 {self._data.failed_count}"
-            f" / 共 {self._data.total_steps} 步）"
-        )
+        if self._data.resource_total > 0:
+            summary = (
+                f"运行结束：成功循环 {self._data.resource_success} 轮"
+                f"（共 {self._data.resource_total} 条资源）"
+            )
+        else:
+            success_steps = self._data.success_count
+            total_steps = self._data.total_steps
+            if total_steps <= 0:
+                steps = f"成功 {success_steps} 步"
+            elif success_steps == total_steps:
+                steps = f"成功 {total_steps} 步"
+            else:
+                steps = f"成功 {success_steps}/{total_steps} 步"
+            summary = f"运行结束：{steps}"
         if error_message:
             summary = f"{summary}｜{error_message}"
         self._emit_log(

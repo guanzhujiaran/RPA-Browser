@@ -7,6 +7,7 @@
 - :func:`_on_run_task_done` / :func:`finalize_run_after_task`：task 收尾与统一补收口
   （「停止工作流」复用同一套收尾，不另写清理逻辑）；
 - :func:`resume_run_record` / :func:`resume_interrupted_runs`：重启断点恢复；
+- :func:`relaunch_unstarted_interrupted_runs`：0 步中断自动整轮重跑（§4.1）；
 - :func:`requeue_pending_runs`：重启后把 ``status=QUEUED`` 的运行重新入队
   （见 docs/同浏览器工作流排队计划书.md）。
 
@@ -341,6 +342,98 @@ async def resume_interrupted_runs() -> list[str]:
     return resumed
 
 
+async def _relaunch_one_unstarted(run: WorkflowRunRecord) -> str | None:
+    """把一条 0 步中断的运行整轮重跑一次，返回新 run_id。"""
+    if run.status != WorkflowRunStatusEnum.INTERRUPTED:
+        return None
+
+    workflow = await workflow_crud_svr.get_by_workflow_id(run.workflow_id)
+    if workflow is None or not workflow.is_enabled:
+        logger.info(
+            f"[WorkflowRunner] 工作流不存在或已禁用，跳过自动重跑: "
+            f"run={run.run_id}, workflow={run.workflow_id}"
+        )
+        return None
+
+    target_browser_id = int(run.browser_id or workflow.browser_id or 0)
+    if not target_browser_id:
+        return None
+    # 同浏览器并发防护：已有存活运行时不打断（下次启动再判）
+    running_run_id = await workflow_run_crud_svr.get_running_for_browser(
+        run.mid, target_browser_id
+    )
+    if running_run_id:
+        logger.info(
+            f"[WorkflowRunner] 目标浏览器已有运行，暂不自动重跑: "
+            f"browser={target_browser_id}, running={running_run_id}, "
+            f"interrupted={run.run_id}"
+        )
+        return None
+
+    # 不传 resume_from = 整轮从头跑。trigger_source 原样带入，SCHEDULE 仍走
+    # _precheck 的余额 / 计费校验；0 步 + 无资源记录保证没有可重复的外部副作用。
+    new_run_id = await launch_workflow_run(
+        workflow,
+        trigger_source=run.trigger_source,
+        browser_id=target_browser_id,
+        # 与 requeue_pending_runs 一致：重启后没有原始请求头，
+        # HTTP / MCP 类动作需要 mid 头，用工作流所属 mid 兜底。
+        auth_headers={"x-bili-mid": str(workflow.mid)},
+    )
+    # 先拉起再留痕：launch 失败时不写标记，下次启动还能重试。
+    await workflow_run_crud_svr.mark_auto_restarted(run.run_id, new_run_id)
+    logger.warning(
+        f"[WorkflowRunner] 0 步中断已自动重跑: workflow={run.workflow_id}, "
+        f"old_run={run.run_id}, new_run={new_run_id}, trigger={run.trigger_source}"
+    )
+    return new_run_id
+
+
+async def relaunch_unstarted_interrupted_runs() -> list[str]:
+    """启动自动重跑：0 步中断（服务重启前尚未执行任何步骤）的运行整轮重跑一次。
+
+    与 :func:`resume_interrupted_runs` 的区别：
+    - 只处理 checkpoint=0、无资源记录、``resumable=False`` 的 INTERRUPTED；
+    - 不受 ``workflow.resume_on_restart`` 约束（独立开关），MANUAL / SCHEDULE 都覆盖；
+    - 不传 ``resume_from``，整轮从头跑；旧记录保留终态并追加新 run_id。
+
+    见 ``docs/同浏览器工作流排队计划书.md`` §4.1。单条失败只告警，不阻塞启动。
+
+    Returns:
+        本次自动重跑拉起的新 run_id 列表。
+    """
+    if not settings.workflow_auto_restart_unstarted_interrupted:
+        logger.info("[WorkflowRunner] 0 步中断自动重跑已关闭")
+        return []
+
+    relaunched: list[str] = []
+    try:
+        candidates = await workflow_run_crud_svr.list_unstarted_interrupted(
+            max_age_seconds=settings.workflow_resume_max_age_seconds
+        )
+    except Exception as exc:  # noqa: BLE001 - 扫描失败不阻塞启动
+        logger.warning(f"[WorkflowRunner] 扫描 0 步中断运行失败: {exc}")
+        return relaunched
+
+    for run in candidates:
+        try:
+            new_run_id = await _relaunch_one_unstarted(run)
+            if new_run_id:
+                relaunched.append(new_run_id)
+        except Exception as exc:  # noqa: BLE001 - 单条失败不影响其它重跑
+            logger.warning(
+                f"[WorkflowRunner] 自动重跑失败: run={run.run_id}, error={exc}"
+            )
+    if relaunched:
+        logger.warning(
+            f"[WorkflowRunner] 启动自动重跑完成：{len(relaunched)} 条 0 步中断运行: "
+            f"{relaunched[:20]}"
+        )
+    else:
+        logger.info("[WorkflowRunner] 无需自动重跑的 0 步中断运行")
+    return relaunched
+
+
 # ───────────────────────── 重启后重新排队 ─────────────────────────
 
 
@@ -375,8 +468,9 @@ async def requeue_pending_runs() -> list[str]:
 
     - ``QUEUED``：重新排队，保持原顺序（本函数负责）；
     - ``RUNNING``：已由 ``interrupt_stale_running()`` 收口为 ``INTERRUPTED``，
-      仅 ``resume_on_restart=True`` 的工作流走断点续跑，**不自动重排**（避免
-      无去重记录的工作流重复产生副作用）。
+      仅 ``resume_on_restart=True`` 的工作流走断点续跑；``checkpoint=0`` 且无
+      资源记录的交由 :func:`relaunch_unstarted_interrupted_runs` 整轮重跑（§4.1），
+      其余情况不自动重跑（避免重复副作用）。**不自动重排**。
 
     必须在 ``interrupt_stale_running()`` 之后调用，且不阻塞启动：单条失败只告警。
     """

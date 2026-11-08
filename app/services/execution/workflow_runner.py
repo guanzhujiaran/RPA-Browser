@@ -44,6 +44,7 @@ from app.services.execution.workflow.launcher import (
     _on_run_task_done,
     finalize_run_after_task,
     launch_workflow_run,
+    relaunch_unstarted_interrupted_runs,
     requeue_pending_runs,
     resume_interrupted_runs,
     resume_run_record,
@@ -76,5 +77,6 @@ __all__ = [
     "finalize_run_after_task",
     "resume_run_record",
     "resume_interrupted_runs",
+    "relaunch_unstarted_interrupted_runs",
     "requeue_pending_runs",
 ]

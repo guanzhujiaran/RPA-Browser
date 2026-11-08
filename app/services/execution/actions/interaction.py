@@ -36,9 +36,17 @@ from app.models.database.workflow.models import BuiltinActionType
 from app.models.execution.enums import (
     ElementStateEnum,
     ElementStateKindEnum,
+    LocatorPickEnum,
     MissingPolicyEnum,
     SelectOptionByEnum,
     WaitMatchEnum,
+)
+from app.services.execution.locator import (
+    apply_pick,
+    build_candidates,
+    build_locator,
+    describe_spec,
+    resolve_or_skip,
 )
 from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
 
@@ -65,7 +73,7 @@ class ClickAction(BaseAction[ClickParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = validated_params.selector
+        locator_spec = validated_params.locator
         button = validated_params.button
         click_count = validated_params.click_count
         delay = validated_params.delay
@@ -101,9 +109,30 @@ class ClickAction(BaseAction[ClickParams]):
             if trial:
                 click_kwargs["trial"] = trial
 
-            if selector:
-                locator = self.page.locator(selector)
-                logger.info(f"[ClickAction] Locator 点击参数: {click_kwargs}")
+            if locator_spec is not None:
+                target = await resolve_or_skip(
+                    self.page,
+                    locator_spec,
+                    validated_params.fallbacks,
+                    timeout_ms=timeout,
+                    default_pick=LocatorPickEnum.STRICT,
+                    missing=validated_params.missing,
+                )
+                if target is None:
+                    return ActionResult(
+                        success=True,
+                        data=ClickResult(clicked=False),
+                        logs=["元素未命中，按 missing=ignore 跳过点击"],
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                    )
+                click_kwargs["timeout"] = timeout
+                locator = target.locator
+                logger.info(
+                    f"[ClickAction] Locator 点击参数: {click_kwargs} "
+                    f"命中={target.description}"
+                )
 
                 if click_count == 2:
                     dblclick_kwargs = click_kwargs.copy()
@@ -113,7 +142,7 @@ class ClickAction(BaseAction[ClickParams]):
                     await locator.click(**click_kwargs)
             else:
                 if position is None:
-                    raise ValueError("没有 selector 时必须提供 position")
+                    raise ValueError("没有 locator 时必须提供 position")
 
                 # 使用 page.mouse.click() 直接点击坐标
                 logger.info(
@@ -166,7 +195,7 @@ class InputAction(BaseAction[InputParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = validated_params.selector
+        locator_spec = validated_params.locator
         value = validated_params.value
         force = validated_params.force
         timeout = validated_params.timeout
@@ -186,13 +215,32 @@ class InputAction(BaseAction[InputParams]):
             if timeout != 30000:
                 fill_kwargs["timeout"] = timeout
 
-            if selector:
-                locator = self.page.locator(selector)
-                logger.info(f"[InputAction] fill 参数: {fill_kwargs}")
-                await locator.fill(value, **fill_kwargs)
+            if locator_spec is not None:
+                target = await resolve_or_skip(
+                    self.page,
+                    locator_spec,
+                    validated_params.fallbacks,
+                    timeout_ms=timeout,
+                    default_pick=LocatorPickEnum.STRICT,
+                    missing=validated_params.missing,
+                )
+                if target is None:
+                    return ActionResult(
+                        success=True,
+                        data=InputResult(value_length=0),
+                        logs=["元素未命中，按 missing=ignore 跳过输入"],
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                    )
+                fill_kwargs["timeout"] = timeout
+                logger.info(
+                    f"[InputAction] fill 参数: {fill_kwargs} 命中={target.description}"
+                )
+                await target.locator.fill(value, **fill_kwargs)
             else:
-                # 没有 selector 时，使用 page.keyboard.type 直接输入
-                logger.info(f"[InputAction] 无 selector，使用 page.keyboard.type 输入")
+                # 没有定位器时，使用 page.keyboard.type 直接输入
+                logger.info("[InputAction] 无 locator，使用 page.keyboard.type 输入")
                 await self.page.keyboard.type(value)
 
             return ActionResult(
@@ -236,7 +284,7 @@ class ScrollAction(BaseAction[ScrollParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = validated_params.selector
+        locator_spec = validated_params.locator
         timeout = validated_params.timeout
 
         try:
@@ -277,18 +325,35 @@ class ScrollAction(BaseAction[ScrollParams]):
             if timeout != 30000:
                 scroll_kwargs["timeout"] = timeout
 
-            if selector:
-                locator = self.page.locator(selector)
-                logger.info(
-                    f"[ScrollAction] scroll_into_view_if_needed 参数: {scroll_kwargs}"
-                )
-                # 取 `.first`：`scroll_into_view_if_needed` 是单元素 API，选择器命中
-                # 多个元素（列表容器）时会因 Playwright 严格模式直接抛
+            if locator_spec is not None:
+                # 取 `.first`：`scroll_into_view_if_needed` 是单元素 API，命中多个
+                # 元素（列表容器）时会因 Playwright 严格模式直接抛
                 # `strict mode violation`，滚动一次都不会发生。滚动语义本就是
                 # 「把（第一个）目标滚进视野」，多元素只需处理首个即可。
-                await locator.first.scroll_into_view_if_needed(**scroll_kwargs)
+                target = await resolve_or_skip(
+                    self.page,
+                    locator_spec,
+                    validated_params.fallbacks,
+                    timeout_ms=timeout,
+                    default_pick=LocatorPickEnum.FIRST,
+                )
+                if target is None:
+                    return ActionResult(
+                        success=True,
+                        data=ScrollResult(scrolled=False),
+                        logs=["元素未命中，跳过滚动到元素"],
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                    )
+                logger.info(
+                    f"[ScrollAction] scroll_into_view_if_needed 参数: {scroll_kwargs} "
+                    f"命中={target.description}"
+                )
+                scroll_kwargs["timeout"] = timeout
+                await target.locator.scroll_into_view_if_needed(**scroll_kwargs)
             else:
-                # 没有 selector 时，滚动整个页面到顶部
+                # 没有定位器时，滚动整个页面到顶部
                 await self.page.evaluate("window.scrollTo(0, 0)")
 
             return ActionResult(
@@ -362,28 +427,40 @@ class WaitAction(BaseAction[WaitParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = validated_params.selector
+        target_desc = (
+            describe_spec(validated_params.locator)
+            if validated_params.locator is not None
+            else ""
+        )
         state = validated_params.state
         timeout = validated_params.timeout
         match = validated_params.match or _WAIT_DEFAULT_MATCH[state]
+        candidates = build_candidates(
+            self.page, validated_params.locator, validated_params.fallbacks
+        )
 
         element_found = True
         try:
-            if selector:
-                locator = self.page.locator(selector)
+            if candidates:
+                collections = [collection for _, _, collection in candidates]
                 logger.info(
-                    f"[WaitAction] wait_for 参数: 选择器={selector} "
-                    f"state={state.value} match={match.value} timeout={timeout}ms"
+                    f"[WaitAction] wait_for 参数: 定位器=[{target_desc}] "
+                    f"候选={len(collections)} state={state.value} "
+                    f"match={match.value} timeout={timeout}ms"
                 )
-                if match is WaitMatchEnum.ANY and state not in _WAIT_ABSENT_STATES:
-                    await locator.first.wait_for(
+                if (
+                    len(collections) == 1
+                    and match is WaitMatchEnum.ANY
+                    and state not in _WAIT_ABSENT_STATES
+                ):
+                    await collections[0].first.wait_for(
                         timeout=timeout if timeout != _WAIT_DEFAULT_TIMEOUT_MS else None,
                         state=state.value,
                     )
                 else:
-                    await self._poll_until(locator, state, match, timeout)
+                    await self._poll_until(collections, state, match, timeout)
             else:
-                # 没有 selector 时，使用固定等待
+                # 没有定位器时，使用固定等待
                 await asyncio.sleep(timeout / 1000)
 
             return ActionResult(
@@ -396,18 +473,18 @@ class WaitAction(BaseAction[WaitParams]):
 
         except (TimeoutError, PlaywrightTimeoutError):
             element_found = False
-            logger.warning(f"[WaitAction] 等待超时，未找到元素: {selector}")
+            logger.warning(f"[WaitAction] 等待超时，未满足条件: {target_desc}")
             # 等待被大量用作「状态探针」（元素出现=已点赞/已关注/未登录…），
             # 超时是正常控制流，因此保持 success=True；但把超时详情写进
             # 过程日志（logs），使操作日志的「执行过程日志」可见，
-            # 避免「页面改版 / 选择器失效」与「预期未命中」完全无法区分。
+            # 避免「页面改版 / 定位器失效」与「预期未命中」完全无法区分。
             return ActionResult(
                 success=True,
                 data=WaitResult(element_found=element_found),
                 logs=[
-                    f"等待超时: 选择器 [{selector}] 在 {timeout}ms 内未满足 "
+                    f"等待超时: 定位器 [{target_desc}] 在 {timeout}ms 内未满足 "
                     f"state={state.value} / match={match.value}"
-                    f"（页面未加载 / 选择器失效 / 元素被遮挡 / 预期未命中）"
+                    f"（页面未加载 / 定位器失效 / 元素被遮挡 / 预期未命中）"
                 ],
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
@@ -417,7 +494,7 @@ class WaitAction(BaseAction[WaitParams]):
             return ActionResult(
                 success=True,
                 error=f"等待异常: {e}",
-                logs=[f"等待异常: 选择器 [{selector}] - {e}"],
+                logs=[f"等待异常: 定位器 [{target_desc}] - {e}"],
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
@@ -425,19 +502,20 @@ class WaitAction(BaseAction[WaitParams]):
 
     async def _poll_until(
         self,
-        locator: Locator,
+        locators: List[Locator],
         state: ElementStateEnum,
         match: WaitMatchEnum,
         timeout_ms: float,
     ) -> None:
         """轮询直到满足 `state`（`match` 决定任一/全部），超时抛 Playwright 超时异常。
 
-        只用于 `.first.wait_for` 语义不符的组合（消失类状态、禁止「任一满足」的情况），
-        因此这里按元素逐个判定，命中数量就是选择器实际匹配到的元素个数。
+        只用于 `.first.wait_for` 语义不符的组合（消失类状态、候选链、禁止「任一满足」
+        的情况），因此这里按元素逐个判定，命中数量就是定位器实际匹配到的元素个数。
+        `match` 的作用范围是**所有候选**：any=任一候选满足即返回；all=所有候选都满足。
         """
         deadline = time.monotonic() + timeout_ms / 1000
         while True:
-            if await self._satisfied(locator, state, match is WaitMatchEnum.ALL):
+            if await self._satisfied(locators, state, match is WaitMatchEnum.ALL):
                 return
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -448,14 +526,25 @@ class WaitAction(BaseAction[WaitParams]):
             await asyncio.sleep(min(_WAIT_POLL_INTERVAL_MS / 1000, remaining))
 
     async def _satisfied(
-        self, locator: Locator, state: ElementStateEnum, require_all: bool
+        self, locators: List[Locator], state: ElementStateEnum, require_all: bool
     ) -> bool:
-        """当前是否满足状态：0 个命中元素时，消失类状态直接判定为满足。"""
-        elements = await locator.all()
-        if not elements:
-            return state in _WAIT_ABSENT_STATES
-        results = [await self._element_satisfied(el, state) for el in elements]
-        return all(results) if require_all else any(results)
+        """当前是否满足状态：候选之间按 require_all 组合，单个候选内按元素组合。
+
+        0 个命中元素时，消失类状态直接判定为满足（元素不存在即「已消失」）。
+        """
+        results: list[bool] = []
+        for locator in locators:
+            elements = await locator.all()
+            if not elements:
+                results.append(state in _WAIT_ABSENT_STATES)
+                continue
+            element_results = [
+                await self._element_satisfied(el, state) for el in elements
+            ]
+            results.append(
+                all(element_results) if require_all else any(element_results)
+            )
+        return any(results) if not require_all else all(results)
 
     @staticmethod
     async def _element_satisfied(element: Locator, state: ElementStateEnum) -> bool:
@@ -495,7 +584,7 @@ class HoverAction(BaseAction[HoverParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = validated_params.selector
+        locator_spec = validated_params.locator
         position = validated_params.position
         modifiers = validated_params.modifiers
         force = validated_params.force
@@ -517,15 +606,34 @@ class HoverAction(BaseAction[HoverParams]):
             if timeout != 30000:
                 hover_kwargs["timeout"] = timeout
 
-            if selector:
-                locator = self.page.locator(selector)
-                logger.info(f"[HoverAction] hover 参数: {hover_kwargs}")
-                await locator.hover(**hover_kwargs)
+            if locator_spec is not None:
+                target = await resolve_or_skip(
+                    self.page,
+                    locator_spec,
+                    validated_params.fallbacks,
+                    timeout_ms=timeout,
+                    default_pick=LocatorPickEnum.STRICT,
+                    missing=validated_params.missing,
+                )
+                if target is None:
+                    return ActionResult(
+                        success=True,
+                        data=HoverResult(hovered=False),
+                        logs=["元素未命中，按 missing=ignore 跳过悬停"],
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                    )
+                hover_kwargs["timeout"] = timeout
+                logger.info(
+                    f"[HoverAction] hover 参数: {hover_kwargs} 命中={target.description}"
+                )
+                await target.locator.hover(**hover_kwargs)
             else:
                 if position is None:
                     return ActionResult(
                         success=False,
-                        error="没有 selector 时必须提供 position",
+                        error="没有 locator 时必须提供 position",
                         execution_time=time.time() - start_time,
                         action_id=self.metadata.id,
                         action_name=self.metadata.name,
@@ -578,31 +686,30 @@ class GetTextAction(BaseAction[GetTextParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = validated_params.selector
+        locator_spec = validated_params.locator
+        target_desc = describe_spec(locator_spec) if locator_spec else "<无>"
 
         try:
-            if not selector:
-                raise ValueError("获取元素文本必须提供 selector")
+            if locator_spec is None:
+                raise ValueError("获取元素文本必须提供 locator")
 
             items = await self._collect_texts(validated_params)
             text = validated_params.separator.join(items)
             logger.info(
-                f"[GetTextAction] 获取元素文本: {selector} 共 {len(items)} 条"
+                f"[GetTextAction] 获取元素文本: {target_desc} 共 {len(items)} 条"
             )
 
-            # 通用开关：取不到文本（选择器未命中 / 文本为空）时显式失败，
+            # 通用开关：取不到文本（定位器未命中 / 文本为空）时显式失败，
             # 避免「静默空串」把问题带到下游（如昵称为空导致 LLM 提示词缺上下文）。
             if validated_params.fail_on_empty and not text.strip():
                 return ActionResult(
                     success=False,
-                    error=(
-                        f"未获取到文本（选择器未命中或文本为空）: {selector}"
-                    ),
+                    error=f"未获取到文本（定位器未命中或文本为空）: {target_desc}",
                     data=GetTextResult(text=text, items=items),
                     execution_time=time.time() - start_time,
                     action_id=self.metadata.id,
                     action_name=self.metadata.name,
-                    logs=[f"获取文本为空: {selector}（fail_on_empty=true）"],
+                    logs=[f"获取文本为空: {target_desc}（fail_on_empty=true）"],
                 )
 
             return ActionResult(
@@ -626,38 +733,74 @@ class GetTextAction(BaseAction[GetTextParams]):
     async def _collect_texts(self, p: GetTextParams) -> List[str]:
         """按条目收集文本：一个条目一条，便于直接交给 random_pick 随机取一条
 
-        - item_selector 为空：平铺模式，收集 selector 的所有匹配文本（原有行为）；
-        - 提供 item_selector：以每个条目为范围取 selector 的第一个文本，
-          条目内部命中 exclude_selector 时整条跳过（如置顶标记、UP 主徽章等）。
+        - item_locator 为空：平铺模式，收集 locator 的所有匹配文本
+          （``locator.pick`` 留空按 ``all``；显式写 first/last/nth 时只取一个）；
+        - 提供 item_locator：以每个条目为范围取 locator 的第一个文本，
+          条目内部命中 exclude_locator 时整条跳过（如置顶标记、UP 主徽章等）。
         """
-        if not p.item_selector:
-            return list(await self.page.locator(p.selector).all_text_contents())
+        assert p.locator is not None
+        if p.item_locator is None:
+            collection = build_locator(self.page, p.locator)
+            picked = apply_pick(collection, p.locator, LocatorPickEnum.ALL)
+            return list(await picked.all_text_contents())
 
         items: List[str] = []
-        boxes = self.page.locator(p.item_selector)
+        boxes = build_locator(self.page, p.item_locator)
         total = await boxes.count()
         exclude_text = (p.exclude_text or "").strip()
         for i in range(total):
             box = boxes.nth(i)
-            if p.exclude_selector and await box.locator(p.exclude_selector).count() > 0:
-                logger.info(
-                    f"[GetTextAction] 条目 {i} 命中排除选择器，跳过: {p.exclude_selector}"
-                )
-                continue
-            if exclude_text and p.exclude_text_selector:
-                texts = await box.locator(p.exclude_text_selector).all_text_contents()
+            if p.exclude_locator is not None:
+                excluded = build_locator(box, p.exclude_locator)
+                if await excluded.count() > 0:
+                    logger.info(
+                        f"[GetTextAction] 条目 {i} 命中排除定位器，跳过: "
+                        f"{describe_spec(p.exclude_locator)}"
+                    )
+                    continue
+            if exclude_text and p.exclude_text_locator is not None:
+                text_node = build_locator(box, p.exclude_text_locator)
+                texts = await text_node.all_text_contents()
                 if any(t.strip() == exclude_text for t in texts):
                     logger.info(
                         f"[GetTextAction] 条目 {i} 命中排除文本，跳过: {exclude_text}"
                     )
                     continue
-            texts = await box.locator(p.selector).all_text_contents()
+            inner = await self._locator_in_box(box, p)
+            if inner is None:
+                continue
+            texts = await inner.all_text_contents()
             if texts:
                 items.append(texts[0])
         logger.info(
             f"[GetTextAction] 条目 {total} 个，排除后取到 {len(items)} 条文本"
         )
         return items
+
+    async def _locator_in_box(
+        self, box: Locator, p: GetTextParams
+    ) -> Locator | None:
+        """在单个条目内部按候选链取第一个有命中的定位器（条目内取首个文本）
+
+        条目内部所有候选都没命中时，退化为「条目元素本身」——常见场景是
+        ``item_locator`` 与 ``locator`` 指向同一批节点（条目即文本容器），
+        此时「条目内再找条目」必然 0 命中。
+        """
+        assert p.locator is not None
+        candidates = build_candidates(box, p.locator, p.fallbacks)
+        for index, spec, collection in candidates:
+            if await collection.count() > 0:
+                if index > 0:
+                    logger.info(
+                        f"[GetTextAction] 条目内主定位器未命中，退化到候选 {index}: "
+                        f"{describe_spec(spec)}"
+                    )
+                return collection.first
+        logger.info(
+            f"[GetTextAction] 条目内未命中定位器 {describe_spec(p.locator)}，"
+            "改用条目元素本身的文本"
+        )
+        return box
 
 
 class GetWindowAction(BaseAction[GetWindowParams]):
@@ -751,7 +894,7 @@ class GetWindowAction(BaseAction[GetWindowParams]):
 
 
 class PressAction(BaseAction[PressParams]):
-    """按键操作（可先聚焦 selector，无 selector 则发给当前焦点）"""
+    """按键操作（可先聚焦定位器目标，无定位器则发给当前焦点）"""
 
     action_id: BuiltinActionType = BuiltinActionType.PRESS
     action_type: BuiltinActionType = BuiltinActionType.PRESS
@@ -771,24 +914,40 @@ class PressAction(BaseAction[PressParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = (params.selector or "").strip()
+        locator_spec = params.locator
+        target_desc = describe_spec(locator_spec) if locator_spec else "<焦点>"
         modifiers = [str(m) for m in params.modifiers] if params.modifiers else []
         # Playwright 的 press 没有 modifiers 形参：修饰键是写进 key 里的（"Control+A"）。
-        # 这里统一把 modifiers 拼成组合键，selector / 无 selector 两种路径口径一致。
+        # 这里统一把 modifiers 拼成组合键，有/无定位器两种路径口径一致。
         combo = "+".join([*modifiers, params.key]) if modifiers else params.key
 
         try:
-            if selector:
+            if locator_spec is not None:
                 # Locator.press 内部会先聚焦该元素再按键，等价于「先 focus 再 press」，
-                # 因此 contenteditable / 输入框等需要焦点的场景只需提供 selector 即可。
-                await self.page.locator(selector).press(
-                    combo, timeout=params.timeout
+                # 因此 contenteditable / 输入框等需要焦点的场景只需提供定位器即可。
+                target = await resolve_or_skip(
+                    self.page,
+                    locator_spec,
+                    params.fallbacks,
+                    timeout_ms=params.timeout,
+                    default_pick=LocatorPickEnum.STRICT,
+                    missing=params.missing,
                 )
+                if target is None:
+                    return ActionResult(
+                        success=True,
+                        data=PressResult(pressed=False),
+                        logs=["元素未命中，按 missing=ignore 跳过按键"],
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                    )
+                await target.locator.press(combo, timeout=params.timeout)
             else:
                 await self.page.keyboard.press(combo)
 
             logger.info(
-                f"[PressAction] 按键完成: combo={combo} selector={selector or '<焦点>'} "
+                f"[PressAction] 按键完成: combo={combo} 目标={target_desc} "
                 f"modifiers={modifiers}"
             )
             return ActionResult(
@@ -830,33 +989,53 @@ class ElementStateAction(BaseAction[ElementStateParams]):
                 action_name=self.metadata.name,
             )
 
-        locator = self.page.locator(params.selector)
+        locator_spec = params.locator
+        target_desc = describe_spec(locator_spec) if locator_spec else "<无>"
+        if locator_spec is None:
+            return self._handle_missing(params, start_time)
+
+        candidates = build_candidates(self.page, locator_spec, params.fallbacks)
+        collection = candidates[0][2]
 
         try:
             # timeout 只用于「等元素出现（attached）」，不参与判定元素是否「满足某状态」；
             # 0 表示不等待，直接读当前页面状态（探针模式的常用取值）。
             if params.timeout > 0:
-                with contextlib.suppress(PlaywrightTimeoutError):
-                    # 等不到不算失败：是否允许缺失由 missing 策略决定（见下）
-                    await locator.first.wait_for(
-                        state="attached", timeout=params.timeout
-                    )
+                for _, spec, candidate in candidates:
+                    with contextlib.suppress(PlaywrightTimeoutError):
+                        # 等不到不算失败：是否允许缺失由 missing 策略决定（见下）
+                        await candidate.first.wait_for(
+                            state="attached", timeout=params.timeout
+                        )
+                        collection = candidate
+                        break
 
-            count = await locator.count()
+            # 主定位器 0 命中时按候选链退化（探针动作不做额外等待，直接看当前 DOM）
+            if await collection.count() == 0:
+                for index, spec, candidate in candidates[1:]:
+                    if await candidate.count() > 0:
+                        logger.info(
+                            f"[ElementStateAction] 主定位器未命中，退化到候选 "
+                            f"{index}: {describe_spec(spec)}"
+                        )
+                        collection = candidate
+                        break
+
+            count = await collection.count()
             if count == 0:
                 return self._handle_missing(params, start_time)
 
-            # count 统计的是整批命中数，不能落到单元素（locator.first 恒为 1）上读
+            # count 统计的是整批命中数，不能落到单元素（collection.first 恒为 1）上读
             if params.kind is ElementStateKindEnum.COUNT:
                 value: str | int | bool = count
                 value_type = "number"
             else:
                 value, value_type = await self._read_value(
-                    locator.first, params.kind, params.attribute, params.timeout
+                    collection.first, params.kind, params.attribute, params.timeout
                 )
             logger.info(
-                f"[ElementStateAction] selector={params.selector} kind={params.kind.value} "
-                f"value={value!r}"
+                f"[ElementStateAction] 定位器={target_desc} kind={params.kind.value} "
+                f"命中={count} value={value!r}"
             )
             return ActionResult(
                 success=True,
@@ -879,17 +1058,18 @@ class ElementStateAction(BaseAction[ElementStateParams]):
         self, params: ElementStateParams, start_time: float
     ) -> ActionResult[ElementStateResult]:
         """元素不存在时的统一出口：missing=ignore 返回空值成功，missing=fail 直接失败。"""
+        description = describe_spec(params.locator) if params.locator else "<无>"
         if params.missing is MissingPolicyEnum.FAIL:
             return ActionResult(
                 success=False,
-                error=f"元素不存在（missing=fail）: {params.selector}",
+                error=f"元素不存在（missing=fail）: {description}",
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
             )
         empty_value, value_type = self._empty_value(params.kind)
         logger.info(
-            f"[ElementStateAction] 元素不存在，按空值返回: selector={params.selector} "
+            f"[ElementStateAction] 元素不存在，按空值返回: 定位器={description} "
             f"kind={params.kind.value}"
         )
         return ActionResult(
@@ -964,12 +1144,31 @@ class SelectOptionAction(BaseAction[SelectOptionParams]):
             )
 
         try:
-            selected = await self.page.locator(params.selector).select_option(
+            if params.locator is None:
+                raise ValueError("下拉选择必须提供 locator")
+            target = await resolve_or_skip(
+                self.page,
+                params.locator,
+                params.fallbacks,
+                timeout_ms=params.timeout,
+                default_pick=LocatorPickEnum.STRICT,
+                missing=params.missing,
+            )
+            if target is None:
+                return ActionResult(
+                    success=True,
+                    data=SelectOptionResult(selected=[], selected_count=0),
+                    logs=["元素未命中，按 missing=ignore 跳过下拉选择"],
+                    execution_time=time.time() - start_time,
+                    action_id=self.metadata.id,
+                    action_name=self.metadata.name,
+                )
+            selected = await target.locator.select_option(
                 **select_kwargs, timeout=params.timeout
             )
             logger.info(
-                f"[SelectOptionAction] selector={params.selector} by={params.by.value} "
-                f"selected={selected}"
+                f"[SelectOptionAction] 定位器={target.description} "
+                f"by={params.by.value} selected={selected}"
             )
             return ActionResult(
                 success=True,

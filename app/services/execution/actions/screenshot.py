@@ -10,7 +10,9 @@ from loguru import logger
 
 from app.services.execution.actions.base import ActionResult, BaseAction, register_action_class
 from app.models.execution.action_params import ScreenshotParams, ScreenshotResult
+from app.models.execution.enums import LocatorPickEnum
 from app.models.database.workflow.models import BuiltinActionType
+from app.services.execution.locator import resolve_target
 
 
 class ScreenshotAction(BaseAction[ScreenshotParams]):
@@ -64,7 +66,7 @@ class ScreenshotAction(BaseAction[ScreenshotParams]):
                 action_name=self.metadata.name,
             )
 
-        selector = validated_params.selector
+        locator_spec = validated_params.locator
         img_type = str(validated_params.type)
         quality = validated_params.quality
         full_page = validated_params.full_page
@@ -86,11 +88,20 @@ class ScreenshotAction(BaseAction[ScreenshotParams]):
             if timeout != 30000:
                 screenshot_params["timeout"] = timeout
 
-            if selector:
+            if locator_spec is not None:
                 # Locator.screenshot() 不支持 full_page 参数
-                element = self.page.locator(selector)
-                logger.info(f"[ScreenshotAction] 元素截图参数: {screenshot_params}")
-                image_bytes = await element.screenshot(**screenshot_params)
+                target = await resolve_target(
+                    self.page,
+                    locator_spec,
+                    validated_params.fallbacks,
+                    timeout_ms=timeout,
+                    default_pick=LocatorPickEnum.STRICT,
+                )
+                logger.info(
+                    f"[ScreenshotAction] 元素截图参数: {screenshot_params} "
+                    f"命中={target.description}"
+                )
+                image_bytes = await target.locator.screenshot(**screenshot_params)
             else:
                 # Page.screenshot() 支持 full_page 参数
                 if full_page:

@@ -7,17 +7,18 @@
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from sqlmodel import col, func, select
-from sqlalchemy import update
+from sqlalchemy import exists, or_, update
 
 from app.models.database.workflow.models import (
     WorkflowRunRecord,
     WorkflowRunStatusEnum,
     WorkflowRunTriggerEnum,
 )
+from app.models.database.workflow.resource_record import WorkflowResourceRecord
 from app.services.execution.run_events import (
     WorkflowRunSummary,
     publish_status_changed,
@@ -32,6 +33,9 @@ from app.utils.depends.session_manager import DatabaseSessionManager
 
 class WorkflowRunCrudService:
     """工作流运行记录 CRUD 服务"""
+
+    #: 旧记录 error_message 的自动重跑留痕（同时作为幂等去重标记）
+    AUTO_RESTART_MARK: str = "已自动重跑"
 
     @staticmethod
     def new_run_id() -> str:
@@ -321,8 +325,6 @@ class WorkflowRunCrudService:
         *, max_age_seconds: int, limit: int = 50
     ) -> List[WorkflowRunRecord]:
         """取「可恢复且未被恢复过」的中断运行（按开始时间升序，先中断的先恢复）"""
-        from datetime import timedelta
-
         cutoff = datetime.now() - timedelta(seconds=max_age_seconds)
         async with DatabaseSessionManager.async_session() as session:
             rows = (
@@ -339,6 +341,80 @@ class WorkflowRunCrudService:
                 )
             ).all()
             return list(rows)
+
+    @staticmethod
+    async def list_unstarted_interrupted(
+        *, max_age_seconds: int, limit: int = 20
+    ) -> list[WorkflowRunRecord]:
+        """取「服务重启时 0 步中断、且没有资源记录」的运行（自动重跑候选）。
+
+        与 :meth:`list_resumable` 互斥：这些记录 ``resumable=False``（checkpoint=0），
+        断点恢复链路不会碰它们。判据见
+        ``docs/同浏览器工作流排队计划书.md`` §4.1：0 步 + 无资源记录意味着
+        尚未产生任何外部副作用，整轮重跑不会重复转发 / 评论。
+
+        已写过自动重跑标记的记录不再入选（同一条旧记录只重跑一次）。
+        """
+        cutoff = datetime.now() - timedelta(seconds=max_age_seconds)
+        marker = f"%{WorkflowRunCrudService.AUTO_RESTART_MARK}%"
+        resource_exists = exists().where(
+            WorkflowResourceRecord.execution_id == WorkflowRunRecord.run_id
+        )
+        async with DatabaseSessionManager.async_session() as session:
+            rows = (
+                await session.exec(
+                    select(WorkflowRunRecord)
+                    .where(
+                        WorkflowRunRecord.status
+                        == WorkflowRunStatusEnum.INTERRUPTED,
+                        WorkflowRunRecord.resumable == False,  # noqa: E712 - SQL 条件
+                        WorkflowRunRecord.checkpoint_step == 0,
+                        WorkflowRunRecord.completed_steps == 0,
+                        WorkflowRunRecord.finished_at.is_not(None),
+                        WorkflowRunRecord.finished_at >= cutoff,
+                        ~resource_exists,
+                        or_(
+                            WorkflowRunRecord.error_message.is_(None),
+                            ~WorkflowRunRecord.error_message.like(marker),
+                        ),
+                    )
+                    .order_by(WorkflowRunRecord.started_at.asc())
+                    .limit(limit)
+                )
+            ).all()
+            return list(rows)
+
+    @staticmethod
+    async def mark_auto_restarted(run_id: str, new_run_id: str) -> bool:
+        """在旧记录上追加「已自动重跑 → 新 run_id」，终态与状态机均不变。
+
+        追加文本同时充当幂等去重标记：已标记过直接返回 False。
+        ``error_message`` 上限 2000，超长时截掉前缀、保证标记完整保留在尾部。
+        """
+        note = f"；{WorkflowRunCrudService.AUTO_RESTART_MARK} → {new_run_id}"
+        marker = f"%{WorkflowRunCrudService.AUTO_RESTART_MARK}%"
+        async with DatabaseSessionManager.async_session() as session:
+            row = (
+                await session.exec(
+                    select(WorkflowRunRecord).where(
+                        WorkflowRunRecord.run_id == run_id,
+                        or_(
+                            WorkflowRunRecord.error_message.is_(None),
+                            ~WorkflowRunRecord.error_message.like(marker),
+                        ),
+                    )
+                )
+            ).first()
+            if row is None:
+                return False
+            base = (row.error_message or "").rstrip("；")
+            text = f"{base}{note}"
+            if len(text) > 2000:
+                text = f"{base[: 2000 - len(note)]}{note}"
+            row.error_message = text
+            session.add(row)
+            await session.commit()
+            return True
 
     @staticmethod
     async def finish(
@@ -388,6 +464,17 @@ class WorkflowRunCrudService:
                     resumable=resumable,
                     checkpoint_step=checkpoint_step,
                     progress_updated_at=datetime.now(),
+                    # 资源级结果随终态固化（前置校验失败等无 summary 的路径写 0）
+                    resource_total=(summary.resource_total if summary else 0),
+                    resource_success=(summary.resource_success if summary else 0),
+                    resource_failed=(summary.resource_failed if summary else 0),
+                    resource_skipped=(summary.resource_skipped if summary else 0),
+                    resource_soft_failed=(
+                        summary.resource_soft_failed if summary else 0
+                    ),
+                    resource_fatal_failed=(
+                        summary.resource_fatal_failed if summary else 0
+                    ),
                 )
             )
             await session.commit()
@@ -801,6 +888,13 @@ class WorkflowRunCrudService:
             "resume_of": model.resume_of,
             "resume_count": model.resume_count,
             "checkpoint_step": model.checkpoint_step,
+            # 资源级结果：与 status 同口径，避免「步骤全绿却失败」无法解释
+            "resource_total": model.resource_total,
+            "resource_success": model.resource_success,
+            "resource_failed": model.resource_failed,
+            "resource_skipped": model.resource_skipped,
+            "resource_soft_failed": model.resource_soft_failed,
+            "resource_fatal_failed": model.resource_fatal_failed,
         }
 
 

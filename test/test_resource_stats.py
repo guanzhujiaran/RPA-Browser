@@ -29,7 +29,12 @@ EXEC_A = "aaaabbbb" + "1" * 24
 EXEC_OTHER = "ccccdddd" + "2" * 24
 
 
-async def _insert(resource_id: str, status: ResourceProcessStatus, exec_id: str) -> None:
+async def _insert(
+    resource_id: str,
+    status: ResourceProcessStatus,
+    exec_id: str,
+    fail_reason: str | None = None,
+) -> None:
     async with DatabaseSessionManager.async_session() as session:
         session.add(
             WorkflowResourceRecord(
@@ -40,6 +45,7 @@ async def _insert(resource_id: str, status: ResourceProcessStatus, exec_id: str)
                 resource_type=RESOURCE_TYPE,
                 resource_id=resource_id,
                 status=status,
+                fail_reason=fail_reason,
             )
         )
         await session.commit()
@@ -97,3 +103,46 @@ async def test_unknown_execution_returns_empty() -> None:
     assert stats.total == 0
     assert stats.failed == 0
     assert not stats.has_data
+
+
+async def test_count_by_execution_splits_retryable_failures() -> None:
+    """按 fail_reason 分类：软失败只留痕，未命中的失败仍算致命。"""
+    await _cleanup()
+    try:
+        await _insert("s1", ResourceProcessStatus.SUCCESS, EXEC_A)
+        await _insert(
+            "f1",
+            ResourceProcessStatus.FAILED,
+            EXEC_A,
+            "评论未提交成功(发布后输入框仍有内容)，下一轮重试",
+        )
+        await _insert(
+            "f2",
+            ResourceProcessStatus.FAILED,
+            EXEC_A,
+            "未检测到分享成功提示，转发可能未生效",
+        )
+        await _insert(
+            "f3",
+            ResourceProcessStatus.FAILED,
+            EXEC_A,
+            "页面未就绪(page_ok=false)",
+        )
+        await _insert("k1", ResourceProcessStatus.SKIPPED, EXEC_A)
+
+        stats = await ResourceRecordService.count_by_execution(
+            EXEC_A, soft_fail_keywords=("下一轮重试", "可能未生效")
+        )
+
+        assert stats.total == 5
+        assert stats.success == 1
+        assert stats.skipped == 1
+        assert stats.failed == 3, "软失败仍计入失败总数，展示口径不变"
+        assert stats.soft_failed == 2
+        assert stats.fatal_failed == 1
+
+        plain = await ResourceRecordService.count_by_execution(EXEC_A)
+        assert plain.failed == 3
+        assert plain.fatal_failed == 3, "不传关键词 = 关闭分类，退回旧行为"
+    finally:
+        await _cleanup()

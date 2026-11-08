@@ -9,7 +9,7 @@ import asyncio
 import pytest
 from playwright.async_api import Page, Route
 
-from app.models.execution.action_params import WaitForResponseParams
+from app.models.execution.action_params import LocatorSpec, WaitForResponseParams
 from app.models.execution.enums import HttpMethodEnum, UrlPatternTypeEnum
 
 
@@ -137,10 +137,10 @@ class TestWaitForResponseAction:
         result = await (await self._start(url_pattern="", timeout=1000))
         assert not result.success
 
-    # ── trigger_selector：把「点击」放进等待窗口，从根上消除注册过晚的竞态 ──
+    # ── trigger_locator：把「点击」放进等待窗口，从根上消除注册过晚的竞态 ──
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_trigger_selector_captures_response(self):
+    async def test_trigger_locator_captures_response(self):
         """由本动作自己点击触发请求：注册在前、触发在后，必定捕获"""
         from app.services.execution.actions.wait_for_response import (
             WaitForResponseAction,
@@ -167,7 +167,7 @@ class TestWaitForResponseAction:
                 url_pattern="**/api/ping",
                 method=HttpMethodEnum.POST,
                 include_body=True,
-                trigger_selector="#go",
+                trigger_locator=LocatorSpec(value="#go"),
                 timeout=5000,
             ),
         )
@@ -193,7 +193,7 @@ class TestWaitForResponseAction:
             variables={},
             params=WaitForResponseParams(
                 url_pattern="**/api/ping",
-                trigger_selector="#not-exist",
+                trigger_locator=LocatorSpec(value="#not-exist"),
                 trigger_timeout=1000,
                 timeout=5000,
             ),

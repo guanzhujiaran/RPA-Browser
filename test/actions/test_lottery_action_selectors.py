@@ -123,6 +123,16 @@ def _iter_steps(steps, path=""):
                 )
 
 
+def _locator_value(step: dict, key: str = "locator") -> str | None:
+    """取步骤里定位器的 value（迁移后结构：params[key] = {"value": ...}）
+
+    ``key`` 默认主定位器 ``locator``，也可取 ``item_locator`` / ``exclude_locator``
+    等条目级定位器。没有定位器时返回 None。
+    """
+    locator = (step.get("params") or {}).get(key)
+    return locator.get("value") if isinstance(locator, dict) else None
+
+
 class TestSelectorsStatic:
     """静态校验：选择器 / 模板 / 可编译性（无网络、无浏览器）"""
 
@@ -138,7 +148,7 @@ class TestSelectorsStatic:
     def test_space_nickname_selector_used(self, action_data):
         """空间页昵称取值必须用 .upinfo-detail__top .nickname（wait + get_text 各一处）"""
         selectors = [
-            (step.get("params") or {}).get("selector")
+            _locator_value(step)
             for _, step in _iter_steps(action_data["steps"])
         ]
         hits = [s for s in selectors if s == SPACE_NICKNAME_SELECTOR]
@@ -153,7 +163,7 @@ class TestSelectorsStatic:
             (path, step)
             for path, step in steps
             if step.get("action_id") == "wait"
-            and (step.get("params") or {}).get("selector") == ".header-avatar-wrap"
+            and _locator_value(step) == ".header-avatar-wrap"
         ]
         assert waits, "登录检测缺少 `.header-avatar-wrap` 的 wait（头像容器是登录态判据）"
         # 该 wait 必须把结果写入 is_login，供循环 break_condition 使用
@@ -228,7 +238,7 @@ class TestSelectorsStatic:
 
         for exec_branch in exec_branches:
             flat = flatten(exec_branch)
-            selectors = [((s.get("params") or {}).get("selector")) for s in flat]
+            selectors = [(_locator_value(s)) for s in flat]
             action_ids = [s.get("action_id") for s in flat]
 
             like_index = selectors.index(".side-toolbar__action.like:not(.is-active)")
@@ -283,16 +293,16 @@ class TestSelectorsStatic:
             for s in exec_branch[:gate_index]
             if s.get("action_id") in ("wait", "get_text")
         ][-2:]
-        assert [s.get("params", {}).get("selector") for s in pre_gate] == [
+        assert [_locator_value(s) for s in pre_gate] == [
             "bili-comment-thread-renderer",
             'a[href*="space.bilibili.com"]:not(#user-avatar)',
         ], "评论作者/条目的选择器被改动，需重新用真实页面核对"
-        assert (pre_gate[1].get("params") or {}).get("item_selector") == "bili-comment-thread-renderer"
+        assert _locator_value(pre_gate[1], "item_locator") == "bili-comment-thread-renderer"
 
         assert "mark_resource_result" in true_ids, "校验通过后才允许标记已参与"
         assert "mark_resource_result" not in false_ids, "校验失败不得标记已参与"
         like_in_false = any(
-            (s.get("params") or {}).get("selector") == ".side-toolbar__action.like:not(.is-active)"
+            _locator_value(s) == ".side-toolbar__action.like:not(.is-active)"
             for s in gate_params.get("FalseBranch") or []
         )
         assert not like_in_false, "校验失败不得点赞（点赞是已参与判据）"
@@ -308,7 +318,7 @@ class TestSelectorsStatic:
             assert "navigate" in retry_ids, "校验未命中要刷新页面重试"
             assert "mark_resource_result" not in retry_ids
             assert "bili-comments bili-comment-thread-renderer" in [
-                (s.get("params") or {}).get("selector") for s in retry_false
+                _locator_value(s) for s in retry_false
             ], "刷新后必须等评论区渲染再读取作者"
 
     def test_skip_and_fail_marked_correctly(self, action_data):
@@ -376,7 +386,7 @@ class TestSelectorsStatic:
                 s
                 for s in flat
                 if s.get("action_id") == "wait"
-                and (s.get("params") or {}).get("selector") == ".bili-dyn-share__wrap"
+                and _locator_value(s) == ".bili-dyn-share__wrap"
                 and (s.get("params") or {}).get("state") == "hidden"
             ]
             assert hidden_waits, "缺少「分享弹窗关闭」的等待"
@@ -469,7 +479,7 @@ class TestSelectorsStatic:
             i
             for i, s in enumerate(exec_branch)
             if s.get("action_id") == "input"
-            and (s.get("params") or {}).get("selector") == ".brt-editor:visible"
+            and _locator_value(s) == ".brt-editor:visible"
         ][0]
         check = exec_branch[input_index + 3]
         assert check.get("action_id") == "if_else"
@@ -479,7 +489,7 @@ class TestSelectorsStatic:
         # 输入框内容取自编辑器文本
         reader = exec_branch[input_index + 2]
         assert reader.get("action_id") == "get_text"
-        assert (reader.get("params") or {}).get("selector") == ".brt-editor:visible"
+        assert _locator_value(reader) == ".brt-editor:visible"
         assert "editor_text" in (reader.get("output_vars") or [])
         # 输入必须去首尾空白：模型输出常带前导换行，B 站会判空内容而拒绝发布
         assert (exec_branch[input_index].get("params") or {}).get("trim") is True
@@ -496,12 +506,20 @@ class TestSelectorsStatic:
         )
         assert "print" in [s.get("action_id") for s in recheck["params"].get("FalseBranch") or []]
 
-        # 发布按钮必须在核对之后才点
+        # 发布按钮必须在核对之后才点（点击已并入 wait_for_response 的触发定位器，
+        # 用于消除「监听注册晚于响应」的竞态，因此两种承载方式都算「点发布」）
         pub_index = [
             i
             for i, s in enumerate(exec_branch)
-            if s.get("action_id") == "click"
-            and (s.get("params") or {}).get("selector") == "bili-comments #pub button:visible"
+            if (
+                s.get("action_id") == "click"
+                and _locator_value(s) == "bili-comments #pub button:visible"
+            )
+            or (
+                s.get("action_id") == "wait_for_response"
+                and _locator_value(s, "trigger_locator")
+                == "bili-comments #pub button:visible"
+            )
         ][0]
         assert pub_index > input_index + 3
 
@@ -527,10 +545,14 @@ class TestSelectorsStatic:
                     out.extend(flatten(params.get(key)))
             return out
 
+        def target_of(step: dict) -> str | None:
+            """该步骤实际作用的元素：主定位器，或等待响应的触发定位器"""
+            return _locator_value(step) or _locator_value(step, "trigger_locator")
+
         for branch in _exec_branches(action_data):
-            seq = [
-                ((s.get("params") or {}).get("selector")) for s in flatten(branch)
-            ]
+            # 评论/转发的点击已并入 wait_for_response 的触发定位器，
+            # 因此顺序校验取「步骤实际作用的元素」而不是只取 locator
+            seq = [target_of(s) for s in flatten(branch)]
             positions = [
                 seq.index(selectors[name])
                 for name in ("关注", "评论", "转发", "点赞")
@@ -556,7 +578,7 @@ class TestSelectorsStatic:
                 s
                 for s in flat
                 if s.get("action_id") == "wait"
-                and (s.get("params") or {}).get("selector")
+                and _locator_value(s)
                 == ".space-head-follow .space-follow-btn"
             ]
             assert follow_waits, "缺少关注按钮等待"
@@ -567,7 +589,7 @@ class TestSelectorsStatic:
                 s
                 for s in flat
                 if s.get("action_id") == "click"
-                and (s.get("params") or {}).get("selector")
+                and _locator_value(s)
                 == ".space-head-follow .space-follow-btn"
             ]
             assert follow_clicks, "缺少关注点击"

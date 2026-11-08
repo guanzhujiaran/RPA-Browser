@@ -58,6 +58,7 @@ from app.services.execution.action_logger import (
     resolve_log_option,
 )
 from app.services.execution.crud_service import action_crud_svr
+from app.services.execution.param_mapping import apply_param_mapping
 from app.utils.depends.session_manager import DatabaseSessionManager
 
 
@@ -625,8 +626,8 @@ class LoopStrategy(ExecutionStrategy):
             else:
                 raw_params = {}
 
-        # 合并映射参数（映射参数优先级高于原始参数）
-        merged = {**raw_params, **mapped}
+        # 合并映射参数（映射参数优先级高于原始参数；目标键支持 locator.value 点路径）
+        merged, _ = apply_param_mapping(raw_params, mapped)
         step.params = merged
         return step
 
@@ -1391,7 +1392,7 @@ class LoopAction(BaseAction[LoopParams]):
         1. **只注入用户声明过该参数名的步骤**：``param_mapping`` 的语义是
            「把某个参数的值换成循环项的字段」，不是给所有步骤凭空加参数。
            旧实现给**每个**子步骤的 params 都加上映射键，等于用循环项的值
-           顶掉所有步骤的同名参数（连用户写死的 ``selector`` 也会被覆盖）。
+           顶掉所有步骤的同名参数（连用户写死的 ``locator`` 也会被覆盖）。
         2. **不改原步骤对象**：返回副本，避免映射值残留在步骤定义里
            （下一轮映射为空时，上一轮的值会继续生效）。
         """
@@ -1404,13 +1405,11 @@ class LoopAction(BaseAction[LoopParams]):
                 raw = raw.model_dump()
             elif not isinstance(raw, dict):
                 raw = {}
-            injected = {k: v for k, v in mapped.items() if k in raw}
-            if not injected:
+            merged, applied = apply_param_mapping(raw, mapped)
+            if not applied:
                 new_children.append(child)
                 continue
-            new_children.append(
-                child.model_copy(update={"params": {**raw, **injected}})
-            )
+            new_children.append(child.model_copy(update={"params": merged}))
         return new_children
 
     def _resolve_items_from_variable(

@@ -336,12 +336,29 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 资源记录（workflowresourcerecord）的 failed 数达到该阈值时，即使所有步骤都执行
     # 成功，运行结论也判 failed：步骤成功只代表动作跑完，业务是否真的办成要看资源结果。
     # 有资源记录时该判据优先于「容错失败熔断」；0 = 关闭（退回纯步骤级判定）。
+    # 已知边界：默认 1 意味着「任一资源失败即整轮失败」，既不看失败占比也不区分
+    # fail_reason，批量工作流里「下一轮重试」这类可重试软失败会稳定触发误报。
+    # 2026-11-08 run de801661：153 条资源中 134 成功 / 18 失败（11.8%），
+    # 顶层步骤 18/18 全绿仍判 failed。调整方案与阈值见
+    # docs/通知动作与运行告警计划书.md §D5，本处仅标注风险，不改变默认行为。
     workflow_resource_fail_failed_threshold: int = 1
+    # 资源失败按 fail_reason 分类：命中任一关键词的 failed 记为「可重试软失败」，
+    # 只留痕与告警、不参与运行结论降级；未命中关键词的一律按致命失败（fail-safe，
+    # 保证未知错误仍能判失败）。逗号分隔；留空 = 关闭分类（退回旧行为）。
+    # 关键词由配置注入，执行引擎不内置任何业务文案，见计划书 §D5.1。
+    workflow_resource_soft_fail_keywords: str = "下一轮重试,可能未生效,中途异常"
 
     # ── 重启断点恢复（同一计划书 §10.6）──
     workflow_resume_on_startup: bool = True  # 总开关：启动时执行自动恢复扫描
     workflow_resume_max_count: int = 3  # 同一条运行最多连续恢复次数（防重启死循环）
     workflow_resume_max_age_seconds: int = 21600  # 中断超过该时长不再恢复（默认 6h）
+
+    # ── 0 步中断自动重跑（与断点恢复解耦，见 docs/同浏览器工作流排队计划书.md §4.1）──
+    # 服务重启把残留 RUNNING 收口为 INTERRUPTED；若 checkpoint=0 且无资源记录，
+    # 说明一个步骤都没执行完、也没有任何资源被处理，语义等同 QUEUED，重启后
+    # 自动整轮重跑一次，避免用户看到一条「非业务原因」的意外失败。
+    # 与 resume_on_restart 无关（后者默认关、只管断点续跑）；False = 关闭该行为。
+    workflow_auto_restart_unstarted_interrupted: bool = True
 
     # ── 运行结束后浏览器资源回收 ──
     # 工作流跑完后，若该浏览器没有其它工作流在运行、且未被用户占用（调试/观看），
@@ -468,6 +485,16 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 操作日志过期清理任务执行间隔（秒）。日志表按 started_at 保留
     # action_log_default_retention_days 天，防止无限增长占满硬盘
     action_log_cleanup_interval: int = 24 * 60 * 60
+    # === 表容量固定上限（除时间窗口外的兜底）===
+    # 时间窗口只能限制「多旧」，限制不了「窗口内写多少」：一次重负载运行就能在 7 天
+    # 窗口内写入百万级日志。超过上限后按时间列从旧到新删除，保留最新 max_rows 行。
+    # 0 = 不限制。
+    action_log_max_rows: int = 2_000_000
+    resource_record_max_rows: int = 2_000_000
+    # 容量清理单批删除行数：分批提交，避免一次删除百万行造成长事务锁表
+    record_cap_delete_batch_size: int = 10_000
+    # 资源记录容量清理任务执行间隔（秒）
+    resource_record_cleanup_interval: int = 24 * 60 * 60
     # 是否将操作日志落库改为「RabbitMQ 生产 / 消费拆分」：开启后日志投递到
     # rpa_log_exchange 由同进程消费端异步落库（与业务执行解耦），投递失败自动回落
     # 同步直写。默认开启（true）：日志不再占用 RPA 执行协程的同步写库时间；

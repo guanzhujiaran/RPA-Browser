@@ -65,20 +65,36 @@ def _declared_variables(params_model: type[SQLModel] | None, attr: str) -> list[
 _CONTRACT_CACHE: dict[Any, tuple[list[VariableSpec], list[VariableSpec]]] = {}
 
 
+def _iter_schema_props(json_schema: dict | None):
+    """递归产出 schema 里的字段定义（含嵌套对象 properties / 数组 items）"""
+    if not isinstance(json_schema, dict):
+        return
+    for prop in (json_schema.get("properties") or {}).values():
+        if not isinstance(prop, dict):
+            continue
+        yield prop
+        yield from _iter_schema_props(prop)
+        items = prop.get("items")
+        if isinstance(items, dict):
+            yield items
+            yield from _iter_schema_props(items)
+
+
 def _scan_schema_template_variables(json_schema: dict | None) -> list[VariableSpec]:
     """扫描参数 JSON Schema 的 string 字段取值（const/default），提取 {{var}} 模板变量。
 
     兜底机制：未显式声明 input_variables 的动作也能从既有 {{...}} 模板默认值反射出变量提示。
     刻意**不扫 description**——描述文案里的 {{变量}} 多为文档示例而非真实引用（会产出假变量）。
     扫描发现的变量 required=False（无法静态判断是否必填）。
+
+    递归覆盖嵌套结构：定位器（``locator.value`` / ``locator.within``）、
+    候选链（``fallbacks`` 数组）里的模板同样会被发现。
     """
     if not json_schema:
         return []
     specs: list[VariableSpec] = []
     seen: set[str] = set()
-    for prop in (json_schema.get("properties") or {}).values():
-        if not isinstance(prop, dict):
-            continue
+    for prop in _iter_schema_props(json_schema):
         # 仅扫描文本类字段的取值（无 type 或 string；anyOf 等复合结构不扫）
         if prop.get("type") not in (None, "string"):
             continue

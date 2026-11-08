@@ -41,7 +41,9 @@
             "params": {
               "state": "visible",
               "timeout": 5000,
-              "selector": ".header-avatar-wrap"
+              "locator": {
+                "value": ".header-avatar-wrap"
+              }
             },
             "action_id": "wait",
             "action_type": "wait",
@@ -87,7 +89,9 @@
       "params": {
         "state": "visible",
         "timeout": 8000,
-        "selector": ".upinfo-detail__top .nickname"
+        "locator": {
+          "value": ".upinfo-detail__top .nickname"
+        }
       },
       "action_id": "wait",
       "action_type": "wait",
@@ -110,7 +114,9 @@
             "retry": 1,
             "params": {
               "timeout": 5000,
-              "selector": ".upinfo-detail__top .nickname",
+              "locator": {
+                "value": ".upinfo-detail__top .nickname"
+              },
               "fail_on_empty": true
             },
             "action_id": "get_text",
@@ -436,19 +442,12 @@
           },
           {
             "params": {
-              "selector": ".subscribe-section-warp",
-              "state": "attached",
-              "timeout": 15000
-            },
-            "action_id": "wait",
-            "action_type": "wait"
-          },
-          {
-            "params": {
-              "selector": ".subscribe-section-warp",
+              "locator": {
+                "value": ".subscribe-section-warp"
+              },
               "kind": "count",
               "missing": "ignore",
-              "timeout": 0
+              "timeout": 15000
             },
             "action_id": "element_state",
             "action_type": "element_state",
@@ -486,7 +485,9 @@
                     "loopBranch": [
                       {
                         "params": {
-                          "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")",
+                          "locator": {
+                            "value": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")"
+                          },
                           "kind": "count",
                           "missing": "ignore",
                           "timeout": 0
@@ -519,7 +520,9 @@
                           "FalseBranch": [
                             {
                               "params": {
-                                "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn",
+                                "locator": {
+                                  "value": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn"
+                                },
                                 "timeout": 15000
                               },
                               "action_id": "click",
@@ -531,19 +534,12 @@
                             },
                             {
                               "params": {
-                                "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")",
-                                "state": "attached",
-                                "timeout": 4000
-                              },
-                              "action_id": "wait",
-                              "action_type": "wait"
-                            },
-                            {
-                              "params": {
-                                "selector": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")",
+                                "locator": {
+                                  "value": ".subscribe-section-warp[data-sid=\"{{rs_item.reserve_sid}}\"] button.btn:has-text(\"已预约\")"
+                                },
                                 "kind": "count",
                                 "missing": "ignore",
-                                "timeout": 0
+                                "timeout": 4000
                               },
                               "action_id": "element_state",
                               "action_type": "element_state",
@@ -733,7 +729,9 @@
             "params": {
               "state": "visible",
               "timeout": 5000,
-              "selector": ".side-toolbar__action.like"
+              "locator": {
+                "value": ".side-toolbar__action.like"
+              }
             },
             "action_id": "wait",
             "action_type": "wait",
@@ -754,7 +752,9 @@
               "TrueBranch": [
                 {
                   "params": {
-                    "selector": ".error-panel.error-404",
+                    "locator": {
+                      "value": ".error-panel.error-404"
+                    },
                     "kind": "visible",
                     "missing": "ignore",
                     "timeout": 0
@@ -844,7 +844,9 @@
                   "params": {
                     "state": "visible",
                     "timeout": 8000,
-                    "selector": ".space-head-follow .space-follow-btn"
+                    "locator": {
+                      "value": ".space-head-follow .space-follow-btn"
+                    }
                   },
                   "action_id": "wait",
                   "action_type": "wait",
@@ -870,7 +872,9 @@
                         "params": {
                           "state": "visible",
                           "timeout": 8000,
-                          "selector": ".space-head-follow .space-follow-btn"
+                          "locator": {
+                            "value": ".space-head-follow .space-follow-btn"
+                          }
                         },
                         "action_id": "wait",
                         "action_type": "wait",
@@ -886,7 +890,9 @@
                 },
                 {
                   "params": {
-                    "selector": ".space-follow-btn.gray",
+                    "locator": {
+                      "value": ".space-follow-btn.gray"
+                    },
                     "kind": "visible",
                     "missing": "ignore",
                     "timeout": 0
@@ -905,7 +911,9 @@
                         "retry": 1,
                         "params": {
                           "timeout": 5000,
-                          "selector": ".space-head-follow .space-follow-btn"
+                          "locator": {
+                            "value": ".space-head-follow .space-follow-btn"
+                          }
                         },
                         "action_id": "click",
                         "action_type": "click",
@@ -947,18 +955,11 @@
                 },
                 {
                   "params": {
-                    "selector": ".side-toolbar__action.forward",
+                    "locator": {
+                      "value": ".side-toolbar__action.forward"
+                    },
                     "state": "visible",
-                    "timeout": 8000
-                  },
-                  "action_id": "wait",
-                  "action_type": "wait"
-                },
-                {
-                  "params": {
-                    "state": "visible",
-                    "timeout": 10000,
-                    "selector": ".side-toolbar__action.forward"
+                    "timeout": 10000
                   },
                   "action_id": "wait",
                   "action_type": "wait"
@@ -967,19 +968,12 @@
                   "retry": 1,
                   "params": {
                     "timeout": 5000,
-                    "selector": ".side-toolbar__action.forward"
+                    "locator": {
+                      "value": ".side-toolbar__action.forward"
+                    }
                   },
                   "action_id": "click",
                   "action_type": "click"
-                },
-                {
-                  "params": {
-                    "state": "visible",
-                    "timeout": 8000,
-                    "selector": ".bili-dyn-share-publishing__action"
-                  },
-                  "action_id": "wait",
-                  "action_type": "wait"
                 },
                 {
                   "params": {
@@ -987,9 +981,11 @@
                     "pattern_type": "glob",
                     "method": "POST",
                     "include_body": true,
-                    "trigger_selector": ".bili-dyn-share-publishing__action",
-                    "trigger_timeout": 8000,
-                    "timeout": 15000
+                    "trigger_locator": {
+                      "value": ".bili-dyn-share-publishing__action"
+                    },
+                    "trigger_timeout": 30000,
+                    "timeout": 30000
                   },
                   "action_id": "wait_for_response",
                   "action_type": "wait_for_response",
@@ -1008,8 +1004,10 @@
                 {
                   "params": {
                     "state": "visible",
-                    "timeout": 10000,
-                    "selector": ".bili-dyn-share-succ-tip__btn"
+                    "timeout": 30000,
+                    "locator": {
+                      "value": ".bili-dyn-share-succ-tip__btn"
+                    }
                   },
                   "action_id": "wait",
                   "action_type": "wait",
@@ -1024,7 +1022,9 @@
                       {
                         "params": {
                           "timeout": 5000,
-                          "selector": ".bili-dyn-share-succ-tip__btn"
+                          "locator": {
+                            "value": ".bili-dyn-share-succ-tip__btn"
+                          }
                         },
                         "action_id": "click",
                         "action_type": "click",
@@ -1034,7 +1034,9 @@
                         "params": {
                           "state": "hidden",
                           "timeout": 8000,
-                          "selector": ".bili-dyn-share__wrap"
+                          "locator": {
+                            "value": ".bili-dyn-share__wrap"
+                          }
                         },
                         "action_id": "wait",
                         "action_type": "wait",
@@ -1048,7 +1050,9 @@
                         "params": {
                           "state": "hidden",
                           "timeout": 8000,
-                          "selector": ".bili-dyn-share__wrap"
+                          "locator": {
+                            "value": ".bili-dyn-share__wrap"
+                          }
                         },
                         "action_id": "wait",
                         "action_type": "wait",
@@ -1063,7 +1067,9 @@
                 },
                 {
                   "params": {
-                    "selector": ".side-toolbar__action.like:not(.is-active)",
+                    "locator": {
+                      "value": ".side-toolbar__action.like:not(.is-active)"
+                    },
                     "kind": "visible",
                     "missing": "ignore",
                     "timeout": 0
@@ -1089,7 +1095,9 @@
                         "retry": 1,
                         "params": {
                           "timeout": 5000,
-                          "selector": ".side-toolbar__action.like"
+                          "locator": {
+                            "value": ".side-toolbar__action.like"
+                          }
                         },
                         "action_id": "click",
                         "action_type": "click",
@@ -1132,7 +1140,7 @@
                         "action_type": "mark_resource_result",
                         "input_vars": {
                           "skip_reason": "转发未确认",
-                          "record_note": "failed：转发后 10s 内未出现「分享成功」提示，转发可能未生效"
+                          "record_note": "failed：转发后 30s 内未出现「分享成功」提示，转发可能未生效"
                         }
                       }
                     ]
@@ -1273,7 +1281,9 @@
             "params": {
               "state": "visible",
               "timeout": 5000,
-              "selector": ".side-toolbar__action.like"
+              "locator": {
+                "value": ".side-toolbar__action.like"
+              }
             },
             "action_id": "wait",
             "action_type": "wait",
@@ -1294,7 +1304,9 @@
               "TrueBranch": [
                 {
                   "params": {
-                    "selector": ".error-panel.error-404",
+                    "locator": {
+                      "value": ".error-panel.error-404"
+                    },
                     "kind": "visible",
                     "missing": "ignore",
                     "timeout": 0
@@ -1384,7 +1396,9 @@
                   "params": {
                     "state": "visible",
                     "timeout": 8000,
-                    "selector": ".space-head-follow .space-follow-btn"
+                    "locator": {
+                      "value": ".space-head-follow .space-follow-btn"
+                    }
                   },
                   "action_id": "wait",
                   "action_type": "wait",
@@ -1410,7 +1424,9 @@
                         "params": {
                           "state": "visible",
                           "timeout": 8000,
-                          "selector": ".space-head-follow .space-follow-btn"
+                          "locator": {
+                            "value": ".space-head-follow .space-follow-btn"
+                          }
                         },
                         "action_id": "wait",
                         "action_type": "wait",
@@ -1426,7 +1442,9 @@
                 },
                 {
                   "params": {
-                    "selector": ".space-follow-btn.gray",
+                    "locator": {
+                      "value": ".space-follow-btn.gray"
+                    },
                     "kind": "visible",
                     "missing": "ignore",
                     "timeout": 0
@@ -1445,7 +1463,9 @@
                         "retry": 1,
                         "params": {
                           "timeout": 5000,
-                          "selector": ".space-head-follow .space-follow-btn"
+                          "locator": {
+                            "value": ".space-head-follow .space-follow-btn"
+                          }
                         },
                         "action_id": "click",
                         "action_type": "click",
@@ -1487,7 +1507,9 @@
                 },
                 {
                   "params": {
-                    "selector": ".side-toolbar__action.forward",
+                    "locator": {
+                      "value": ".side-toolbar__action.forward"
+                    },
                     "state": "visible",
                     "timeout": 8000
                   },
@@ -1498,7 +1520,14 @@
                   "retry": 1,
                   "params": {
                     "timeout": 5000,
-                    "selector": ".bili-dyn-title__text:visible, .opus-module-author__name:visible"
+                    "locator": {
+                      "value": ".bili-dyn-title__text:visible"
+                    },
+                    "fallbacks": [
+                      {
+                        "value": ".opus-module-author__name:visible"
+                      }
+                    ]
                   },
                   "action_id": "get_text",
                   "action_type": "get_text",
@@ -1516,7 +1545,17 @@
                 {
                   "retry": 1,
                   "params": {
-                    "selector": ".opus-module-content, .dyn-card-opus, .bili-dyn-card-video"
+                    "locator": {
+                      "value": ".opus-module-content"
+                    },
+                    "fallbacks": [
+                      {
+                        "value": ".dyn-card-opus"
+                      },
+                      {
+                        "value": ".bili-dyn-card-video"
+                      }
+                    ]
                   },
                   "action_id": "get_text",
                   "action_type": "get_text",
@@ -1553,7 +1592,9 @@
                 },
                 {
                   "params": {
-                    "selector": "bili-comments",
+                    "locator": {
+                      "value": "bili-comments"
+                    },
                     "state": "visible",
                     "timeout": 5000
                   },
@@ -1563,7 +1604,9 @@
                 },
                 {
                   "params": {
-                    "selector": "bili-comments bili-comment-thread-renderer",
+                    "locator": {
+                      "value": "bili-comments bili-comment-thread-renderer"
+                    },
                     "state": "visible",
                     "timeout": 8000
                   },
@@ -1584,10 +1627,18 @@
                 {
                   "retry": 1,
                   "params": {
-                    "selector": "bili-comment-renderer#comment #content > bili-rich-text #contents",
-                    "item_selector": "bili-comments bili-comment-thread-renderer",
-                    "exclude_selector": "bili-comment-renderer#comment #top",
-                    "exclude_text_selector": "bili-comment-renderer#comment #header > bili-comment-user-info #user-name",
+                    "locator": {
+                      "value": "bili-comment-renderer#comment #content > bili-rich-text #contents"
+                    },
+                    "item_locator": {
+                      "value": "bili-comments bili-comment-thread-renderer"
+                    },
+                    "exclude_locator": {
+                      "value": "bili-comment-renderer#comment #top"
+                    },
+                    "exclude_text_locator": {
+                      "value": "bili-comment-renderer#comment #header > bili-comment-user-info #user-name"
+                    },
                     "exclude_text": "{{up_name}}",
                     "separator": "\n"
                   },
@@ -1882,31 +1933,10 @@
                 },
                 {
                   "params": {
-                    "x": 0,
-                    "y": -2000,
-                    "steps": 8,
-                    "interval_ms": 120,
-                    "timeout": 5000
-                  },
-                  "action_id": "scroll",
-                  "action_type": "scroll",
-                  "on_error": "continue"
-                },
-                {
-                  "params": {
                     "timeout": 800
                   },
                   "action_id": "wait",
                   "action_type": "wait"
-                },
-                {
-                  "retry": 1,
-                  "params": {
-                    "timeout": 5000,
-                    "selector": ".brt-editor:visible"
-                  },
-                  "action_id": "click",
-                  "action_type": "click"
                 },
                 {
                   "params": {
@@ -1928,7 +1958,9 @@
                   "params": {
                     "value": "{{comment_text}}",
                     "timeout": 5000,
-                    "selector": ".brt-editor:visible",
+                    "locator": {
+                      "value": ".brt-editor:visible"
+                    },
                     "trim": true
                   },
                   "action_id": "input",
@@ -1943,7 +1975,9 @@
                 },
                 {
                   "params": {
-                    "selector": ".brt-editor:visible",
+                    "locator": {
+                      "value": ".brt-editor:visible"
+                    },
                     "timeout": 5000,
                     "fail_on_empty": false
                   },
@@ -1978,19 +2012,11 @@
                       {
                         "retry": 1,
                         "params": {
-                          "timeout": 5000,
-                          "selector": ".brt-editor:visible"
-                        },
-                        "action_id": "click",
-                        "action_type": "click",
-                        "on_error": "continue"
-                      },
-                      {
-                        "retry": 1,
-                        "params": {
                           "value": "{{comment_text}}",
                           "timeout": 5000,
-                          "selector": ".brt-editor:visible",
+                          "locator": {
+                            "value": ".brt-editor:visible"
+                          },
                           "trim": true
                         },
                         "action_id": "input",
@@ -2006,7 +2032,9 @@
                       },
                       {
                         "params": {
-                          "selector": ".brt-editor:visible",
+                          "locator": {
+                            "value": ".brt-editor:visible"
+                          },
                           "timeout": 5000,
                           "fail_on_empty": false
                         },
@@ -2052,22 +2080,15 @@
                 },
                 {
                   "params": {
-                    "state": "visible",
-                    "timeout": 8000,
-                    "selector": "bili-comments #pub button:visible"
-                  },
-                  "action_id": "wait",
-                  "action_type": "wait"
-                },
-                {
-                  "params": {
                     "url_pattern": "**/x/v2/reply/add**",
                     "pattern_type": "glob",
                     "method": "POST",
                     "include_body": true,
-                    "trigger_selector": "bili-comments #pub button:visible",
-                    "trigger_timeout": 8000,
-                    "timeout": 3000
+                    "trigger_locator": {
+                      "value": "bili-comments #pub button:visible"
+                    },
+                    "trigger_timeout": 30000,
+                    "timeout": 30000
                   },
                   "action_id": "wait_for_response",
                   "action_type": "wait_for_response",
@@ -2091,7 +2112,9 @@
                 },
                 {
                   "params": {
-                    "selector": ".brt-editor:visible",
+                    "locator": {
+                      "value": ".brt-editor:visible"
+                    },
                     "timeout": 5000,
                     "fail_on_empty": false
                   },
@@ -2111,7 +2134,9 @@
                 },
                 {
                   "params": {
-                    "selector": "bili-comment-thread-renderer",
+                    "locator": {
+                      "value": "bili-comment-thread-renderer"
+                    },
                     "state": "visible",
                     "timeout": 8000
                   },
@@ -2124,8 +2149,12 @@
                 },
                 {
                   "params": {
-                    "selector": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)",
-                    "item_selector": "bili-comment-thread-renderer",
+                    "locator": {
+                      "value": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)"
+                    },
+                    "item_locator": {
+                      "value": "bili-comment-thread-renderer"
+                    },
                     "timeout": 5000,
                     "fail_on_empty": false
                   },
@@ -2169,7 +2198,9 @@
                       },
                       {
                         "params": {
-                          "selector": ".side-toolbar__action.forward",
+                          "locator": {
+                            "value": ".side-toolbar__action.forward"
+                          },
                           "state": "visible",
                           "timeout": 15000
                         },
@@ -2179,7 +2210,9 @@
                       },
                       {
                         "params": {
-                          "selector": "bili-comments bili-comment-thread-renderer",
+                          "locator": {
+                            "value": "bili-comments bili-comment-thread-renderer"
+                          },
                           "state": "visible",
                           "timeout": 15000
                         },
@@ -2196,8 +2229,12 @@
                       },
                       {
                         "params": {
-                          "selector": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)",
-                          "item_selector": "bili-comment-thread-renderer",
+                          "locator": {
+                            "value": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)"
+                          },
+                          "item_locator": {
+                            "value": "bili-comment-thread-renderer"
+                          },
                           "timeout": 5000,
                           "fail_on_empty": false
                         },
@@ -2241,7 +2278,9 @@
                             },
                             {
                               "params": {
-                                "selector": ".side-toolbar__action.forward",
+                                "locator": {
+                                  "value": ".side-toolbar__action.forward"
+                                },
                                 "state": "visible",
                                 "timeout": 15000
                               },
@@ -2251,7 +2290,9 @@
                             },
                             {
                               "params": {
-                                "selector": "bili-comments bili-comment-thread-renderer",
+                                "locator": {
+                                  "value": "bili-comments bili-comment-thread-renderer"
+                                },
                                 "state": "visible",
                                 "timeout": 15000
                               },
@@ -2268,8 +2309,12 @@
                             },
                             {
                               "params": {
-                                "selector": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)",
-                                "item_selector": "bili-comment-thread-renderer",
+                                "locator": {
+                                  "value": "a[href*=\"space.bilibili.com\"]:not(#user-avatar)"
+                                },
+                                "item_locator": {
+                                  "value": "bili-comment-thread-renderer"
+                                },
                                 "timeout": 5000,
                                 "fail_on_empty": false
                               },
@@ -2316,7 +2361,9 @@
                         "params": {
                           "state": "visible",
                           "timeout": 10000,
-                          "selector": ".side-toolbar__action.forward"
+                          "locator": {
+                            "value": ".side-toolbar__action.forward"
+                          }
                         },
                         "action_id": "wait",
                         "action_type": "wait"
@@ -2325,19 +2372,12 @@
                         "retry": 1,
                         "params": {
                           "timeout": 5000,
-                          "selector": ".side-toolbar__action.forward"
+                          "locator": {
+                            "value": ".side-toolbar__action.forward"
+                          }
                         },
                         "action_id": "click",
                         "action_type": "click"
-                      },
-                      {
-                        "params": {
-                          "state": "visible",
-                          "timeout": 8000,
-                          "selector": ".bili-dyn-share-publishing__action"
-                        },
-                        "action_id": "wait",
-                        "action_type": "wait"
                       },
                       {
                         "params": {
@@ -2345,9 +2385,11 @@
                           "pattern_type": "glob",
                           "method": "POST",
                           "include_body": true,
-                          "trigger_selector": ".bili-dyn-share-publishing__action",
-                          "trigger_timeout": 8000,
-                          "timeout": 15000
+                          "trigger_locator": {
+                            "value": ".bili-dyn-share-publishing__action"
+                          },
+                          "trigger_timeout": 30000,
+                          "timeout": 30000
                         },
                         "action_id": "wait_for_response",
                         "action_type": "wait_for_response",
@@ -2366,8 +2408,10 @@
                       {
                         "params": {
                           "state": "visible",
-                          "timeout": 10000,
-                          "selector": ".bili-dyn-share-succ-tip__btn"
+                          "timeout": 30000,
+                          "locator": {
+                            "value": ".bili-dyn-share-succ-tip__btn"
+                          }
                         },
                         "action_id": "wait",
                         "action_type": "wait",
@@ -2382,7 +2426,9 @@
                             {
                               "params": {
                                 "timeout": 5000,
-                                "selector": ".bili-dyn-share-succ-tip__btn"
+                                "locator": {
+                                  "value": ".bili-dyn-share-succ-tip__btn"
+                                }
                               },
                               "action_id": "click",
                               "action_type": "click",
@@ -2392,7 +2438,9 @@
                               "params": {
                                 "state": "hidden",
                                 "timeout": 8000,
-                                "selector": ".bili-dyn-share__wrap"
+                                "locator": {
+                                  "value": ".bili-dyn-share__wrap"
+                                }
                               },
                               "action_id": "wait",
                               "action_type": "wait",
@@ -2406,7 +2454,9 @@
                               "params": {
                                 "state": "hidden",
                                 "timeout": 8000,
-                                "selector": ".bili-dyn-share__wrap"
+                                "locator": {
+                                  "value": ".bili-dyn-share__wrap"
+                                }
                               },
                               "action_id": "wait",
                               "action_type": "wait",
@@ -2421,7 +2471,9 @@
                       },
                       {
                         "params": {
-                          "selector": ".side-toolbar__action.like:not(.is-active)",
+                          "locator": {
+                            "value": ".side-toolbar__action.like:not(.is-active)"
+                          },
                           "kind": "visible",
                           "missing": "ignore",
                           "timeout": 0
@@ -2447,7 +2499,9 @@
                               "retry": 1,
                               "params": {
                                 "timeout": 5000,
-                                "selector": ".side-toolbar__action.like"
+                                "locator": {
+                                  "value": ".side-toolbar__action.like"
+                                }
                               },
                               "action_id": "click",
                               "action_type": "click",
@@ -2490,7 +2544,7 @@
                               "action_type": "mark_resource_result",
                               "input_vars": {
                                 "skip_reason": "转发未确认",
-                                "record_note": "failed：转发后 10s 内未出现「分享成功」提示，转发可能未生效"
+                                "record_note": "failed：转发后 30s 内未出现「分享成功」提示，转发可能未生效"
                               }
                             }
                           ]
@@ -2502,7 +2556,9 @@
                     "FalseBranch": [
                       {
                         "params": {
-                          "selector": ".bili-captcha, .geetest_holder, .geetest_panel, iframe[src*=\"geetest\"], iframe[src*=\"captcha\"]",
+                          "locator": {
+                            "value": ".bili-captcha, .geetest_holder, .geetest_panel, iframe[src*=\"geetest\"], iframe[src*=\"captcha\"]"
+                          },
                           "state": "visible",
                           "timeout": 2000
                         },

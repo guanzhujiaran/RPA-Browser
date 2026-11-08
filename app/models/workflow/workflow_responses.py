@@ -44,6 +44,16 @@ class WorkflowDetailResponse(UpstreamSyncFields):
     forked_from_id: int | None = None
     last_run_at: datetime | None = None
     last_run_status: str | None = None
+    # 上次运行的可数结果：前端不再展示成功/失败结论，只展示
+    # 「成功循环 N 轮」（resource_total > 0）或「成功 N 步」。
+    last_run_success_count: int = Field(default=0, description="上次运行成功步骤数")
+    last_run_total: int = Field(default=0, description="上次运行步骤总数")
+    last_run_resource_total: int = Field(
+        default=0, description="上次运行处理的资源总数（>0 = 批量循环口径）"
+    )
+    last_run_resource_success: int = Field(
+        default=0, description="上次运行资源成功数（= 成功循环轮次）"
+    )
     next_run_at: datetime | None = None
     notify_inbox_on_start: bool = Field(
         default=False, description="站内通知：开始执行时是否发送"
@@ -100,6 +110,16 @@ class WorkflowListItemResponse(UpstreamSyncFields):
     )
     last_run_at: datetime | None = None
     last_run_status: str | None = None
+    # 上次运行的可数结果：前端不再展示成功/失败结论，只展示
+    # 「成功循环 N 轮」（resource_total > 0）或「成功 N 步」。
+    last_run_success_count: int = Field(default=0, description="上次运行成功步骤数")
+    last_run_total: int = Field(default=0, description="上次运行步骤总数")
+    last_run_resource_total: int = Field(
+        default=0, description="上次运行处理的资源总数（>0 = 批量循环口径）"
+    )
+    last_run_resource_success: int = Field(
+        default=0, description="上次运行资源成功数（= 成功循环轮次）"
+    )
     next_run_at: datetime | None = None
     notify_inbox_on_start: bool = Field(
         default=False, description="站内通知：开始执行时是否发送"
@@ -172,6 +192,15 @@ class WorkflowRunLogItemResponse(SQLModel):
     resume_of: str | None = None
     resume_count: int = 0
     checkpoint_step: int = 0
+    # 资源级结果：与 status 同口径，避免「步骤全绿却失败」无法解释。
+    # to_dict() 已下发这些键，响应模型必须显式声明，否则会被 Pydantic 静默丢弃
+    #（见 docs/通知动作与运行告警计划书.md §D5.1）
+    resource_total: int = 0
+    resource_success: int = 0
+    resource_failed: int = 0
+    resource_skipped: int = 0
+    resource_soft_failed: int = 0
+    resource_fatal_failed: int = 0
 
 
 class WorkflowRunLogDetailResponse(WorkflowRunLogItemResponse):

@@ -51,23 +51,27 @@ def _run_notify_content(
         f"运行记录：{run_id}",
     ]
     if summary is not None:
-        lines.append(
-            f"执行结果：成功 {summary.get('success', 0)} / "
-            f"失败 {summary.get('failed', 0)}（共 {summary.get('total', 0)} 步）"
-        )
-        # 资源级结果：业务工作流真正关心的指标（步骤成功 ≠ 业务办成）
+        # 只给可数结果，不下「成功/失败」结论：有资源记录时按成功资源数
+        # 报成功循环轮次，纯步骤工作流按成功步骤数报步骤。
         resource_total = int(summary.get("resource_total", 0) or 0)
         if resource_total > 0:
             lines.append(
-                f"资源结果：成功 {summary.get('resource_success', 0)} / "
-                f"失败 {summary.get('resource_failed', 0)} / "
-                f"跳过 {summary.get('resource_skipped', 0)}"
-                f"（共 {resource_total}）"
+                f"处理结果：成功循环 {summary.get('resource_success', 0)} 轮"
+                f"（共 {resource_total} 条资源，跳过 {summary.get('resource_skipped', 0)}）"
             )
+        else:
+            total_steps = int(summary.get("total", 0) or 0)
+            success_steps = int(summary.get("success", 0) or 0)
+            if total_steps <= 0:
+                lines.append("执行步骤：未执行任何步骤")
+            elif success_steps == total_steps:
+                lines.append(f"执行步骤：成功 {total_steps} 步")
+            else:
+                lines.append(f"执行步骤：成功 {success_steps}/{total_steps} 步")
     if duration_ms is not None:
         lines.append(f"耗时：{duration_ms / 1000:.1f} 秒")
     if error_message:
-        lines.append(f"失败详情：{error_message}")
+        lines.append(f"详情：{error_message}")
     # 运行告警：被 on_error=continue 容忍的失败（不改变结论，但可能已降级执行）
     tolerated = int(summary.get("tolerated", 0)) if summary else 0
     if tolerated > 0:
@@ -81,7 +85,7 @@ def _run_notify_content(
             lines.append(f"循环统计：{loop_text}")
         for sample in (summary or {}).get("tolerated_samples") or []:
             lines.append(f"  - {sample}")
-        lines.append("提示：这类失败不改变运行结论，但可能已降级执行，请检查相关配置。")
+        lines.append("提示：这类失败不影响本次结果统计，但可能已降级执行，请检查相关配置。")
     return "\n".join(lines)
 
 
@@ -96,7 +100,9 @@ async def _notify_run(
     error_message: str | None = None,
     duration_ms: float | None = None,
 ) -> bool:
-    """工作流运行通知（开始 / 成功 / 失败三态），双通道按开关投递。
+    """工作流运行通知（开始 / 结束 / 停止），双通道按开关投递。
+
+    结束态不再区分成功/失败：标题统一「工作流执行完成」，正文只给可数结果。
 
     标题携带 ``run_id`` 后缀：站内通知在 be-message 侧按 ``(target_value, title)``
     幂等判重，带上运行唯一标识才能区分不同运行、不被误吞。
@@ -118,12 +124,11 @@ async def _notify_run(
     try:
         if phase == "start":
             prefix, subject = "工作流开始执行", push_msg.PushSubject.INFO
-        elif phase == "success":
-            prefix, subject = "工作流执行成功", push_msg.PushSubject.SUCCESS
         elif phase == "cancelled":
             prefix, subject = "工作流已停止", push_msg.PushSubject.INFO
         else:
-            prefix, subject = "工作流执行失败", push_msg.PushSubject.FAILURE
+            # 结束不再区分成功/失败：文案只给可数结果（见 _run_notify_content）
+            prefix, subject = "工作流执行完成", push_msg.PushSubject.INFO
         title = f"{prefix}: {workflow.name} (#{run_id[:8]})"
         content = _run_notify_content(
             workflow,

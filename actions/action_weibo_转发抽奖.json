@@ -24,7 +24,9 @@
       "action_type": "wait",
       "on_error": "continue",
       "params": {
-        "selector": ".card-wrap[action-type=\"feed_list_item\"] >> nth=0",
+        "locator": {
+          "value": ".card-wrap[action-type=\"feed_list_item\"] >> nth=0"
+        },
         "timeout": 15000
       },
       "output_vars": [
@@ -44,7 +46,9 @@
             "action_type": "click",
             "on_error": "continue",
             "params": {
-              "selector": ".card-wrap[action-type=\"feed_list_item\"] >> nth={{card_i}} >> a[action-type=\"feed_list_forward\"]",
+              "locator": {
+                "value": ".card-wrap[action-type=\"feed_list_item\"] >> nth={{card_i}} >> a[action-type=\"feed_list_forward\"]"
+              },
               "timeout": 8000
             }
           },
@@ -53,7 +57,9 @@
             "action_type": "wait",
             "on_error": "continue",
             "params": {
-              "selector": "textarea[node-type=\"textEl\"]",
+              "locator": {
+                "value": "textarea[node-type=\"textEl\"]"
+              },
               "timeout": 6000
             },
             "output_vars": [
@@ -77,7 +83,9 @@
                   "action_id": "input",
                   "action_type": "input",
                   "params": {
-                    "selector": "textarea[node-type=\"textEl\"]",
+                    "locator": {
+                      "value": "textarea[node-type=\"textEl\"]"
+                    },
                     "value": "转发抽奖",
                     "timeout": 5000
                   }
@@ -86,7 +94,9 @@
                   "action_id": "click",
                   "action_type": "click",
                   "params": {
-                    "selector": "text=\"转发\" >> nth=-1",
+                    "locator": {
+                      "value": "text=\"转发\" >> nth=-1"
+                    },
                     "timeout": 8000
                   }
                 },
@@ -95,7 +105,9 @@
                   "action_type": "wait",
                   "on_error": "continue",
                   "params": {
-                    "selector": "textarea[node-type=\"textEl\"]",
+                    "locator": {
+                      "value": "textarea[node-type=\"textEl\"]"
+                    },
                     "state": "hidden",
                     "timeout": 10000
                   },

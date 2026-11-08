@@ -38,10 +38,13 @@ async def log_run_status_changed(event: WorkflowRunStatusChanged) -> None:
 
 
 async def sync_workflow_last_run(event: WorkflowRunStatusChanged) -> None:
-    """终态时刷新工作流的 ``last_run_status / last_run_at``。
+    """终态时刷新工作流的 ``last_run_status / last_run_at`` 与可数结果快照。
 
-    这两个字段只是「卡片展示用的派生快照」，运行记录才是真相；因此这条订阅失败
+    这些字段只是「卡片展示用的派生快照」，运行记录才是真相；因此这条订阅失败
     （DB 抖动 / 并发更新）不会影响运行本身，也不会回滚状态。
+
+    卡片不再展示「成功/失败」结论，故一并固化成功步骤数 / 步骤总数 / 资源总数 / 资源成功数：
+    有资源按「成功循环 N 轮」展示，无资源按「成功 N 步」展示。
     """
     if not is_terminal(event.to_status):
         return
@@ -62,6 +65,10 @@ async def sync_workflow_last_run(event: WorkflowRunStatusChanged) -> None:
         id=workflow.id,
         status=event.to_status.value,
         last_run_at=record.finished_at or event.occurred_at,
+        last_run_success_count=int(record.success_count or 0),
+        last_run_total=int(record.total or 0),
+        last_run_resource_total=int(record.resource_total or 0),
+        last_run_resource_success=int(record.resource_success or 0),
     )
 
 
@@ -144,6 +151,8 @@ async def notify_run_finished(event: WorkflowRunStatusChanged) -> None:
             "resource_success": summary.resource_success,
             "resource_failed": summary.resource_failed,
             "resource_skipped": summary.resource_skipped,
+            "resource_soft_failed": summary.resource_soft_failed,
+            "resource_fatal_failed": summary.resource_fatal_failed,
         },
         error_message=summary.error_message,
         duration_ms=summary.duration_ms,

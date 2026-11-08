@@ -2,7 +2,7 @@
 
 覆盖 ``docs/内置滚动动作参数扩展计划书.md`` 的三种模式：
 - 滚轮模式（x/y）：`page.mouse.wheel`，位移精确等于 y，分 steps 次；
-- 元素模式（selector）：`locator.scroll_into_view_if_needed`；
+- 元素模式（locator）：`locator.scroll_into_view_if_needed`；
 - 兜底模式（都不给）：`window.scrollTo(0, 0)`。
 """
 
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from app.models.execution.action_params import ScrollParams
+from app.models.execution.action_params import LocatorSpec, ScrollParams
 from app.services.execution.actions.interaction import ScrollAction
 
 
@@ -33,6 +33,10 @@ class FakePage:
         self.locators.append(selector)
         locator = MagicMock()
         locator.scroll_into_view_if_needed = AsyncMock()
+        # 定位器解析会先 `wait_for(state=...)` 再 `count()` 判断命中，
+        # 两者都必须是 AsyncMock，否则 MagicMock 不可 await，测试会误报失败。
+        locator.wait_for = AsyncMock()
+        locator.count = AsyncMock(return_value=1)
         # ScrollAction 走 `locator.first.scroll_into_view_if_needed(...)`（单元素 API），
         # `.first` 未显式配置时会退化成 MagicMock（不可 await），测试会误报失败。
         locator.first = locator
@@ -74,18 +78,18 @@ async def test_wheel_mode_remainder_goes_to_last_step():
 
 
 @pytest.mark.asyncio
-async def test_wheel_mode_wins_over_selector():
+async def test_wheel_mode_wins_over_locator():
     page, _ = await run_scroll(
-        ScrollParams(selector="bili-comments", y=600, steps=1, interval_ms=0)
+        ScrollParams(locator=LocatorSpec(value="bili-comments"), y=600, steps=1, interval_ms=0)
     )
 
     assert page.mouse.calls == [(0, 600)]
-    assert page.locators == [], "同时给 selector 时滚轮模式优先"
+    assert page.locators == [], "同时给 locator 时滚轮模式优先"
 
 
 @pytest.mark.asyncio
 async def test_element_mode_unchanged():
-    page, result = await run_scroll(ScrollParams(selector="#target"))
+    page, result = await run_scroll(ScrollParams(locator=LocatorSpec(value="#target")))
 
     assert result.success
     assert page.locators == ["#target"]

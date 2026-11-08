@@ -46,6 +46,7 @@ from app.models.execution.condition_models import (
 )
 from app.services.execution.actions.base import ActionResult
 from app.services.execution.actions.safe_eval import safe_evaluate_condition
+from app.services.execution.param_mapping import apply_param_mapping
 from app.services.execution.scope import Scope
 
 
@@ -270,7 +271,7 @@ class LoopStep(StepNode):
         1. **只注入用户声明过该参数名的步骤**：``param_mapping`` 的语义是
            「把某个参数的值换成循环项的字段」，不是给所有步骤凭空加参数。
            旧实现给循环体里**每个**步骤的 params 都加上映射键，等于用循环项
-           的值顶掉所有步骤的同名参数（连用户写死的 ``selector`` 也会被
+           的值顶掉所有步骤的同名参数（连用户写死的 ``locator`` 也会被
            悄悄覆盖）。
         2. **不改原步骤对象**：返回新的 Pipeline / 步骤副本，避免映射值残留
            在步骤定义里（下一轮映射为空时，上一轮的值会继续生效）。
@@ -278,10 +279,8 @@ class LoopStep(StepNode):
         steps: list[StepNode] = []
         for step in pipeline.steps:
             if isinstance(step, AtomicStep):
-                step_params = dict(step.params or {})
-                injected = {k: v for k, v in mapped.items() if k in step_params}
-                if injected:
-                    step_params.update(injected)
+                step_params, applied = apply_param_mapping(step.params or {}, mapped)
+                if applied:
                     step = replace(step, params=step_params)
             steps.append(step)
         return Pipeline(steps)
@@ -534,9 +533,9 @@ class LoopStep(StepNode):
             await asyncio.sleep(self.iteration_wait_seconds)
 
     def _randomize_trailing_wait(self, pipeline: Pipeline) -> float:
-        """把循环体末尾「无 selector 的固定等待」改写为 10~30 秒随机值。
+        """把循环体末尾「无定位器的固定等待」改写为 10~30 秒随机值。
 
-        - 只处理最后一个步骤是 `wait` 且无 selector 的情况（固定冷却）；
+        - 只处理最后一个步骤是 `wait` 且无 locator 的情况（固定冷却）；
         - 配置了 `iteration_wait_seconds` 时不改写，避免与引擎冷却叠加；
         - 返回本次随机秒数（0 表示无需/未改写）。
 
@@ -557,7 +556,7 @@ class LoopStep(StepNode):
         if str(getattr(last, "action_id", "")) != "wait":
             return 0.0
         params = dict(getattr(last, "params", None) or {})
-        if params.get("selector"):
+        if params.get("locator"):
             return 0.0
         seconds = random.randint(
             self.TAIL_WAIT_MIN_SECONDS, self.TAIL_WAIT_MAX_SECONDS
@@ -567,7 +566,7 @@ class LoopStep(StepNode):
         return float(seconds)
 
     def _trailing_wait_seconds(self) -> float:
-        """循环体末尾若是「无 selector 的固定等待」，取它的超时秒数作为补偿冷却。
+        """循环体末尾若是「无定位器的固定等待」，取它的超时秒数作为补偿冷却。
 
         仅用于失败提前中断、尾部等待没执行到的场景（成功时尾步骤自己会等）。
         """
@@ -579,7 +578,7 @@ class LoopStep(StepNode):
         if str(getattr(last, "action_id", "")) != "wait":
             return 0.0
         params = getattr(last, "params", None) or {}
-        if params.get("selector"):
+        if params.get("locator"):
             return 0.0
         try:
             timeout_ms = float(params.get("timeout") or 0)

@@ -96,6 +96,9 @@ def _build_scope(items_count: int = 4) -> Scope:
         "captcha_shown": "false",
         "share_closed": "true",
         "skip_reason": "",
+        # wait_for_response 的默认入参/出参（动作 JSON 里 input_vars 声明为 false）
+        "reply_ok": False,
+        "reply_status": "",
         "action_like": "",
         "is_login": "true",
         "page_ok": "true",
