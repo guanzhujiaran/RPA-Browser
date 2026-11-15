@@ -18,6 +18,9 @@ from app.controller.v1.admin.membership_admin_router import (
 from app.controller.v1.admin.workflow_admin_router import (
     router as workflow_admin_sub_router,
 )
+from app.controller.v1.admin.feedback_admin_router import (
+    router as feedback_admin_sub_router,
+)
 from app.models.router.all_routes import admin_router
 from app.utils.controller.router_path import gen_api_router
 
@@ -32,5 +35,6 @@ router.include_router(browser_monitor_sub_router)
 router.include_router(permission_sub_router)
 router.include_router(membership_admin_sub_router)
 router.include_router(workflow_admin_sub_router)
+router.include_router(feedback_admin_sub_router)
 
 __all__ = ["router"]

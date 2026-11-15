@@ -178,6 +178,20 @@ class AdminPermissionRouterPath(StrEnumAutoDoc):
     permission_reset = "/permission/reset"
 
 
+class AdminFeedbackRouterPath(StrEnumAutoDoc):
+    """报错 / 反馈管理端路由路径 - prefix: /api/admin/rpa（管理员）
+
+    管理端对**全部用户（含未登录游客）**提交的反馈做 CRUD 与状态处理，
+    与用户侧 ``/browser/feedback/*``（按 mid 归属隔离）互不影响。
+    """
+
+    feedback_list = "/feedback/list"
+    feedback_get = "/feedback/get"
+    feedback_create = "/feedback/create"
+    feedback_update = "/feedback/update"
+    feedback_delete = "/feedback/delete"
+
+
 class AdminWorkflowRouterPath(StrEnumAutoDoc):
     """工作流管理端路由路径 - prefix: /api/admin/rpa（仅 root）
 
