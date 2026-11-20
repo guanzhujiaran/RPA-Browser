@@ -22,5 +22,11 @@
     "download_url": "https://github.com/adryfish/fingerprint-chromium/releases/download/148.0.7778.215/ungoogled-chromium-148.0.7778.215-1-x86_64.AppImage",
     "full_version": "148.0.7778.215",
     "exec_name": "ungoogled-chromium-148.0.7778.215.AppImage"
+  },
+  {
+    "browser_ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    "download_url": "https://github.com/adryfish/fingerprint-chromium/releases/download/150.0.7871.186/ungoogled-chromium-150.0.7871.186-1-x86_64.AppImage",
+    "full_version": "150.0.7871.186",
+    "exec_name": "ungoogled-chromium-150.0.7871.186.AppImage"
   }
 ]

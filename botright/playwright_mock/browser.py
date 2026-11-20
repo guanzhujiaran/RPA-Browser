@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -29,6 +30,12 @@ from .launch_args import build_launch_args
 
 if TYPE_CHECKING:
     from botright import Botright
+
+
+# root 下 Chromium 会直接拒绝启动
+# （"Running as root without --no-sandbox is not supported"），容器内 uid=0
+# 必须关闭 sandbox；非 root（宿主机 / VS Code 调试）保留 sandbox 不受影响。
+_RUNNING_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 
 def _build_proxy_option(
@@ -138,7 +145,7 @@ async def new_browser(
         headless=botright.headless,
         executable_path=botright.browser["path"],
         args=args,
-        chromium_sandbox=True,
+        chromium_sandbox=not _RUNNING_AS_ROOT,
         **parsed_launch_arguments,
     )
 

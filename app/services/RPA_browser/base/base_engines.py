@@ -15,6 +15,7 @@ from app.utils.http.proxy_utils import (
 from app.config import CONF
 from botright.botright import Botright
 from loguru import logger
+from scripts.initd.install_ungoogled_chromium import ensure_appimage_extracted
 
 
 class BaseUndetectedPlaywright:
@@ -82,6 +83,10 @@ class BaseUndetectedPlaywright:
         browser_exec_info = await browser_exec_info_helper.get_exec_info(
             ua=fingerprint_params.patchright_browser_ua
         )
+        # 生产容器没有 FUSE，AppImage 无法挂载：首次真正使用时一次性解包，
+        # 之后同一版本的所有实例共用一份可执行文件（文件页/page cache 真正共享）。
+        # 宿主机（FUSE 可用）保持直接执行 AppImage 的原有行为，不额外占磁盘。
+        executable_path = await ensure_appimage_extracted(browser_exec_info)
         botright_instance: Botright = await Botright(
             headless=self.headless,
             block_images=False,
@@ -90,7 +95,7 @@ class BaseUndetectedPlaywright:
             # 绘制，CPU 占用极高，已关闭（2.70.2）。
             user_action_layer=False,
             fingerprint=fingerprint_params.browserforge_fingerprint_object,
-            execute_path=browser_exec_info.exec_path,
+            execute_path=executable_path,
         )
         botright_instance.flags.extend(self.default_args)
         browser = await botright_instance.new_browser(
