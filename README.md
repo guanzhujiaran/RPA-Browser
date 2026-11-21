@@ -68,7 +68,22 @@ cd /home/minato/BilibiliExplosion
 docker compose up -d rpa-browser
 ```
 
-容器内端口 `28000`，由 `docker-compose.yml` 的 `RPA_BROWSER_PORT` 映射；依赖 `postgres` / `redis` / `rabbitmq` / `casdoor`。
+`rpa-browser` 使用 **host 网络**（`network_mode: host`），直接监听宿主机 `28000`，不再做端口映射。原因：外网手机（IPv6）看 WebRTC 直播时，`aiortc` 的 offer 必须带宿主机公网 IPv6 的 host 候选；bridge 网络只能给出 `172.x` 容器地址，ICE 会超时。
+
+host 网络下的注意事项：
+
+- 容器没有 Docker DNS，所有依赖地址都必须写 `127.0.0.1:<宿主机映射端口>`（compose 已注入）：
+  `mysql` → `127.0.0.1:${MYSQL_PORT:-10000}`、`rabbitmq` → `127.0.0.1:${RABBITMQ_PORT:-5672}`、
+  `casdoor` → `127.0.0.1:${CASDOOR_PORT:-10011}`、`be-message-service` → `127.0.0.1:${MESSAGE_SERVICE_PORT:-10013}`。
+  `depends_on` 只保证启动顺序，不能替代 DNS。
+- 网关通过 `RPA_SERVICE_URI=http://host.docker.internal:28000` 访问（bridge 网内的 host-gateway）。
+- `28000` 直接暴露在宿主机上，必须用 iptables 限制来源（仅 `127.0.0.1` 与 Docker 网段 `172.19.0.0/16`），
+  规则脚本见 `scripts/docker/rpa-host-firewall.sh`；媒体 UDP 端口段（`32768:60999`）需按需放行。
+  该脚本会安装开机自恢复的 `rpa-host-firewall.service`；**在 1Panel 里修改过防火墙规则后，
+  需要重跑一次 `sudo scripts/docker/rpa-host-firewall.sh apply`**（或重启该 service），
+  因为 1Panel 重建 INPUT 链时会丢掉自定义跳转。
+- **Docker Desktop（Windows / macOS）不支持 host 网络**，本配置只能在 Linux 宿主机（或 WSL2 + 原生 Docker Engine）上运行。
+- 部署前确认宿主机有公网 IPv6 地址，且路由器 / 光猫的 IPv6 防火墙已放行宿主机高位 UDP 入站（需人工确认）。
 
 ## 配置
 
@@ -76,7 +91,7 @@ docker compose up -d rpa-browser
 
 | 变量 | 说明 |
 | --- | --- |
-| `mysql_browser_info_url` | `mysql+aiomysql://mysql/BiliRPADB?...` |
+| `mysql_browser_info_url` | `mysql+aiomysql://127.0.0.1:10000/BiliRPADB?...`（host 网络，端口取 `MYSQL_PORT`） |
 | `controller_base_path` | 控制器基础路径，默认 `/api/v1/rpa` |
 | `proxy_server_url` | 代理地址，如 `http://host.docker.internal:10809` |
 | `GEMINI_API_KEY` | Gemini API Key |
@@ -100,7 +115,7 @@ puppeteer_Bili (网关)
 ## API
 
 - 基础路径：`/api/v1/rpa`
-- OpenAPI：`http://<host>:<RPA_BROWSER_PORT>/docs`
+- OpenAPI：`http://<host>:28000/docs`
 - 健康检查：`/health`（依赖 RabbitMQ 连通性）
 
 ## RPA MCP（用户能力全量暴露）
@@ -108,7 +123,7 @@ puppeteer_Bili (网关)
 `app/mcp` 把**用户可用的全部 RPA 接口**以 MCP（streamable HTTP）挂在服务上，
 工具由 OpenAPI 自动生成（`fastapi-mcp`），不额外维护第二套 MCP 接口：
 
-- MCP 端点：`http://<host>:<RPA_BROWSER_PORT>/api/v1/rpa/mcp`
+- MCP 端点：`http://<host>:28000/api/v1/rpa/mcp`
 - 工具 = 用户级路由全集（动作 / 工作流 / 浏览器会话与页面 / 操作日志 / 动作调试 …），
   共 96 个；其中 `rpa_debug_*` 是调试专用工具（静态校验 / 试跑 / 日志定位 / 落库回读），
   其余 `rpa_*` 是与前端页面同款接口的镜像（工具名映射见 `app/mcp/exposure.py` 的
