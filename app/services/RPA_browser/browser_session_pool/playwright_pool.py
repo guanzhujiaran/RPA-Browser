@@ -110,6 +110,22 @@ class PlaywrightSessionPool:
             feedback="会话不存在",
         )
 
+    async def discard_session(self, mid: int, browser_id: int) -> bool:
+        """不等待关闭直接丢弃池内会话对象（供回收超时后的强制清理使用）。
+
+        与 ``release_session(force_close=True)`` 的区别：这里**不 await 任何关闭动作**，
+        只做引用摘除，避免关闭链路已经卡死时再次被拖住。浏览器进程由调用方
+        （LiveService）按 ``user_data_dir`` 直接 kill。
+        """
+        async with self._pool_lock:
+            browser_session = self._active_sessions.get(mid)
+            if browser_session is None:
+                return False
+            removed = browser_session.sessions.pop(browser_id, None) is not None
+            if not browser_session.sessions:
+                self._active_sessions.pop(mid, None)
+            return removed
+
 
 # 全局单例实例
 _default_session_pool: PlaywrightSessionPool | None = None

@@ -1,5 +1,7 @@
 from app.models.runtime.control import PageInfo
 import asyncio
+import os
+import signal
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -7,6 +9,7 @@ from datetime import datetime
 from typing import AsyncGenerator, Any, Dict
 import uuid
 import loguru
+import psutil
 from botright.playwright_mock import BrowserContext, Page
 from app.models.runtime.session import (
     SessionCloseResponse,
@@ -72,6 +75,77 @@ async def _cleanup_browser_creation_lock(mid, browser_id):
     lock_key = f"{mid}_{browser_id}"
     async with _global_browser_lock:
         _browser_creation_locks.pop(lock_key, None)
+
+
+def kill_session_processes(user_data_dir: str) -> int:
+    """强制杀掉某个会话对应的 Chromium 进程树（同步阻塞，调用方放线程池）。
+
+    正常关闭链路可能卡死（``close_all_streams`` / ``browser_context.close`` 不返回），
+    此时只能按 ``--user-data-dir`` 反查进程并 SIGKILL：
+    Chromium 主进程与所有子进程都会带该参数，因此可以精确命中整个会话，
+    不会波及其它会话；否则 ``SingletonLock`` 残留会让下一次启动复用失败。
+
+    安全约束：只 kill
+    1. 命令行里带该 ``user_data_dir`` 的进程；
+    2. 上述进程的子进程（覆盖不带该参数的 zygote 等）。
+    进程组只在「组长本身也属于本会话」时才整组 kill，避免误杀与主进程同组的其它服务。
+
+    Returns:
+        int: 实际命中的进程数（含子进程）
+    """
+    if not user_data_dir:
+        return 0
+
+    target = os.path.realpath(user_data_dir).rstrip("/")
+    matched: set[int] = set()
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+            if not any(hint in name for hint in ("chrome", "chromium")):
+                continue
+            cmdline = proc.cmdline()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        for arg in cmdline:
+            if not arg.startswith("--user-data-dir="):
+                continue
+            path = os.path.realpath(arg.split("=", 1)[1]).rstrip("/")
+            if path == target:
+                matched.add(proc.info["pid"])
+            break
+
+    if not matched:
+        return 0
+
+    # 补齐子进程（renderer / gpu 等可能不重复携带 --user-data-dir）
+    all_pids = set(matched)
+    for pid in list(matched):
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+            for child in psutil.Process(pid).children(recursive=True):
+                all_pids.add(child.pid)
+
+    own_pgid = os.getpgrp()
+    pgids: set[int] = set()
+    for pid in matched:
+        try:
+            pgid = os.getpgid(pid)
+        except OSError:
+            continue
+        # 仅当组长本身也是本会话进程时才整组杀（Playwright 以独立进程组启动浏览器）
+        if pgid in matched and pgid != own_pgid and pgid > 1:
+            pgids.add(pgid)
+
+    for pgid in pgids:
+        with suppress(OSError):
+            os.killpg(pgid, signal.SIGKILL)
+    for pid in all_pids:
+        with suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+    logger.warning(
+        f"强制终止会话进程: user_data_dir={target}, pids={sorted(all_pids)}, pgids={sorted(pgids)}"
+    )
+    return len(all_pids)
 
 
 @dataclass
@@ -228,6 +302,30 @@ class WebRTCEnabledSession(SessionInfo):
             return self._webrtc_manager.total_stream_count
         return 0
 
+    async def _close_step(self, coro, label: str) -> bool:
+        """执行单个关闭步骤：超时 / 异常只记录，不阻塞后续回收。
+
+        关闭链路必须保持「失败不阻塞回收」的语义：``close_all_streams`` /
+        ``browser_context.close`` 在极端情况下可能永不返回，这里用超时兜底，
+        超时由上层 ``release_browser_session`` 负责 kill 进程 + 删池对象。
+        """
+        timeout = max(1, settings.browser_session_release_timeout)
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+            # 关闭流 / 上下文返回 None，视为成功；close_page 等返回 bool 的沿用其结果
+            return True if result is None else bool(result)
+        except asyncio.TimeoutError:
+            self.logger.error(
+                f"{label}超时({timeout}s)，跳过并继续回收: "
+                f"mid={self.playwright_instance.mid}, browser_id={self.playwright_instance.browser_id}"
+            )
+        except Exception as e:
+            self.logger.error(
+                f"{label}失败，跳过并继续回收: "
+                f"mid={self.playwright_instance.mid}, browser_id={self.playwright_instance.browser_id}, error: {e}"
+            )
+        return False
+
     async def close(self, page_index: int | None = None) -> SessionCloseResponse:
         """
         关闭会话或指定页面
@@ -241,11 +339,13 @@ class WebRTCEnabledSession(SessionInfo):
         try:
             # 如果启用了 WebRTC，先关闭所有 WebRTC 流
             if self._webrtc_manager:
-                await self._webrtc_manager.close_all_streams()
+                await self._close_step(self._webrtc_manager.close_all_streams(), "关闭 WebRTC 流")
 
             # 如果指定了页面索引，只关闭该页面
             if page_index is not None:
-                success = await self.close_page(page_index)
+                success = await self._close_step(
+                    self.close_page(page_index), f"关闭页面 {page_index}"
+                )
                 if success:
                     return SessionCloseResponse(
                         mid=self.playwright_instance.mid,
@@ -264,20 +364,21 @@ class WebRTCEnabledSession(SessionInfo):
             # 否则关闭整个会话
 
             # 关闭浏览器上下文
+            closed = True
             if self.browser_context and not (
                 self.browser_context.pages and self.browser_context.pages[0].is_closed()
             ):
-                await self.browser_context.close()
+                closed = await self._close_step(self.browser_context.close(), "关闭浏览器上下文") and closed
 
             # 关闭浏览器生成器
             if self.browser_generator:
-                await self.browser_generator.aclose()
+                closed = await self._close_step(self.browser_generator.aclose(), "关闭浏览器生成器") and closed
 
             return SessionCloseResponse(
                 mid=self.playwright_instance.mid,
                 browser_id=self.playwright_instance.browser_id,
-                is_closed=True,
-                feedback="会话已优雅关闭",
+                is_closed=closed,
+                feedback="会话已优雅关闭" if closed else "会话关闭步骤超时/失败，已继续回收",
             )
         except Exception as e:
             self.logger.error(f"关闭会话时出错: {e}")
@@ -293,21 +394,15 @@ class WebRTCEnabledSession(SessionInfo):
         try:
             # 强制关闭所有 WebRTC 流
             if self._webrtc_manager:
-                await self._webrtc_manager.close_all_streams()
+                await self._close_step(self._webrtc_manager.close_all_streams(), "强制关闭 WebRTC 流")
 
             # 强制关闭浏览器上下文
             if self.browser_context:
-                try:
-                    await self.browser_context.close()
-                except Exception as e:
-                    self.logger.error(f"强制关闭浏览器上下文时出错: {e}")
+                await self._close_step(self.browser_context.close(), "强制关闭浏览器上下文")
 
             # 关闭浏览器生成器
             if self.browser_generator:
-                try:
-                    await self.browser_generator.aclose()
-                except Exception as e:
-                    self.logger.error(f"关闭浏览器生成器时出错: {e}")
+                await self._close_step(self.browser_generator.aclose(), "强制关闭浏览器生成器")
 
             return SessionCloseResponse(
                 mid=self.playwright_instance.mid,
@@ -669,4 +764,5 @@ __all__ = [
     "SessionInfo",
     "WebRTCEnabledSession",
     "BrowserSession",
+    "kill_session_processes",
 ]

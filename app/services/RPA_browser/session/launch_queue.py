@@ -57,6 +57,10 @@ class LaunchTicket:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     admitted: bool = False
     cancelled: bool = False
+    # 放行时刻（monotonic）；用于兜底检测「已放行但迟迟未 launch_settled」
+    admitted_at: float | None = None
+    # 放行后超时未落地 / 被强制结算：等待方据此抛错，不再继续创建
+    failed: bool = False
 
     @property
     def session_key(self) -> SessionKey:
@@ -69,6 +73,13 @@ class LaunchTicket:
     @property
     def waiting_seconds(self) -> int:
         return int(time.monotonic() - self.enqueued_at)
+
+    @property
+    def launching_seconds(self) -> int:
+        """已放行后的启动耗时（秒）；未放行时为 0"""
+        if self.admitted_at is None:
+            return 0
+        return int(time.monotonic() - self.admitted_at)
 
 
 class BrowserLaunchQueue:
@@ -130,6 +141,7 @@ class BrowserLaunchQueue:
                 ):
                     self._schedule_memory_scan(0)
                 async with self._lock:
+                    self._reap_stale_launching_locked()
                     self._try_admit_locked()
             except asyncio.CancelledError:
                 raise
@@ -150,6 +162,7 @@ class BrowserLaunchQueue:
         try:
             await asyncio.to_thread(browser_memory_estimator.refresh)
             async with self._lock:
+                self._reap_stale_launching_locked()
                 self._try_admit_locked()
         except asyncio.CancelledError:
             raise
@@ -197,6 +210,17 @@ class BrowserLaunchQueue:
         if cooldown <= 0:
             return 0.0
         return max(0.0, cooldown - (time.monotonic() - self._last_admit_at))
+
+    def has_pending(self, mid: int, browser_id: int) -> bool:
+        """该会话是否已有启动凭证（排队中或已放行启动中）"""
+        return (mid, browser_id) in self._pending
+
+    def get_launching_seconds(self, mid: int, browser_id: int) -> int | None:
+        """已放行后的启动耗时（秒）；不在启动中返回 None"""
+        ticket = self._pending.get((mid, browser_id))
+        if ticket is None or not ticket.admitted:
+            return None
+        return ticket.launching_seconds
 
     def would_queue(self, mid: int, browser_id: int, *, is_vip: bool) -> bool:
         """预判该启动请求是否需要排队（供路由层决定是否立即返回「排队中」）"""
@@ -310,6 +334,11 @@ class BrowserLaunchQueue:
 
         if ticket.cancelled:
             raise BrowserLaunchQueueCancelledException()
+        if ticket.failed:
+            # 已放行但迟迟未落地，被兜底回收：等待方必须失败返回，不能继续创建
+            raise BrowserLaunchQueueTimeoutException(
+                max(1, int(settings.browser_launch_queue_max_wait_time))
+            )
 
     async def launch_settled(self, mid: int, browser_id: int) -> None:
         """浏览器启动结束（成功或失败）后调用：释放预留额度并放行下一个"""
@@ -342,6 +371,31 @@ class BrowserLaunchQueue:
             self._discard_ticket_locked(ticket)
             logger.info(f"浏览器启动排队已取消: mid={mid}, browser_id={browser_id}")
             return True
+
+    async def abort_launch(self, mid: int, browser_id: int, *, reason: str = "") -> bool:
+        """强制结算一个卡死 / 已失效的启动凭证（含已放行）。
+
+        与会话回收配合使用：浏览器已被强制清理时，对应的 admitted 凭证不会再有
+        ``launch_settled``，必须在这里回收 ``_inflight``，并让等待方立即失败返回。
+        """
+        key: SessionKey = (mid, browser_id)
+        async with self._lock:
+            ticket = self._pending.get(key)
+            if ticket is None:
+                return False
+            was_admitted = ticket.admitted
+            ticket.failed = True
+            self._discard_ticket_locked(ticket)
+            ticket.event.set()
+            if was_admitted:
+                self._timeout_total += 1
+            self._try_admit_locked()
+
+        logger.error(
+            f"浏览器启动凭证被强制结算: mid={mid}, browser_id={browser_id}"
+            + (f", 原因={reason}" if reason else "")
+        )
+        return True
 
     async def notify_capacity_freed(self) -> None:
         """浏览器被回收、内存释放后调用，立即尝试放行下一个请求"""
@@ -381,6 +435,7 @@ class BrowserLaunchQueue:
         ticket.admitted = True
         self._inflight += 1
         now = time.monotonic()
+        ticket.admitted_at = now
         self._last_admit_at = now
         # ETA 采样：放行后队列仍有等待者 → 本次放行属于「连续消化」，间隔可用；
         # 队列已排空则跳过，避免把空闲时长误当成排队节奏
@@ -393,11 +448,46 @@ class BrowserLaunchQueue:
         )
 
     def _discard_ticket_locked(self, ticket: LaunchTicket) -> None:
-        """从队列与受理表中移除凭证"""
-        self._pending.pop(ticket.session_key, None)
+        """从队列与受理表中移除凭证（已放行的同时回收预留额度）"""
+        existed = self._pending.pop(ticket.session_key, None) is ticket
+        if existed and ticket.admitted:
+            # 兜底：正常路径由 launch_settled 回收；异常路径（超时/强制结算）在这里收回
+            self._inflight = max(0, self._inflight - 1)
         for queue in (self._vip_queue, self._normal_queue):
             with contextlib.suppress(ValueError):
                 queue.remove(ticket)
+
+    def _reap_stale_launching_locked(self) -> int:
+        """回收「已放行但超过 max_wait 仍未 launch_settled」的凭证。
+
+        这是 launch_settled 的兜底：浏览器启动流程可能卡在 session 锁 / 页面初始化上，
+        永远不会走到 finally，若不回收，``_inflight`` 会永久占住名额，
+        对外也会一直显示 queue_state=launching、waiting_seconds 持续增长。
+        """
+        max_wait = settings.browser_launch_queue_max_wait_time
+        if max_wait <= 0:
+            return 0
+
+        now = time.monotonic()
+        stale = [
+            ticket
+            for ticket in self._pending.values()
+            if ticket.admitted
+            and now - (ticket.admitted_at or ticket.enqueued_at) >= max_wait
+        ]
+        for ticket in stale:
+            ticket.failed = True
+            self._discard_ticket_locked(ticket)
+            ticket.event.set()
+            self._timeout_total += 1
+            logger.error(
+                f"浏览器启动放行后超时未落地，回收预留额度: mid={ticket.mid}, "
+                f"browser_id={ticket.browser_id}, 已放行={ticket.launching_seconds}s"
+            )
+
+        if stale:
+            self._try_admit_locked()
+        return len(stale)
 
     # ────────────────────────── 状态查询 ──────────────────────────
 
@@ -423,13 +513,14 @@ class BrowserLaunchQueue:
             return LaunchQueueEntryStatus()
 
         if ticket.admitted:
-            # 已放行：剩余时长由浏览器启动耗时决定，不再受队列影响
+            # 已放行：剩余时长由浏览器启动耗时决定，不再受队列影响；
+            # waiting_seconds 改为「放行后已启动时长」，避免前端把它误读成「排队了数百秒」
             return LaunchQueueEntryStatus(
                 in_queue=True,
                 state=LaunchQueueStateEnum.LAUNCHING,
                 queue_type=ticket.queue_type,
                 position=None,
-                waiting_seconds=ticket.waiting_seconds,
+                waiting_seconds=ticket.launching_seconds,
                 estimated_wait_seconds=0,
                 estimate_reliable=True,
             )
@@ -526,9 +617,11 @@ class BrowserLaunchQueue:
         if ticket.admitted:
             position = None
             state = LaunchQueueStateEnum.LAUNCHING
+            waiting_seconds = ticket.launching_seconds
         else:
             position = self._position_of(ticket)
             state = LaunchQueueStateEnum.QUEUED
+            waiting_seconds = ticket.waiting_seconds
 
         return BrowserLaunchQueueWaitingItem(
             mid=ticket.mid,
@@ -538,7 +631,7 @@ class BrowserLaunchQueue:
             queue_type=ticket.queue_type,
             state=state,
             position=position,
-            waiting_seconds=ticket.waiting_seconds,
+            waiting_seconds=waiting_seconds,
         )
 
 

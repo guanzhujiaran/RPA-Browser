@@ -11,9 +11,10 @@ from app.services.RPA_browser.browser_session_pool.playwright_pool import (
 import time
 import asyncio
 import contextlib
+import os
 from dataclasses import dataclass
 from typing import Dict
-from app.config import settings
+from app.config import settings, CONF
 from bili_common.models.response_code import ResponseCode
 from app.models.consts.enums import ConfigRunningModeEnum
 from loguru import logger
@@ -42,6 +43,7 @@ from app.services.RPA_browser.browser_session_pool.playwright_pool import (
 )
 from app.services.RPA_browser.browser_session_pool.session_pool_model import (
     WebRTCEnabledSession,
+    kill_session_processes,
 )
 from app.services.RPA_browser.session.launch_queue import (
     LaunchTicket,
@@ -73,8 +75,9 @@ class LiveService:
     # 🔑 添加会话级别的锁，防止并发操作导致的状态不一致
     _session_locks: Dict[str, asyncio.Lock] = {}
     _global_lock = asyncio.Lock()  # 用于保护 _session_locks 字典本身
-    # 🔑 排队启动的后台任务引用（防止被 GC 回收）
-    _background_launch_tasks: set[asyncio.Task] = set()
+    # 🔑 排队启动的后台任务引用（防止被 GC 回收）：按 session_key 去重，
+    # 同一会话重复取号不会启动多个等待任务
+    _background_launch_tasks: dict[str, asyncio.Task] = {}
     # 🔑 SSE 状态推送去重：会话键 → 最近一次已推送的快照签名
     _last_status_signature: dict[str, str] = {}
 
@@ -191,6 +194,9 @@ class LiveService:
 
         entry.last_activity = int(time.time())
         entry.terminate_scheduled_at = None
+        # 真实操作把会话拉回 ACTIVE：重置终止传播状态，避免残留计数影响下次回收
+        entry.terminating_since = None
+        entry.cleanup_failures = 0
         entry.status = BrowserStatusEnum.RUNNING
         entry.lifecycle_state = SessionLifecycleState.ACTIVE
 
@@ -287,10 +293,15 @@ class LiveService:
             decision = self._evaluate_session_cleanup(entry, current_time)
 
             if decision.action == "terminate":
-                logger.warning(
-                    f"会话 {session_key} 需要关闭 - 原因: {decision.reason}, "
-                    f"状态: {entry.lifecycle_state.value} -> {decision.next_state.value}"
-                )
+                # 只在第一次真正进入终止时打印一次；后续不收敛由第二阶段按失败次数告警，
+                # 避免每分钟重复刷同一条 WARNING。
+                if entry.terminating_since is None:
+                    entry.terminating_since = current_time
+                    entry.cleanup_failures = 0
+                    logger.warning(
+                        f"会话 {session_key} 需要关闭 - 原因: {decision.reason}, "
+                        f"状态: {entry.lifecycle_state.value} -> {decision.next_state.value}"
+                    )
                 sessions_to_cleanup.append((session_key, decision))
                 continue
 
@@ -302,12 +313,37 @@ class LiveService:
                 )
 
         # 🔑 第二阶段：执行关闭（每个会话单独加锁）
+        max_retries = max(1, settings.browser_session_terminate_max_retries)
         for session_key, decision in sessions_to_cleanup:
             try:
                 mid, browser_id = self._parse_session_key(session_key)
-                # 释放浏览器会话（内部会获取锁）
+                # 释放浏览器会话（内部会获取锁 + 整体超时，超时自动强制清理）
                 await self.release_browser_session(mid, browser_id)
-                logger.info(f"已清理会话: {session_key}, 原因: {decision.reason}")
+                entry = self._browser_sessions.get(session_key)
+
+                if entry is None:
+                    logger.info(f"已清理会话: {session_key}, 原因: {decision.reason}")
+                    continue
+
+                # 回收没有收敛：按失败次数计数，达到上限后不再等待，直接强制清理
+                entry.cleanup_failures += 1
+                attempts = entry.cleanup_failures
+                if attempts >= max_retries:
+                    logger.error(
+                        f"会话回收连续失败 {attempts} 次，强制清理: {session_key}, "
+                        f"原因: {decision.reason}"
+                    )
+                    await self._force_cleanup_browser_session(
+                        mid,
+                        browser_id,
+                        session_key,
+                        reason=f"回收连续失败 {attempts} 次",
+                    )
+                else:
+                    logger.warning(
+                        f"会话回收未收敛，将重试 ({attempts}/{max_retries}): "
+                        f"{session_key}, 原因: {decision.reason}"
+                    )
             except Exception as e:
                 logger.error(f"清理会话失败: {session_key}, error: {e}")
 
@@ -426,6 +462,9 @@ class LiveService:
             entry.status = BrowserStatusEnum.IDLE
         elif action in ("restore", "degrade"):
             entry.status = BrowserStatusEnum.RUNNING
+            # 从待关闭状态被拉回正常：重置终止传播计数
+            entry.terminating_since = None
+            entry.cleanup_failures = 0
         entry.lifecycle_state = decision.next_state
         # 降级/挂起/恢复都是服务端主动触发的状态变化，需即时推送给 SSE 订阅者
         self._notify_session_status(entry.mid, entry.browser_id)
@@ -585,6 +624,8 @@ class LiveService:
                 # 浏览器仍然可用，更新活动时间并复位闲置状态
                 entry.last_activity = current_time
                 entry.terminate_scheduled_at = None
+                entry.terminating_since = None
+                entry.cleanup_failures = 0
                 entry.status = BrowserStatusEnum.RUNNING
                 entry.lifecycle_state = SessionLifecycleState.ACTIVE
                 elapsed = time.time() - start_time
@@ -611,6 +652,8 @@ class LiveService:
                 if entry.browser_running:
                     entry.last_activity = current_time
                     entry.terminate_scheduled_at = None
+                    entry.terminating_since = None
+                    entry.cleanup_failures = 0
                     entry.status = BrowserStatusEnum.RUNNING
                     entry.lifecycle_state = SessionLifecycleState.ACTIVE
                     elapsed = time.time() - start_time
@@ -624,17 +667,42 @@ class LiveService:
                 # 否则 pool.get_session() 会把同一个已关闭的对象再交回来，
                 # 第五阶段必然再次抛「浏览器在创建过程中被关闭」，重试只是重复失败。
                 logger.warning(f"清理已关闭的会话后重建: {session_key}")
-                with contextlib.suppress(Exception):
-                    await entry.browser_session.close()
-                self._browser_sessions.pop(session_key, None)
-                with contextlib.suppress(Exception):
-                    await pool.release_session(
-                        BrowserSessionRemoveParams(
-                            mid=mid,
-                            browser_id=browser_id,
-                            force_close=True,
-                        )
+                close_timeout = max(1, settings.browser_session_release_timeout)
+                try:
+                    await asyncio.wait_for(
+                        entry.browser_session.close(), timeout=close_timeout
                     )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"关闭旧会话超时({close_timeout}s)，强制终止进程后再重建: {session_key}"
+                    )
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(
+                            kill_session_processes,
+                            self._resolve_user_data_dir(mid, browser_id, entry),
+                        )
+                except Exception as e:
+                    logger.error(f"关闭旧会话失败(继续重建): {session_key}, error: {e}")
+                self._browser_sessions.pop(session_key, None)
+                try:
+                    await asyncio.wait_for(
+                        pool.release_session(
+                            BrowserSessionRemoveParams(
+                                mid=mid,
+                                browser_id=browser_id,
+                                force_close=True,
+                            )
+                        ),
+                        timeout=close_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"从池中释放旧会话超时({close_timeout}s)，直接丢弃池对象: {session_key}"
+                    )
+                    with contextlib.suppress(Exception):
+                        await pool.discard_session(mid, browser_id)
+                except Exception as e:
+                    logger.error(f"从池中释放旧会话失败(继续重建): {session_key}, error: {e}")
                 self._forget_session_status(mid, browser_id)
 
             # 🔑 第四阶段：委托给 PlaywrightSessionPool 创建会话
@@ -681,55 +749,149 @@ class LiveService:
                 logger.exception(f"创建浏览器会话失败: {session_key}, error: {e}")
                 raise e
 
+    @staticmethod
+    def _resolve_user_data_dir(
+        mid: int, browser_id: int, entry: BrowserSessionEntry | None = None
+    ) -> str:
+        """解析会话的 user_data_dir（entry 已损坏时按约定路径回退）"""
+        if entry is not None:
+            playwright_instance = getattr(entry.browser_session, "playwright_instance", None)
+            user_data_dir = getattr(playwright_instance, "user_data_dir", None)
+            if user_data_dir:
+                return str(user_data_dir)
+        return os.path.join(str(CONF.Path.user_data_dir), str(mid), str(browser_id))
+
+    async def _release_locked(
+        self, mid: int, browser_id: int, session_key: str, lock: asyncio.Lock
+    ) -> None:
+        """在会话锁内执行优雅释放（由 release_browser_session 包整体超时）"""
+        async with lock:
+            pool = get_default_session_pool()
+
+            # 关闭浏览器会话
+            if session_key in self._browser_sessions:
+                entry = self.get_browser_session_entry(mid, browser_id)
+                # 🔑 关键：先关闭浏览器会话，再删除引用；关闭失败不阻塞回收
+                with contextlib.suppress(Exception):
+                    await entry.browser_session.close()
+                # 删除会话引用（用 pop：并发的强制清理可能已先行摘除）
+                self._browser_sessions.pop(session_key, None)
+                logger.info(f"已删除会话: {session_key}")
+                # 会话已销毁：先推送「不存在」快照，再清掉签名缓存
+                self._notify_session_status(mid, browser_id)
+                self._forget_session_status(mid, browser_id)
+
+            # 从池中释放会话
+            remove_params = BrowserSessionRemoveParams(
+                mid=mid,
+                browser_id=browser_id,
+                force_close=True,  # 🔑 关键修复：强制关闭并删除浏览器实例，避免复用已关闭的浏览器
+            )
+
+            await pool.release_session(remove_params)
+            logger.info(f"已从池中释放会话: mid={mid}, browser_id={browser_id}")
+
+    @staticmethod
+    def _cancel_background_launch(session_key: str) -> None:
+        """取消该会话的后台启动任务（不取消当前任务自身）"""
+        task = LiveService._background_launch_tasks.get(session_key)
+        if task is None or task.done() or task is asyncio.current_task():
+            return
+        logger.warning(f"取消卡死的后台启动任务: {session_key}")
+        task.cancel()
+
+    async def _force_cleanup_browser_session(
+        self, mid: int, browser_id: int, session_key: str, *, reason: str
+    ) -> bool:
+        """强制清理会话：不等待优雅关闭，杀进程 + 删 entry / 池对象 / 排队凭证。
+
+        只在优雅回收超时或连续失败时调用。必须 kill 进程组，否则 user_data_dir 里
+        残留的 SingletonLock 会让下一次启动复用失败。
+        """
+        entry = self._browser_sessions.get(session_key)
+        if entry is not None:
+            entry.lifecycle_state = SessionLifecycleState.TERMINATING
+        user_data_dir = self._resolve_user_data_dir(mid, browser_id, entry)
+
+        killed = -1
+        try:
+            killed = await asyncio.to_thread(kill_session_processes, user_data_dir)
+        except Exception as e:
+            logger.error(f"强制终止会话进程失败: {session_key}, error: {e}")
+
+        self._browser_sessions.pop(session_key, None)
+
+        # 已放行但卡死的启动凭证：先结算，确保随后推送的快照里不再显示 launching
+        with contextlib.suppress(Exception):
+            await get_launch_queue().abort_launch(mid, browser_id, reason=reason)
+        # 卡在创建流程里的后台任务也要取消，避免它稍后又拉起一个新会话
+        self._cancel_background_launch(session_key)
+
+        if entry is not None:
+            self._notify_session_status(mid, browser_id)
+            self._forget_session_status(mid, browser_id)
+
+        discarded = False
+        with contextlib.suppress(Exception):
+            discarded = await get_default_session_pool().discard_session(
+                mid, browser_id
+            )
+
+        logger.warning(
+            f"会话强制清理完成: {session_key}, 原因={reason}, "
+            f"kill进程数={killed}, 丢弃池对象={discarded}"
+        )
+        return True
+
     async def release_browser_session(self, mid: int, browser_id: int) -> bool:
-        """释放浏览器会话（带锁保护）"""
+        """释放浏览器会话（整体超时 + 超时强制清理）
+
+        正常路径在 ``browser_session_release_timeout`` 内完成优雅关闭；
+        超时（通常是 close_all_streams / browser_context.close 卡死）后不再等待，
+        直接 kill 该 user_data_dir 对应进程树并清理 entry / 池对象 / 排队凭证，
+        保证调用方一定能在有限时间内返回，会话不会永远停留在 terminating。
+        """
         session_key = LiveService._get_session_key(mid, browser_id)
         launch_queue = get_launch_queue()
 
         # 🔑 若该会话仍在启动队列中排队，先取消，避免「关掉又被拉起」
-        await launch_queue.cancel(mid, browser_id)
+        if not await launch_queue.cancel(mid, browser_id):
+            # 已放行（admitted）的凭证无法被 cancel：直接强制结算，阻止后台继续拉起
+            await launch_queue.abort_launch(
+                mid, browser_id, reason="会话释放，取消未落地的启动"
+            )
+        # 后台启动任务可能正卡在 session 锁里，先取消，缩短优雅释放的等待时间
+        self._cancel_background_launch(session_key)
+
+        release_timeout = max(1, settings.browser_session_release_timeout)
+        lock = await self._get_session_lock(session_key)
 
         try:
-            # 🔑 获取会话级别的锁，防止并发操作
-            lock = await self._get_session_lock(session_key)
-            async with lock:
-                pool = get_default_session_pool()
-
-                # 关闭浏览器会话
-                if session_key in self._browser_sessions:
-                    entry = self.get_browser_session_entry(mid, browser_id)
-                    # 🔑 关键：先关闭浏览器会话，再删除引用
-                    with contextlib.suppress(Exception):
-                        await entry.browser_session.close()
-                    # 删除会话引用
-                    del self._browser_sessions[session_key]
-                    logger.info(f"已删除会话: {session_key}")
-                    # 会话已销毁：先推送「不存在」快照，再清掉签名缓存
-                    self._notify_session_status(mid, browser_id)
-                    self._forget_session_status(mid, browser_id)
-
-                # 从池中释放会话
-                remove_params = BrowserSessionRemoveParams(
-                    mid=mid,
-                    browser_id=browser_id,
-                    force_close=True,  # 🔑 关键修复：强制关闭并删除浏览器实例，避免复用已关闭的浏览器
-                )
-
-                await pool.release_session(remove_params)
-                logger.info(f"已从池中释放会话: mid={mid}, browser_id={browser_id}")
-
-            # 🔑 在锁外清理会话锁（避免死锁）
-            await self._cleanup_session_lock(session_key)
-            # 🔑 内存已释放，唤醒排队中的启动请求（VIP 优先）
-            await launch_queue.notify_capacity_freed()
-
+            await asyncio.wait_for(
+                self._release_locked(mid, browser_id, session_key, lock),
+                timeout=release_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"释放浏览器会话超时({release_timeout}s)，转入强制清理: "
+                f"mid={mid}, browser_id={browser_id}"
+            )
+            await self._force_cleanup_browser_session(
+                mid, browser_id, session_key, reason=f"优雅释放超时({release_timeout}s)"
+            )
             return True
-
         except Exception as e:
             logger.error(
                 f"释放浏览器会话失败 (mid={mid}, browser_id={browser_id}): {e}"
             )
             return False
+        finally:
+            # 🔑 在锁外清理会话锁（避免死锁）
+            await self._cleanup_session_lock(session_key)
+            # 🔑 内存已释放，唤醒排队中的启动请求（VIP 优先）
+            await launch_queue.notify_capacity_freed()
+
+        return True
 
     @staticmethod
     async def create_browser_session(
@@ -771,6 +933,10 @@ class LiveService:
 
         launch_queue = get_launch_queue()
 
+        # 该会话是否已有启动凭证（已放行但仍未落地）：此时不能再走同步等待，
+        # 否则会排在同一条启动流程的 session 锁后面，HTTP 请求被无限期拖住。
+        already_pending = launch_queue.has_pending(mid, browser_id)
+
         # 🔑 先同步取号：内存充足则直接放行，否则进入队列（VIP 优先）
         ticket = launch_queue.reserve(mid, browser_id, is_vip=is_vip)
 
@@ -796,14 +962,59 @@ class LiveService:
                 message=f"当前服务器内存不足，已进入{queue_label}队列排队，请稍候",
             )
 
+        if already_pending:
+            # 已放行、正在启动：先检查是否已经卡死超过同步等待上限
+            settle_timeout = max(1, settings.browser_launch_settle_timeout)
+            launching_seconds = launch_queue.get_launching_seconds(mid, browser_id)
+            if launching_seconds is not None and launching_seconds >= settle_timeout:
+                logger.error(
+                    f"浏览器放行后 {launching_seconds}s 仍未落地，拒绝继续等待并强制清理: "
+                    f"{session_key}"
+                )
+                await service._force_cleanup_browser_session(
+                    mid,
+                    browser_id,
+                    session_key,
+                    reason=f"放行后 {launching_seconds}s 未落地",
+                )
+                return CreateSessionData(
+                    success=False,
+                    session_id=session_key,
+                    browser_started=False,
+                    created_at=0,
+                    expires_at=None,
+                    error=f"浏览器启动超时（{launching_seconds}s 未完成），已清理，请重试",
+                    error_code=ResponseCode.INTERNAL_ERROR,
+                )
+            # 仍在正常启动窗口内：立即返回（不阻塞），前端按 queue_state=launching 展示「正在启动」
+            entry_status = launch_queue.get_entry_status(mid, browser_id)
+            logger.info(f"浏览器正在启动中，直接返回进度: {session_key}")
+            return CreateSessionData(
+                success=True,
+                session_id=session_key,
+                browser_started=False,
+                created_at=current_time,
+                expires_at=None,
+                queued=True,
+                queue_type=entry_status.queue_type,
+                queue_position=None,
+                message="浏览器正在启动中，请稍候",
+            )
+
+        settle_timeout = max(1, settings.browser_launch_settle_timeout)
         try:
-            # 🔑 已放行：直接调用优化后的 get_or_create_browser_session
-            entry = await service.get_or_create_browser_session_entry(
-                mid, browser_id, is_vip=is_vip
+            # 🔑 已放行：同步等待落地，但必须有上限，避免启动流程卡死拖住请求
+            entry = await asyncio.wait_for(
+                service.get_or_create_browser_session_entry(
+                    mid, browser_id, is_vip=is_vip
+                ),
+                timeout=settle_timeout,
             )
             # 显式确认浏览器会话状态为 RUNNING、生命周期为 ACTIVE
             entry.status = BrowserStatusEnum.RUNNING
             entry.lifecycle_state = SessionLifecycleState.ACTIVE
+            entry.terminating_since = None
+            entry.cleanup_failures = 0
 
             # 从系统配置中读取过期时间
             expiration_time = settings.browser_session_expiration_time
@@ -830,6 +1041,25 @@ class LiveService:
                 message="浏览器会话创建成功",
             )
 
+        except asyncio.TimeoutError:
+            logger.error(
+                f"浏览器启动超时({settle_timeout}s)未落地，强制清理半成品: {session_key}"
+            )
+            await service._force_cleanup_browser_session(
+                mid,
+                browser_id,
+                session_key,
+                reason=f"创建请求等待启动超时({settle_timeout}s)",
+            )
+            return CreateSessionData(
+                success=False,
+                session_id=session_key,
+                browser_started=False,
+                created_at=0,
+                expires_at=None,
+                error=f"浏览器启动超时（{settle_timeout}s），请稍后重试",
+                error_code=ResponseCode.INTERNAL_ERROR,
+            )
         except BrowserLaunchQueueTimeoutException as e:
             # 排队超时：内存长时间未释放，返回业务错误码供前端提示
             logger.warning(f"浏览器启动排队超时: {session_key}, {e.msg}")
@@ -856,12 +1086,23 @@ class LiveService:
     def _spawn_background_launch(
         self, mid: int, browser_id: int, is_vip: bool, ticket: LaunchTicket
     ) -> None:
-        """把排队启动放到后台任务（请求立即返回 queued）"""
+        """把排队启动放到后台任务（请求立即返回 queued）；同一会话只保留一个等待任务"""
+        session_key = self._get_session_key(mid, browser_id)
+        existing = LiveService._background_launch_tasks.get(session_key)
+        if existing is not None and not existing.done():
+            logger.debug(f"排队启动任务已存在，复用: {session_key}")
+            return
+
         task = asyncio.create_task(
             self._background_launch(mid, browser_id, is_vip, ticket)
         )
-        LiveService._background_launch_tasks.add(task)
-        task.add_done_callback(LiveService._background_launch_tasks.discard)
+        LiveService._background_launch_tasks[session_key] = task
+
+        def _on_done(finished: asyncio.Task) -> None:
+            if LiveService._background_launch_tasks.get(session_key) is finished:
+                LiveService._background_launch_tasks.pop(session_key, None)
+
+        task.add_done_callback(_on_done)
 
     async def _background_launch(
         self, mid: int, browser_id: int, is_vip: bool, ticket: LaunchTicket
@@ -870,15 +1111,58 @@ class LiveService:
 
         必须复用调用方已取号的凭证：否则「排队期间被取消」会在后台被重新取号，
         导致取消后又被拉起。
+
+        放行后到「落地」之间同样要有上限（``browser_launch_queue_max_wait_time``）：
+        浏览器创建可能卡在 session 锁 / 页面初始化上，超时后强制清理并结算凭证，
+        否则 ``_inflight`` 永久占用、前端一直显示 launching。
         """
         session_key = self._get_session_key(mid, browser_id)
+        launch_queue = get_launch_queue()
         try:
-            await get_launch_queue().wait(ticket)
-            entry = await self.get_or_create_browser_session_entry(
-                mid, browser_id, is_vip=is_vip
-            )
+            await launch_queue.wait(ticket)
+
+            max_settle = settings.browser_launch_queue_max_wait_time
+            if max_settle > 0:
+                admitted_at = ticket.admitted_at or time.monotonic()
+                remaining = admitted_at + max_settle - time.monotonic()
+                if remaining <= 0:
+                    # 已超过上限：交给下面的 wait_for(0.001s) 走统一的超时清理分支
+                    remaining = 0.001
+            else:
+                remaining = None
+
+            try:
+                entry = await asyncio.wait_for(
+                    self.get_or_create_browser_session_entry(
+                        mid, browser_id, is_vip=is_vip
+                    ),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"排队会话放行后启动超时，强制清理: {session_key}, "
+                    f"上限={max_settle}s"
+                )
+                await self._force_cleanup_browser_session(
+                    mid,
+                    browser_id,
+                    session_key,
+                    reason=f"放行后启动超时({max_settle}s)",
+                )
+                raise
+
+            if ticket.failed:
+                # 启动期间会话已被关闭 / 被兜底回收：不要把刚拉起的浏览器留在池里
+                logger.warning(f"启动已落地但凭证已失效，强制回收: {session_key}")
+                await self._force_cleanup_browser_session(
+                    mid, browser_id, session_key, reason="凭证已失效"
+                )
+                return
+
             entry.status = BrowserStatusEnum.RUNNING
             entry.lifecycle_state = SessionLifecycleState.ACTIVE
+            entry.terminating_since = None
+            entry.cleanup_failures = 0
             logger.info(f"排队会话启动完成: {session_key}")
             # 排队放行 → 启动完成：推送最终快照（含已退出的排队字段）
             self._notify_session_status(mid, browser_id)
@@ -890,6 +1174,9 @@ class LiveService:
             raise
         except Exception as e:
             logger.error(f"排队会话启动失败: {session_key}, error: {e}")
+        finally:
+            # 兜底：正常路径已在 _do_get_or_create_session_entry 里结算，这里重复调用是幂等的
+            await launch_queue.launch_settled(mid, browser_id)
 
     def would_queue_browser_session(
         self, mid: int, browser_id: int, is_vip: bool = False

@@ -51,6 +51,10 @@ class BrowserSessionEntry:
         return next(iter(self.active_workflow_runs), None)
     # 闲置超时后进入宽限期的时间戳（用于「倒计时关实例」）
     terminate_scheduled_at: int | None = None
+    # 真正开始执行终止（宽限期结束）的时间戳：用于检测 terminating 是否收敛
+    terminating_since: int | None = None
+    # 连续的回收失败次数：达到配置上限后直接强制清理，避免永久停留在 terminating
+    cleanup_failures: int = 0
 
     @property
     def is_expired(self) -> bool:

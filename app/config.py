@@ -285,6 +285,12 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     browser_stream_degrade_after: int = 60  # 闲置降级阈值（秒）：降质降帧
     browser_stream_suspend_after: int = 180  # 闲置挂起阈值（秒）：关流保实例
     browser_session_terminate_grace: int = 60  # 关实例前宽限倒计时（秒）
+    # 会话回收（关闭浏览器上下文 / 释放池对象）的整体超时（秒）。
+    # 超时后不再等待优雅关闭，直接杀 user_data_dir 对应进程组并清理 entry / 池对象，
+    # 避免 close_all_streams / browser_context.close 卡死让会话永远停在 terminating。
+    browser_session_release_timeout: int = 45
+    # state=terminating 连续回收失败的重试上限；达到后直接强制清理（不再等下一轮）。
+    browser_session_terminate_max_retries: int = 3
 
     # ── 会话状态 SSE 推送（详见 docs/rpa-会话状态SSE推送计划书.md）──
     # 状态变更即时推送，替代前端 20s 生命周期轮询；
@@ -408,6 +414,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     browser_launch_queue_max_wait_time: int = (
         600  # 排队最大等待时间(秒)，超时抛错；0 表示不限
     )
+    # 同步创建请求（内存已放行）等待浏览器真正落地的最长时间（秒）。
+    # 超时直接返回明确错误并强制清理半成品，避免请求线程被卡死的启动流程拖住。
+    browser_launch_settle_timeout: int = 30
 
     # ── 排队时长估算（ETA）──
     # 用「连续放行间隔」的实测均值 × 前方人数估算等待时长，供前端展示。
