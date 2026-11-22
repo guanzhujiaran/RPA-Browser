@@ -8,6 +8,7 @@ System 模块 - RPA 管理相关请求/响应模型（非表模型）
 from datetime import datetime
 from typing import List, Optional
 
+from pydantic import field_validator
 from sqlmodel import Field, SQLModel
 
 from bili_common.models import AdminStatusResponse
@@ -30,6 +31,12 @@ class SubmitApprovalRequest(SQLModel):
     action: str = Field(description="申请操作：publish / execute 等")
     title: str = Field(default="", description="申请标题")
     description: str = Field(default="", description="申请说明")
+
+    @field_validator("resource_id", mode="before")
+    @classmethod
+    def _stringify_resource_id(cls, value):
+        """兼容前端直接传数字：统一转成字符串，避免雪花 ID 精度丢失"""
+        return None if value is None else str(value)
 
 
 class ApprovalItemResp(SQLModel):
