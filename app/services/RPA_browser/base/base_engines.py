@@ -104,6 +104,7 @@ class BaseUndetectedPlaywright:
             user_data_dir=self._user_data_dir,
             viewport=fingerprint_params.viewport,
             screen=fingerprint_params.screen,
+            device_scale_factor=fingerprint_params.device_scale_factor,
             accept_downloads=False,
         )
         await (

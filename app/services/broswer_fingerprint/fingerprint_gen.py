@@ -5,6 +5,8 @@ from app.models.core.browser.fingerprint import (
     BaseFingerprintBrowserInitParams,
     PlatformEnum,
     BrowserEnum,
+    MAX_DEVICE_SCALE_FACTOR,
+    MIN_DEVICE_SCALE_FACTOR,
 )
 from app.models.runtime.api import BrowserFingerprintCreateParams
 from app.models.database.browser.info import UserBrowserServerSideDefaultSetting
@@ -125,6 +127,12 @@ async def gen_from_browserforge_fingerprint(
         if params.is_desktop
         else mobile_fingerprint_generator.generate(user_agent=ua_list)
     )
+    # DPR 不沿用 browserforge 的离散值：真实浏览器可以缩放，DPR 会落在
+    # [0.5, 1.75] 内的任意小数（系统缩放 × 页面缩放）。这里随机取两位小数，
+    # 避免所有指纹都集中在 1 / 1.25 / 1.5 这几个固定值上。
+    rand_fingerprint.screen.devicePixelRatio = round(
+        random.uniform(MIN_DEVICE_SCALE_FACTOR, MAX_DEVICE_SCALE_FACTOR), 2
+    )
 
     # 获取平台和浏览器信息
     platform = _map_platform_from_fingerprint(rand_fingerprint)
@@ -138,7 +146,7 @@ async def gen_from_browserforge_fingerprint(
         user_default_settings, default_browser_setting, rand_fingerprint
     )
 
-    return BaseFingerprintBrowserInitParams.model_construct(
+    browser_init_params = BaseFingerprintBrowserInitParams.model_construct(
         fingerprint=random.randint(-2147483648, 2147483647),
         fingerprint_platform=platform,
         fingerprint_platform_version=platform_version,
@@ -158,3 +166,9 @@ async def gen_from_browserforge_fingerprint(
         patchright_fingerprint_dict=asdict(rand_fingerprint),
         patchright_browser_ua=ua_string,
     )
+    # 用户视口是「上限」而不是精确值：headful 窗口外框会额外占 8×131，
+    # 视口必须收敛到 screen 内，否则 outerWidth/Height 会大于 screen，露馅。
+    # 这里复用模型上的 viewport 计算（与启动时同一口径），保证落库值就是实际生效值。
+    browser_init_params.patchright_viewport_width = browser_init_params.viewport["width"]
+    browser_init_params.patchright_viewport_height = browser_init_params.viewport["height"]
+    return browser_init_params

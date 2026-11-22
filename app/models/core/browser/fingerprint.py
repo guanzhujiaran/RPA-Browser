@@ -21,6 +21,36 @@ import sys
 
 Int32 = Annotated[int, Field(ge=-2147483648, le=2147483647)]
 
+# headful Chromium 的窗口外框（viewport 之外的部分）：Playwright 在 Linux 下按
+# 宽 8 / 高 85 的 insets 设置窗口，persistent context 高度再额外加 46，合计 8×131。
+# 窗口外框必须落在 screen 内，否则 window.outerWidth/Height 会大于
+# screen.width/height——这是物理上不可能的组合，指纹检测会直接看穿。
+WINDOW_FRAME_WIDTH = 8
+WINDOW_FRAME_HEIGHT = 131
+
+# DPR 可接受区间：2 / 2.5 / 3 这类高分屏组合会按倍数放大渲染与截图像素，
+# 且在桌面真机分布里占比很低，统一收敛到 [0.5, 1.75]。
+MIN_DEVICE_SCALE_FACTOR = 0.5
+MAX_DEVICE_SCALE_FACTOR = 1.75
+
+
+def clamp_device_scale_factor(value: float) -> float:
+    """把 DPR 收敛到可接受区间。"""
+    return min(max(float(value), MIN_DEVICE_SCALE_FACTOR), MAX_DEVICE_SCALE_FACTOR)
+
+
+def clamp_viewport_to_screen(
+    viewport_width: int,
+    viewport_height: int,
+    screen_width: int,
+    screen_height: int,
+) -> tuple[int, int]:
+    """把 viewport 收敛到屏幕内，保证 headful 窗口外框不会超出 screen。"""
+    return (
+        max(1, min(viewport_width, screen_width - WINDOW_FRAME_WIDTH)),
+        max(1, min(viewport_height, screen_height - WINDOW_FRAME_HEIGHT)),
+    )
+
 
 class PlatformEnum(StrEnumAutoDoc):
     """操作系统平台枚举"""
@@ -216,11 +246,25 @@ class BaseFingerprintBrowserInitParams(SQLModel):
     @computed_field
     @property
     def viewport(self) -> ViewportSize:
-        """浏览器视口大小"""
-        return {
-            "width": self.patchright_viewport_width,
-            "height": self.patchright_viewport_height,
-        }
+        """浏览器视口大小（收敛到屏幕内，避免窗口外框超出 screen）"""
+        width, height = clamp_viewport_to_screen(
+            self.patchright_viewport_width,
+            self.patchright_viewport_height,
+            self.patchright_screen_width,
+            self.patchright_screen_height,
+        )
+        return {"width": width, "height": height}
+
+    @property
+    def device_scale_factor(self) -> float:
+        """指纹中的 DPR。
+
+        Playwright 的 viewport 仿真在未显式传 device_scale_factor 时固定按 1 处理，
+        会导致 screen（如 1536×864）与指纹里的 DPR（如 1.25）脱节，启动时必须下发。
+        """
+        fingerprint_dict = self.patchright_fingerprint_dict or {}
+        screen_dict = fingerprint_dict.get("screen") or {}
+        return clamp_device_scale_factor(screen_dict.get("devicePixelRatio") or 1.0)
 
     @computed_field
     @property
