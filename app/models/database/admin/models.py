@@ -45,8 +45,10 @@ class ApprovalRequest(BaseSQLModel, table=True):
     )
     reviewer_mid: Optional[int] = Field(default=None, description="审核人 mid")
     review_note: str = Field(default="", description="审核意见")
-    reviewed_at: Optional[datetime] = Field(default=None, description="审核时间")
-    expires_at: Optional[datetime] = Field(
+    reviewed_at: Optional[NaiveDatetime] = Field(
+        default=None, description="审核时间"
+    )
+    expires_at: Optional[NaiveDatetime] = Field(
         default=None, description="审批有效期截止时间，为空表示永久有效"
     )
 
@@ -69,7 +71,7 @@ class ResourceTag(BaseSQLModel, table=True):
         index=True,
         description="审核状态：auditing / normal / rejected",
     )
-    pub_time: Optional[datetime] = Field(
+    pub_time: Optional[NaiveDatetime] = Field(
         default=None, description="审核通过上架时间（审核通过前为 NULL）"
     )
 
