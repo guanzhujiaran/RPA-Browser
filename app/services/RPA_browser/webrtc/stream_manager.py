@@ -76,6 +76,7 @@ class WebRTCStreamManager:
             idle_timeout=settings.browser_webrtc_idle_timeout,
             original_quality=settings.browser_stream_original_quality,
             original_max_fps=settings.browser_stream_original_max_fps,
+            original_bitrate=settings.browser_stream_original_bitrate,
             ultra_quality=settings.browser_stream_ultra_quality,
             ultra_max_fps=settings.browser_stream_ultra_max_fps,
             ultra_frame_max_width=settings.browser_stream_ultra_frame_max_width,

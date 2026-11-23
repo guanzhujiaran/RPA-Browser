@@ -460,6 +460,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 原画档：JPEG 质量拉满，且按页面真实视口尺寸采集（不缩放、不降质）
     browser_stream_original_quality: int = 100  # 原画档 JPEG 质量（0-100）
     browser_stream_original_max_fps: int = 30  # 原画档最大帧率
+    # 原画档 WebRTC 编码目标码率（bps）：aiortc 默认上限仅 1.5M(VP8)/3M(H264)，
+    # 1080p 桌面会被压糊（二维码/小字不可辨），需抬到高位近似无损
+    browser_stream_original_bitrate: int = 15_000_000
     browser_stream_ultra_quality: int = 90  # 超清档 JPEG 质量（0-100）
     browser_stream_ultra_max_fps: int = 30  # 超清档最大帧率
     # 超清档在浏览器侧抬高分辨率上限（默认自适应仅 800×800），画质最清晰

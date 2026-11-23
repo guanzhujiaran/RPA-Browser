@@ -289,6 +289,15 @@ async def close_browser_session(
     session_key = f"{auth_info.mid}_{browser_info.browser_id}"
     browser_id = int(browser_info.browser_id)
 
+    # 工作流执行期间禁止手动关闭：会直接打断正在跑的工作流，与调试类接口的
+    # 执行期互斥保持一致，必须先从工作流侧停止运行
+    entry = LiveService._browser_sessions.get(session_key)
+    if entry is not None and entry.is_workflow_running:
+        return error_response(
+            code=ResponseCode.BROWSER_WORKFLOW_RUNNING,
+            msg="浏览器正在执行工作流，请先在「工作流管理」或「运行记录」中停止运行后再关闭会话",
+        )
+
     # 🔑 仍在启动队列中排队：关闭即取消排队，避免「关掉又被拉起」
     if session_key not in LiveService._browser_sessions:
         cancelled = await get_launch_queue().cancel(auth_info.mid, browser_id)

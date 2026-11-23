@@ -30,6 +30,8 @@ from aiortc import (
     RTCSessionDescription,
     VideoStreamTrack,
 )
+from aiortc.codecs import h264 as aiortc_h264_codec
+from aiortc.codecs import vpx as aiortc_vpx_codec
 from aiortc.mediastreams import (
     VIDEO_CLOCK_RATE,
     VIDEO_TIME_BASE,
@@ -240,6 +242,10 @@ class ViewerStream:
         # 被跳过的 mDNS host 候选数（跨网段 / 容器部署的常见情况，见 add_ice_candidate）
         self._mdns_skipped_candidates: int = 0
 
+        # 编码码率控制：aiortc 的编码器在首帧编码时才创建，需等它就绪后再写入目标码率
+        self._sender = None
+        self._bitrate_task: asyncio.Task | None = None
+
         self.track = ViewerMediaTrack(slot, config, self._level)
 
         self.pc.on("iceconnectionstatechange")(self._on_ice_state_change)
@@ -295,6 +301,7 @@ class ViewerStream:
             return
         self._level = level
         self.track.set_level(self.effective_level)
+        self._schedule_bitrate_apply()
         logger.info(
             f"观看者档位变更: {level.value} (生效={self.effective_level.value}, "
             f"viewer={self.viewer_id})"
@@ -307,6 +314,7 @@ class ViewerStream:
             return
         self._visibility_low = low
         self.track.set_level(self.effective_level)
+        self._schedule_bitrate_apply()
         logger.debug(
             f"观看者可见性变化: visible={visible} "
             f"(生效={self.effective_level.value}, viewer={self.viewer_id})"
@@ -321,6 +329,61 @@ class ViewerStream:
         logger.info(
             f"观看者{'暂停' if paused else '恢复'}出帧: viewer={self.viewer_id}"
         )
+
+    # ── 编码码率（原画档清晰度保障） ──
+
+    @property
+    def _encoder(self):
+        """aiortc 发送端内部的视频编码器（首帧编码时才创建，未就绪返回 None）。"""
+        if self._sender is None:
+            return None
+        return getattr(self._sender, "_RTCRtpSender__encoder", None)
+
+    def _raise_codec_bitrate_ceiling(self) -> None:
+        """放宽 aiortc 编码器的码率上限。
+
+        aiortc 把上限硬编码为 VP8 1.5 Mbps / H264 3 Mbps，1080p 桌面会被压到
+        小字和二维码无法辨认；原画档需要远高于该值的码率。这里只抬高「允许范围」，
+        实际码率仍按当前档位与接收端 REMB 反馈协商，不会无脑打满。
+        """
+        ceiling = max(1, int(self._config.original_bitrate))
+        if ceiling > aiortc_vpx_codec.MAX_BITRATE:
+            aiortc_vpx_codec.MAX_BITRATE = ceiling
+        if ceiling > aiortc_h264_codec.MAX_BITRATE:
+            aiortc_h264_codec.MAX_BITRATE = ceiling
+
+    def _apply_encoder_bitrate(self) -> bool:
+        """把当前生效档位的目标码率写入编码器；编码器尚未创建时返回 False。"""
+        encoder = self._encoder
+        if encoder is None or not hasattr(encoder, "target_bitrate"):
+            return False
+        target = self._config.params_for(self.effective_level).bitrate
+        if target and encoder.target_bitrate != target:
+            encoder.target_bitrate = target
+            logger.debug(
+                f"编码码率已应用: level={self.effective_level.value}, "
+                f"bitrate={target}, viewer={self.viewer_id}"
+            )
+        return True
+
+    def _schedule_bitrate_apply(self) -> None:
+        """（重新）安排一次码率应用：编码器可能在连接建立后才被创建。"""
+        if self._state == WebRTCStreamState.CLOSED:
+            return
+        if self._bitrate_task is None or self._bitrate_task.done():
+            self._bitrate_task = asyncio.create_task(self._apply_bitrate_when_ready())
+
+    async def _apply_bitrate_when_ready(self) -> None:
+        """等待编码器创建后写入目标码率（最多约 10 秒）。"""
+        try:
+            for _ in range(100):
+                if self._state == WebRTCStreamState.CLOSED:
+                    return
+                if self._apply_encoder_bitrate():
+                    return
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            raise
 
     def info(self) -> ViewerStreamInfo:
         """观看者信息快照（供 /webrtc/status 的观看者列表）。"""
@@ -360,8 +423,13 @@ class ViewerStream:
         try:
             logger.debug(f"启动观看者流: {self.stream_key}")
             self.pc.addTrack(self.track)
+            senders = self.pc.getSenders()
+            self._sender = senders[0] if senders else None
+            self._raise_codec_bitrate_ceiling()
             self._state = WebRTCStreamState.ACTIVE
             self.touch()
+            # 编码器在首帧编码时才创建，这里异步等待就绪后写入本档位目标码率
+            self._schedule_bitrate_apply()
             logger.debug(f"观看者流已启动: {self.stream_key}")
         except Exception as e:
             logger.error(f"启动观看者流失败 {self.stream_key}: {e}")
@@ -375,6 +443,9 @@ class ViewerStream:
             return
 
         logger.debug(f"关闭观看者流: {self.stream_key}")
+        task, self._bitrate_task = self._bitrate_task, None
+        if task is not None and not task.done():
+            task.cancel()
         try:
             if self.pc:
                 await self.pc.close()

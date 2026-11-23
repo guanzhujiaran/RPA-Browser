@@ -23,6 +23,7 @@ from app.utils.depends.security_depends import verify_browser_ownership
 from bili_common.models.depends import BrowserReqAuthInfo
 from fastapi import Depends
 from fastapi.responses import StreamingResponse
+from sqlmodel import select
 
 from app.config import settings
 from app.services.RPA_browser.session.live_service import live_service
@@ -85,6 +86,8 @@ from app.models.workflow.models import (
 )
 from app.models.base.base_sqlmodel import BasePaginationReq, BasePaginationResp
 from app.models.database.workflow.resource_record import ResourceProcessStatus
+from app.models.database.browser.info import UserBrowserInfo
+from app.utils.depends.session_manager import DatabaseSessionManager
 from app.models.runtime.workflow_progress import WorkflowRunProgressData
 from app.models.workflow.models import WorkflowRunResumeRequest
 from app.services.execution.crud_service.resource_record_crud import (
@@ -150,6 +153,38 @@ def _validate_trigger(
     return None
 
 
+async def _validate_owned_browser_ids(
+    mid: int, browser_ids: list[int]
+) -> str | None:
+    """校验目标浏览器 id 均存在且属于当前用户；返回错误信息（None 表示通过）。
+
+    创建与导入走同一入口：导入的分享 JSON 可能携带原作者（或已被删除）的浏览器 id，
+    必须在落库前拦截，否则工作流保存成功却无法实际运行。
+    """
+    ids = sorted({int(bid) for bid in browser_ids if bid is not None})
+    if not ids:
+        return None
+
+    async with DatabaseSessionManager.async_session() as session:
+        rows = (
+            await session.exec(
+                select(UserBrowserInfo.browser_id).where(
+                    UserBrowserInfo.mid == mid,
+                    UserBrowserInfo.browser_id.in_(ids),
+                )
+            )
+        ).all()
+    owned = {int(row) for row in rows}
+    missing = [bid for bid in ids if bid not in owned]
+    if not missing:
+        return None
+    return (
+        "目标浏览器不存在或不属于当前账号："
+        + "、".join(str(bid) for bid in missing)
+        + "。请在浏览器管理中确认后重新选择"
+    )
+
+
 async def _resolve_page(mid: int, browser_id: int, page_index: int | None = None):
     """从 LiveService 解析浏览器页面
 
@@ -198,6 +233,14 @@ async def create_workflow(
     )
     if trigger_error:
         return error_response(ResponseCode.INVALID_PARAM, trigger_error)
+
+    # 目标浏览器必须真实存在且属于当前用户（新建与导入分享 JSON 共用此入口）
+    target_browser_ids = list(request.browser_ids or [])
+    if request.browser_id is not None:
+        target_browser_ids.append(request.browser_id)
+    browser_error = await _validate_owned_browser_ids(auth.mid, target_browser_ids)
+    if browser_error:
+        return error_response(ResponseCode.INVALID_PARAM, browser_error)
 
     # 引用的动作必须存在（工作流不改写动作内容）
     if request.custom_action_id:
