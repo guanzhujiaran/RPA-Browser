@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 from datetime import datetime
 
 from fastapi import Depends
+from sqlalchemy import or_
 from sqlmodel import select
 
 from bili_common.deps.auth import AuthInfo, UserRole, get_auth_info_from_header
@@ -161,18 +162,23 @@ async def assert_approved(
     from app.models.database.admin.models import ApprovalRequest
 
     async with DatabaseSessionManager.async_session() as session:
+        # 只取最新一张未过期的 approved 单：有效期判断下推 SQL，避免取出后才发现过期
         result = await session.exec(
-            select(ApprovalRequest).where(
+            select(ApprovalRequest)
+            .where(
                 ApprovalRequest.resource_type == resource_type,
                 ApprovalRequest.resource_id == str(resource_id),
                 ApprovalRequest.action == action,
                 ApprovalRequest.status == "approved",
+                or_(
+                    ApprovalRequest.expires_at.is_(None),
+                    ApprovalRequest.expires_at > datetime.now(),
+                ),
             )
+            .order_by(ApprovalRequest.id.desc())
         )
         approval = result.first()
         if approval is None:
-            raise ApprovalRequiredException()
-        if approval.expires_at is not None and approval.expires_at < datetime.now():
             raise ApprovalRequiredException()
 
 

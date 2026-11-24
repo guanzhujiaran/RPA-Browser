@@ -73,6 +73,10 @@ from app.models.database.workflow.models import (
     UserWorkflow,
 )
 from app.utils.depends.session_manager import DatabaseSessionManager
+from app.services.approval_service import (
+    can_transition,
+    sync_visibility_on_transition,
+)
 
 # RPA RPC 服务端 broker（RabbitBroker，默认 exchange，routing_key 即队列名）
 broker = RabbitBroker(settings.rabbitmq_url)
@@ -268,10 +272,11 @@ async def rpc_review_resource(
 
     说明：
         - 仅处理 rpa_action / rpa_workflow / rpa_tag；lottery / rpa_browser 不处理。
-        - bizId 为资源业务 id（action_id/workflow_id 雪花 int 的十进制字符串），直接匹配
-          rpa_approval 中 (resource_type, resource_id=bizId, action=publish,
-          status=pending) 的审批单（多条取 id 最新一条），置 decision。
-        - 只改审批单状态，不动资源 is_public（公开/私有保持现状）。
+        - bizId 为资源业务 id（action_id/workflow_id 雪花 int 的十进制字符串），匹配
+          rpa_approval 中 (resource_type, resource_id=bizId, action=publish) 的最新一条审批单。
+        - 按审批状态机流转（pending → approved/rejected、approved → rejected、
+          rejected → approved），撤回/恢复时同步资源 is_public：
+          驳回即下架、恢复即重新公开；重复同一决策按幂等成功处理。
 
     Returns:
         StandardResponse data=ReviewResourceResult{success, message, approvalId}
@@ -320,7 +325,7 @@ async def rpc_review_resource(
     # bizId 即资源业务 id（action_id / workflow_id），审批单 resource_id 直接存它
     biz_resource_id = params.bizId
     async with DatabaseSessionManager.async_session() as session:
-        # 取该资源发布到社区的待审单（id 倒序取最新一条）
+        # 取该资源发布到社区的最新一条审批单（不限 pending，支持已通过后撤回）
         approval = (
             await session.exec(
                 select(ApprovalRequest)
@@ -328,7 +333,6 @@ async def rpc_review_resource(
                     ApprovalRequest.resource_type == resource_type,
                     ApprovalRequest.resource_id == biz_resource_id,
                     ApprovalRequest.action == "publish",
-                    ApprovalRequest.status == "pending",
                 )
                 .order_by(ApprovalRequest.id.desc())
             )
@@ -337,13 +341,30 @@ async def rpc_review_resource(
             return success_response(
                 data=ReviewResourceResult(
                     success=False,
-                    message="未找到该资源的待审核发布审批单",
+                    message="未找到该资源的发布审批单",
+                )
+            )
+        old_status = approval.status
+        if old_status == params.decision:
+            # 重复同一决策：幂等成功，避免审核重试把资源来回翻转
+            return success_response(
+                data=ReviewResourceResult(success=True, approvalId=approval.id)
+            )
+        if not can_transition(old_status, params.decision):
+            return success_response(
+                data=ReviewResourceResult(
+                    success=False,
+                    message=f"当前状态 {old_status} 不允许变更为 {params.decision}",
                 )
             )
         approval.status = params.decision
         approval.reviewer_mid = params.operatorMid
         approval.review_note = params.note or approval.review_note
         approval.reviewed_at = datetime.now()
+        # 撤回时下架、恢复时重新公开，与审批单状态同一事务提交
+        await sync_visibility_on_transition(
+            session, approval, old_status, params.decision
+        )
         await session.commit()
         await session.refresh(approval)
     logger.info(

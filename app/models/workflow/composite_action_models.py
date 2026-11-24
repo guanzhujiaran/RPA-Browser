@@ -267,6 +267,7 @@ class CompositeActionListItemResponse(UpstreamSyncFields):
 
     id: int = Field(description="表主键")
     action_id: int = Field(description="雪花 action_id（be-message 互动 rpa_action 的 bizId）")
+    mid: str = Field(default="", description="作者 mid（前端据此区分本人/他人资源）")
     name: str
     version: str = Field(default="1.0.0", description="作者声明的语义化版本")
     content_hash: str = Field(default="", description="语义内容指纹（空=存量未计算）")

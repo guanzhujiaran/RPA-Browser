@@ -35,18 +35,16 @@ from app.models.database.workflow.models import (
 from app.utils.depends.admin_depends import require_admin, get_admin_status
 from app.utils.depends.session_manager import DatabaseSessionManager
 from app.services.admin_audit import log_admin_action
+from app.services.approval_service import (
+    can_transition,
+    get_owned_resource,
+    sync_visibility_on_transition,
+)
 from app.models.database.admin.models import ApprovalRequest
+from sqlalchemy import or_
 from sqlmodel import select, func
 
 router = APIRouter()  # tag 由 admin/__init__.py 聚合父路由统一提供
-
-# 审批单状态机：pending → approved/rejected；approved → rejected（过审核准撤回）；
-# rejected → approved（驳回恢复）。与 be-message 动态审核的「撤回 / 恢复」语义对齐。
-_APPROVAL_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"approved", "rejected"},
-    "approved": {"rejected"},
-    "rejected": {"approved"},
-}
 
 
 @router.post("/approval/submit", response_model=StandardResponse[ApprovalItemResp])
@@ -60,6 +58,63 @@ async def submit_approval(
             f"📝 用户({auth.mid}) 提交审批: {request.resource_type}/{request.resource_id}/{request.action}"
         )
         async with DatabaseSessionManager.async_session() as session:
+            # 只为自己的真实资源提交审批（plugin 等无本地表的类型不做归属校验）
+            resource, checkable = await get_owned_resource(
+                session, request.resource_type, request.resource_id
+            )
+            if checkable:
+                if resource is None:
+                    return error_response(
+                        msg="资源不存在", code=ResponseCode.NOT_FOUND
+                    )
+                if str(getattr(resource, "mid", "")) != str(auth.mid):
+                    return error_response(
+                        msg="只能为自己创建的资源提交审批",
+                        code=ResponseCode.FORBIDDEN,
+                    )
+
+            # 幂等去重：待审核单直接复用；已通过且未过期则无需重复提交
+            pending = (
+                await session.exec(
+                    select(ApprovalRequest)
+                    .where(
+                        ApprovalRequest.resource_type == request.resource_type,
+                        ApprovalRequest.resource_id == request.resource_id,
+                        ApprovalRequest.action == request.action,
+                        ApprovalRequest.status == "pending",
+                    )
+                    .order_by(ApprovalRequest.id.desc())
+                )
+            ).first()
+            if pending is not None:
+                return success_response(
+                    data=_to_approval_item(pending),
+                    msg="已存在待审核申请，请等待审核",
+                )
+
+            now = datetime.now()
+            approved = (
+                await session.exec(
+                    select(ApprovalRequest)
+                    .where(
+                        ApprovalRequest.resource_type == request.resource_type,
+                        ApprovalRequest.resource_id == request.resource_id,
+                        ApprovalRequest.action == request.action,
+                        ApprovalRequest.status == "approved",
+                        or_(
+                            ApprovalRequest.expires_at.is_(None),
+                            ApprovalRequest.expires_at > now,
+                        ),
+                    )
+                    .order_by(ApprovalRequest.id.desc())
+                )
+            ).first()
+            if approved is not None:
+                return error_response(
+                    msg="该资源已通过审批，无需重复提交",
+                    code=ResponseCode.CONFLICT,
+                )
+
             approval = ApprovalRequest(
                 submitter_mid=auth.mid,
                 resource_type=request.resource_type,
@@ -93,29 +148,22 @@ async def list_approvals(
     """
     try:
         async with DatabaseSessionManager.async_session() as session:
-            stmt = select(ApprovalRequest)
+            # 过滤条件只构建一次，列表与计数共用，避免两处条件漂移
+            filters = []
             # 仅查看本人申请：only_mine 强制只看当前请求人；非管理员本身就只能看自己
             if request.only_mine or not status_obj.is_admin:
-                stmt = stmt.where(ApprovalRequest.submitter_mid == status_obj.mid)
+                filters.append(ApprovalRequest.submitter_mid == status_obj.mid)
             if request.status:
-                stmt = stmt.where(ApprovalRequest.status == request.status)
+                filters.append(ApprovalRequest.status == request.status)
             if request.resource_type:
-                stmt = stmt.where(
+                filters.append(
                     ApprovalRequest.resource_type == request.resource_type
                 )
 
-            # 带相同过滤条件的计数
-            count_stmt = select(func.count()).select_from(ApprovalRequest)
-            if request.only_mine or not status_obj.is_admin:
-                count_stmt = count_stmt.where(
-                    ApprovalRequest.submitter_mid == status_obj.mid
-                )
-            if request.status:
-                count_stmt = count_stmt.where(ApprovalRequest.status == request.status)
-            if request.resource_type:
-                count_stmt = count_stmt.where(
-                    ApprovalRequest.resource_type == request.resource_type
-                )
+            stmt = select(ApprovalRequest).where(*filters)
+            count_stmt = select(func.count()).select_from(ApprovalRequest).where(
+                *filters
+            )
             total_count = (await session.exec(count_stmt)).first() or 0
 
             result = await session.exec(
@@ -160,24 +208,32 @@ async def review_approval(
             f"✅ 管理员({auth.mid}) 审核审批 #{request.approval_id} -> {request.status}"
         )
         async with DatabaseSessionManager.async_session() as session:
+            # 行锁：并发审核同一审批单时只允许一个请求完成状态流转
             result = await session.exec(
-                select(ApprovalRequest).where(ApprovalRequest.id == request.approval_id)
+                select(ApprovalRequest)
+                .where(ApprovalRequest.id == request.approval_id)
+                .with_for_update()
             )
             approval = result.first()
             if approval is None:
                 return error_response(
                     msg="审批单不存在", code=ResponseCode.APPROVAL_NOT_FOUND
                 )
-            allowed = _APPROVAL_TRANSITIONS.get(approval.status, set())
-            if request.status not in allowed:
+            old_status = approval.status
+            if not can_transition(old_status, request.status):
                 return error_response(
-                    msg=f"当前状态 {approval.status} 不允许变更为 {request.status}",
+                    msg=f"当前状态 {old_status} 不允许变更为 {request.status}",
                     code=ResponseCode.CONFLICT,
                 )
             approval.status = request.status
             approval.reviewer_mid = auth.mid
             approval.review_note = request.review_note
             approval.reviewed_at = datetime.now()
+            # 通过后再驳回 → 资源下架；驳回后再通过 → 资源恢复公开。
+            # 与审批单状态同一事务提交，避免「审批已驳回但资源仍公开」的中间态。
+            synced = await sync_visibility_on_transition(
+                session, approval, old_status, request.status
+            )
             await session.commit()
             await session.refresh(approval)
             await log_admin_action(
@@ -187,7 +243,12 @@ async def review_approval(
                 request.approval_id,
                 f"status={request.status}, note={request.review_note}",
             )
-            return success_response(data=_to_approval_item(approval), msg="审核完成")
+            msg = "审核完成"
+            if synced and old_status == "approved" and request.status == "rejected":
+                msg += "，资源已下架"
+            elif synced and old_status == "rejected" and request.status == "approved":
+                msg += "，资源已恢复公开"
+            return success_response(data=_to_approval_item(approval), msg=msg)
     except Exception as e:
         logger.error(f"❌ 审核审批失败: {e}")
         return error_response(

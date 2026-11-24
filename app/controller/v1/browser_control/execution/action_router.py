@@ -343,6 +343,7 @@ async def list_custom_actions(
         CompositeActionListItemResponse(
             id=model.id,
             action_id=model.action_id,
+            mid=model.mid,
             name=model.name,
             version=model.version,
             content_hash=model.content_hash,
@@ -794,6 +795,7 @@ async def get_action_forks(
         CompositeActionListItemResponse(
             id=f.id,
             action_id=f.action_id,
+            mid=f.mid,
             name=f.name,
             action_type=f.action_type,
             description=f.description,

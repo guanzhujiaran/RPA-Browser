@@ -386,6 +386,7 @@ async def list_workflows(
             WorkflowListItemResponse(
                 id=model.id,
                 workflow_id=model.workflow_id,
+                mid=model.mid,
                 name=model.name,
                 custom_action_id=model.custom_action_id,
                 description=model.description,
@@ -839,6 +840,7 @@ async def get_workflow_forks(
         WorkflowListItemResponse(
             id=f.id,
             workflow_id=f.workflow_id,
+            mid=f.mid,
             name=f.name,
             description=f.description,
             is_enabled=f.is_enabled,

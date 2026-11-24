@@ -92,6 +92,7 @@ class WorkflowListItemResponse(UpstreamSyncFields):
 
     id: int
     workflow_id: int
+    mid: str = Field(default="", description="工作流作者 mid（前端据此区分本人/他人资源）")
     name: str
     custom_action_id: int | None = None
     description: str
@@ -151,9 +152,7 @@ class WorkflowListItemResponse(UpstreamSyncFields):
 
 
 class WorkflowAdminListItemResponse(WorkflowListItemResponse):
-    """管理端工作流列表项响应（附带作者 mid）"""
-
-    mid: str = Field(default="", description="工作流作者 mid")
+    """管理端工作流列表项响应（mid 已由基类携带）"""
 
 
 class WorkflowRunLogItemResponse(SQLModel):

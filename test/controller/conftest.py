@@ -118,10 +118,18 @@ async def _cleanup_db():
         UserWorkflow,
         WorkflowRunRecord,
     )
+    from app.models.database.admin.models import ApprovalRequest, AdminAuditLog
 
     async with DatabaseSessionManager.async_session() as session:
-        # 按依赖倒序删除：先删运行记录，再删工作流，最后删被引用的动作
-        for model in [WorkflowRunRecord, UserWorkflow, CompositeActionModel]:
+        # 按依赖倒序删除：先删运行记录，再删工作流，最后删被引用的动作；
+        # 审批单 / 审计日志无外键依赖，一并清理避免跨用例串数据
+        for model in [
+            AdminAuditLog,
+            ApprovalRequest,
+            WorkflowRunRecord,
+            UserWorkflow,
+            CompositeActionModel,
+        ]:
             await session.exec(delete(model))
         await session.commit()
 
