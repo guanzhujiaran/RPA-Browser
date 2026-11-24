@@ -211,7 +211,9 @@ class ViewerStream:
         self.viewer_id = viewer_id
         self.stream_key = stream_key
         self.page_index = page_index
-        self.config = config
+        # 与 ViewerMediaTrack / WebRTCStreamManager 一致用 `_config`：
+        # start() 的码率上限放宽与 _apply_encoder_bitrate() 都读取该属性
+        self._config = config
         # 帧源订阅槽：由 WebRTCStreamManager 在创建/销毁时负责订阅与反订阅，
         # 观看者本身不持有帧源引用（避免 viewer ↔ source 循环引用）
         self.slot = slot
