@@ -15,7 +15,7 @@ import pytest
 from bili_common.models.response_code import ResponseCode
 
 # 复用 conftest 中的 PREFIX
-from test.controller.conftest import OTHER_MID, PREFIX
+from test.controller.conftest import OTHER_MID, PREFIX, TEST_MID
 
 
 @pytest.mark.anyio
@@ -305,6 +305,222 @@ class TestForkWorkflow:
         assert data["code"] == ResponseCode.FORBIDDEN, (
             f"Expected FORBIDDEN, got {data['code']}: {data.get('msg')}"
         )
+
+    async def test_fork_workflow_copies_all_create_fields(self, client):
+        """Fork 复用「导出 → 导入」字段口径：外壳参数不得漏拷。"""
+        create_resp = await client.post(
+            f"{PREFIX}/workflows/create",
+            json={
+                "name": "完整参数工作流",
+                "description": "完整参数描述",
+                "browser_id": 123456,
+                "browser_ids": [123456, 123457],
+                "concurrent_exec": True,
+                "trigger_type": "manual",
+                "trigger_config": {},
+                "is_public": False,
+                "notify_inbox_on_start": True,
+                "notify_inbox_on_end": False,
+                "notify_push_on_start": True,
+                "notify_push_on_end": False,
+                "log_enabled": True,
+                "log_debug": True,
+                "resume_on_restart": True,
+                "variables": {"token": "abc"},
+            },
+        )
+        origin = create_resp.json()["data"]
+
+        fork_resp = await client.post(
+            f"{PREFIX}/workflows/fork",
+            json={"id": origin["id"], "new_name": "完整参数工作流 Fork"},
+        )
+        fork_data = fork_resp.json()
+        assert fork_data["code"] == ResponseCode.SUCCESS, fork_data.get("msg")
+
+        detail_resp = await client.post(
+            f"{PREFIX}/workflows/get", json={"id": fork_data["data"]["id"]}
+        )
+        detail = detail_resp.json()["data"]
+        assert detail["browser_id"] == 123456
+        assert detail["browser_ids"] == [123456, 123457]
+        assert detail["concurrent_exec"] is True
+        assert detail["description"] == "完整参数描述"
+        assert detail["notify_inbox_on_start"] is True
+        assert detail["notify_inbox_on_end"] is False
+        assert detail["notify_push_on_start"] is True
+        assert detail["notify_push_on_end"] is False
+        assert detail["log_enabled"] is True
+        assert detail["log_debug"] is True
+        assert detail["resume_on_restart"] is True
+        assert detail["variables"] == {"token": "abc"}
+        assert detail["is_public"] is False
+        assert detail["forked_from_id"] == origin["id"]
+
+        # 上游副本计数 +1
+        origin_detail = (
+            await client.post(f"{PREFIX}/workflows/get", json={"id": origin["id"]})
+        ).json()["data"]
+        assert origin_detail["forks_count"] == 1
+
+    async def test_fork_public_workflow_copies_action(self, client):
+        """Fork 他人公开工作流：动作依赖树一起 Fork，副本自包含且参数不丢"""
+        from app.models.database.workflow.models import BuiltinActionType
+        from app.services.execution.crud_service import (
+            action_crud_svr,
+            workflow_crud_svr,
+        )
+
+        action = await action_crud_svr.create(
+            mid=OTHER_MID,
+            name="他人公开动作",
+            action_type=BuiltinActionType.COMPOSITE,
+            steps=[{"action_id": "click", "params": {}}],
+            is_composite=True,
+            is_public=True,
+            timeout=60000,
+            retry_on_error=True,
+            retry_times=3,
+            retry_delay=2.5,
+        )
+        other = await workflow_crud_svr.create(
+            mid=OTHER_MID,
+            name="他人公开工作流",
+            custom_action_id=action.action_id,
+            is_public=True,
+        )
+
+        response = await client.post(f"{PREFIX}/workflows/fork", json={"id": other.id})
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS, data
+        assert "已独立复制 1 个关联动作" in data["msg"]
+
+        fork_detail = (
+            await client.post(
+                f"{PREFIX}/workflows/get", json={"id": data["data"]["id"]}
+            )
+        ).json()["data"]
+        assert fork_detail["custom_action_id"] != action.action_id
+
+        # 副本动作归属当前用户，且完整复制执行参数（不再丢 retry / timeout）
+        forked_action = await action_crud_svr.get_by_action_id(
+            fork_detail["custom_action_id"]
+        )
+        assert forked_action is not None
+        assert str(forked_action.mid) == str(TEST_MID)
+        assert forked_action.timeout == 60000
+        assert forked_action.retry_on_error is True
+        assert forked_action.retry_times == 3
+        assert forked_action.retry_delay == 2.5
+        assert forked_action.is_enabled is True
+
+    async def test_fork_public_workflow_rejects_private_action(self, client):
+        """Fork 他人公开工作流：引用的私有动作不可见，按后端 msg 拒绝"""
+        from app.models.database.workflow.models import BuiltinActionType
+        from app.services.execution.crud_service import (
+            action_crud_svr,
+            workflow_crud_svr,
+        )
+
+        action = await action_crud_svr.create(
+            mid=OTHER_MID,
+            name="他人私有动作",
+            action_type=BuiltinActionType.COMPOSITE,
+            steps=[{"action_id": "click", "params": {}}],
+            is_composite=True,
+            is_public=False,
+        )
+        other = await workflow_crud_svr.create(
+            mid=OTHER_MID,
+            name="引用私有动作的公开工作流",
+            custom_action_id=action.action_id,
+            is_public=True,
+        )
+
+        response = await client.post(f"{PREFIX}/workflows/fork", json={"id": other.id})
+        data = response.json()
+        assert data["code"] == ResponseCode.FORBIDDEN, data
+        assert "无权访问操作" in data["msg"]
+
+
+@pytest.mark.anyio
+class TestImportWorkflowValidation:
+    """导入分享 JSON：动作引用要校验，浏览器 id 只在运行时校验"""
+
+    @staticmethod
+    async def _create_action(mid: int, name: str, is_public: bool) -> int:
+        from app.models.database.workflow.models import BuiltinActionType
+        from app.services.execution.crud_service import action_crud_svr
+
+        model = await action_crud_svr.create(
+            mid=mid,
+            name=name,
+            action_type=BuiltinActionType.COMPOSITE,
+            steps=[{"action_id": "click", "params": {}}],
+            is_composite=True,
+            is_public=is_public,
+        )
+        return model.action_id
+
+    async def test_import_rejects_private_action_of_other_user(self, client):
+        action_id = await self._create_action(OTHER_MID, "他人私有动作", False)
+
+        response = await client.post(
+            f"{PREFIX}/workflows/import",
+            json={"name": "导入他人私有动作", "custom_action_id": action_id},
+        )
+        data = response.json()
+        assert data["code"] == ResponseCode.BUSINESS_ERROR, (
+            f"Expected BUSINESS_ERROR, got {data['code']}: {data.get('msg')}"
+        )
+        assert "无权访问" in data["msg"]
+
+    async def test_import_rejects_unknown_action(self, client):
+        response = await client.post(
+            f"{PREFIX}/workflows/import",
+            json={"name": "导入不存在动作", "custom_action_id": 999999},
+        )
+        data = response.json()
+        assert data["code"] == ResponseCode.BUSINESS_ERROR
+        assert "不存在" in data["msg"]
+
+    async def test_import_accepts_public_action(self, client):
+        action_id = await self._create_action(OTHER_MID, "他人公开动作", True)
+
+        response = await client.post(
+            f"{PREFIX}/workflows/import",
+            json={"name": "导入公开动作", "custom_action_id": action_id},
+        )
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS, data.get("msg")
+
+        detail = (
+            await client.post(
+                f"{PREFIX}/workflows/get", json={"id": data["data"]["id"]}
+            )
+        ).json()["data"]
+        assert detail["custom_action_id"] == action_id
+
+    async def test_import_skips_browser_ownership_validation(self, client):
+        """分享 JSON 里的浏览器可能不属于当前用户：导入放行，运行时再校验"""
+        response = await client.post(
+            f"{PREFIX}/workflows/import",
+            json={
+                "name": "导入他人浏览器工作流",
+                "browser_id": 987654321,
+                "browser_ids": [987654321, 987654322],
+            },
+        )
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS, data.get("msg")
+
+        detail = (
+            await client.post(
+                f"{PREFIX}/workflows/get", json={"id": data["data"]["id"]}
+            )
+        ).json()["data"]
+        assert detail["browser_id"] == 987654321
+        assert detail["browser_ids"] == [987654321, 987654322]
 
 
 @pytest.mark.anyio

@@ -936,6 +936,12 @@ class ActionCrudService:
                     icon_series=original.icon_series,
                     icon_id=original.icon_id,
                     timeout=original.timeout,
+                    # 重试 / 启用状态属于动作执行参数，必须随副本一起复制，
+                    # 否则 Fork 后行为与上游不一致（docs/fork-上游同步计划书.md）
+                    retry_on_error=original.retry_on_error,
+                    retry_times=original.retry_times,
+                    retry_delay=original.retry_delay,
+                    is_enabled=original.is_enabled,
                     is_composite=original.is_composite,
                     parameters_schema=copy.deepcopy(original.parameters_schema)
                     if original.parameters_schema

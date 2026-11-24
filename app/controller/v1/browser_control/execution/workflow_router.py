@@ -4,6 +4,8 @@ Workflow 管理路由
 提供工作流（Workflow）的 CRUD 和执行 API
 """
 
+from datetime import datetime
+
 from app.services.execution.engine import ExecutionEngine
 from loguru import logger
 from bili_common.models.response import (
@@ -23,7 +25,6 @@ from app.utils.depends.security_depends import verify_browser_ownership
 from bili_common.models.depends import BrowserReqAuthInfo
 from fastapi import Depends
 from fastapi.responses import StreamingResponse
-from sqlmodel import select
 
 from app.config import settings
 from app.services.RPA_browser.session.live_service import live_service
@@ -50,6 +51,7 @@ from app.services.execution.workflow_runner import (
 from app.services.execution.cancellation import cancellation_registry
 from app.services.execution.run_tasks import workflow_run_tasks
 from app.models.database.workflow.models import (
+    UserWorkflow,
     WorkflowRunRecord,
     WorkflowRunTriggerEnum,
     WorkflowRunStatusEnum,
@@ -86,8 +88,6 @@ from app.models.workflow.models import (
 )
 from app.models.base.base_sqlmodel import BasePaginationReq, BasePaginationResp
 from app.models.database.workflow.resource_record import ResourceProcessStatus
-from app.models.database.browser.info import UserBrowserInfo
-from app.utils.depends.session_manager import DatabaseSessionManager
 from app.models.runtime.workflow_progress import WorkflowRunProgressData
 from app.models.workflow.models import WorkflowRunResumeRequest
 from app.services.execution.crud_service.resource_record_crud import (
@@ -153,36 +153,88 @@ def _validate_trigger(
     return None
 
 
-async def _validate_owned_browser_ids(
-    mid: int, browser_ids: list[int]
+async def _validate_action_reference(
+    mid: int, custom_action_id: int | None
 ) -> str | None:
-    """校验目标浏览器 id 均存在且属于当前用户；返回错误信息（None 表示通过）。
+    """校验工作流引用的动作可用；返回错误信息（None 表示通过）。
 
-    创建与导入走同一入口：导入的分享 JSON 可能携带原作者（或已被删除）的浏览器 id，
-    必须在落库前拦截，否则工作流保存成功却无法实际运行。
+    工作流是调度外壳，只保存动作引用而不复制内容：导入分享 JSON 时
+    请求体里的 ``custom_action_id`` 可能是原作者（或已被删除）的动作，
+    必须在落库前确认「存在且当前用户可见（本人或已公开）」，否则
+    工作流保存成功却无法运行。
+
+    浏览器 id 不在创建 / 导入阶段校验（分享 JSON 里的浏览器可能不属于
+    当前用户），统一推迟到运行时由会话解析校验。
     """
-    ids = sorted({int(bid) for bid in browser_ids if bid is not None})
-    if not ids:
+    if not custom_action_id:
         return None
+    action_model = await action_crud_svr.get_by_action_id(custom_action_id)
+    if not action_model:
+        return f"引用的动作不存在: {custom_action_id}"
+    if str(action_model.mid) != str(mid) and not action_model.is_public:
+        return f"引用的动作不存在或无权访问: {custom_action_id}"
+    return None
 
-    async with DatabaseSessionManager.async_session() as session:
-        rows = (
-            await session.exec(
-                select(UserBrowserInfo.browser_id).where(
-                    UserBrowserInfo.mid == mid,
-                    UserBrowserInfo.browser_id.in_(ids),
-                )
-            )
-        ).all()
-    owned = {int(row) for row in rows}
-    missing = [bid for bid in ids if bid not in owned]
-    if not missing:
-        return None
-    return (
-        "目标浏览器不存在或不属于当前账号："
-        + "、".join(str(bid) for bid in missing)
-        + "。请在浏览器管理中确认后重新选择"
+
+def _workflow_to_create_request(model: UserWorkflow) -> WorkflowCreateRequest:
+    """工作流模型 → 创建 / 导入请求体（导出与 Fork 共用的唯一映射点）"""
+    return WorkflowCreateRequest(
+        name=model.name,
+        custom_action_id=model.custom_action_id,
+        description=model.description,
+        browser_id=model.browser_id,
+        browser_ids=model.browser_ids,
+        concurrent_exec=bool(model.concurrent_exec),
+        trigger_type=model.trigger_type,
+        trigger_config=model.trigger_config or {},
+        is_public=model.is_public,
+        notify_inbox_on_start=model.notify_inbox_on_start,
+        notify_inbox_on_end=model.notify_inbox_on_end,
+        notify_push_on_start=model.notify_push_on_start,
+        notify_push_on_end=model.notify_push_on_end,
+        log_enabled=model.log_enabled,
+        log_debug=model.log_debug,
+        resume_on_restart=model.resume_on_restart,
+        variables=model.variables or {},
     )
+
+
+async def _create_workflow_model(
+    request: WorkflowCreateRequest,
+    mid: int,
+    *,
+    forked_from_id: int | None = None,
+    last_synced_at: datetime | None = None,
+    auto_sync_upstream: bool = False,
+) -> UserWorkflow:
+    """按创建 / 导入请求体落库并同步调度任务（新建 / 导入 / Fork 共用）"""
+    model = await workflow_crud_svr.create(
+        name=request.name,
+        mid=mid,
+        custom_action_id=request.custom_action_id,
+        description=request.description,
+        browser_id=request.browser_id,
+        trigger_type=request.trigger_type,
+        trigger_config=request.trigger_config,
+        is_public=request.is_public,
+        notify_inbox_on_start=request.notify_inbox_on_start,
+        notify_inbox_on_end=request.notify_inbox_on_end,
+        notify_push_on_start=request.notify_push_on_start,
+        notify_push_on_end=request.notify_push_on_end,
+        log_enabled=request.log_enabled,
+        log_debug=request.log_debug,
+        resume_on_restart=request.resume_on_restart,
+        auto_sync_upstream=auto_sync_upstream,
+        browser_ids=request.browser_ids,
+        concurrent_exec=request.concurrent_exec,
+        variables=request.variables,
+        forked_from_id=forked_from_id,
+        last_synced_at=last_synced_at,
+    )
+
+    # 同步定时任务（cron 生效即可被调度）
+    await sync_workflow_job(model)
+    return model
 
 
 async def _resolve_page(mid: int, browser_id: int, page_index: int | None = None):
@@ -234,46 +286,16 @@ async def create_workflow(
     if trigger_error:
         return error_response(ResponseCode.INVALID_PARAM, trigger_error)
 
-    # 目标浏览器必须真实存在且属于当前用户（新建与导入分享 JSON 共用此入口）
-    target_browser_ids = list(request.browser_ids or [])
-    if request.browser_id is not None:
-        target_browser_ids.append(request.browser_id)
-    browser_error = await _validate_owned_browser_ids(auth.mid, target_browser_ids)
-    if browser_error:
-        return error_response(ResponseCode.INVALID_PARAM, browser_error)
-
-    # 引用的动作必须存在（工作流不改写动作内容）
-    if request.custom_action_id:
-        action_model = await action_crud_svr.get_by_action_id(request.custom_action_id)
-        if not action_model:
-            return error_response(
-                ResponseCode.BUSINESS_ERROR,
-                f"引用的动作不存在: {request.custom_action_id}",
-            )
-
-    model = await workflow_crud_svr.create(
-        name=request.name,
-        mid=auth.mid,
-        custom_action_id=request.custom_action_id,
-        description=request.description,
-        browser_id=request.browser_id,
-        trigger_type=request.trigger_type,
-        trigger_config=request.trigger_config,
-        is_public=request.is_public,
-        notify_inbox_on_start=request.notify_inbox_on_start,
-        notify_inbox_on_end=request.notify_inbox_on_end,
-        notify_push_on_start=request.notify_push_on_start,
-        notify_push_on_end=request.notify_push_on_end,
-        log_enabled=request.log_enabled,
-        log_debug=request.log_debug,
-        resume_on_restart=request.resume_on_restart,
-        browser_ids=request.browser_ids,
-        concurrent_exec=request.concurrent_exec,
-        variables=request.variables,
+    # 引用的动作必须存在且当前用户可见（工作流不改写动作内容）
+    action_error = await _validate_action_reference(
+        auth.mid, request.custom_action_id
     )
+    if action_error:
+        return error_response(ResponseCode.BUSINESS_ERROR, action_error)
 
-    # 同步定时任务（cron 生效即可被调度）
-    await sync_workflow_job(model)
+    # 浏览器 id 不做归属校验：分享 JSON 可能携带原作者的浏览器，
+    # 统一延迟到运行时（会话解析 / 归属依赖）校验
+    model = await _create_workflow_model(request, auth.mid)
 
     return success_response(
         WorkflowCreateResponse(
@@ -294,7 +316,12 @@ async def import_workflow(
 
     请求体即「导出 JSON」内容（可携带 id / workflow_id / created_at / likes_count
     等数据库冗余字段，自动忽略）。导入会在**当前用户名下新建**一份工作流，
-    workflow_id 重新生成；引用的自定义动作必须已存在。
+    workflow_id 重新生成。
+
+    校验口径：
+    - ``custom_action_id`` 必须存在且当前用户可见（本人或已公开）；
+    - ``browser_id`` / ``browser_ids`` 不做归属校验（分享 JSON 可能携带
+      原作者的浏览器），仅在运行时执行前校验。
     """
     return await create_workflow(request, auth)
 
@@ -316,27 +343,7 @@ async def export_workflow(
     if not model or str(model.mid) != str(auth.mid):
         return error_response(ResponseCode.WORKFLOW_NOT_FOUND, "工作流不存在")
 
-    return success_response(
-        WorkflowCreateRequest(
-            name=model.name,
-            custom_action_id=model.custom_action_id,
-            description=model.description,
-            browser_id=model.browser_id,
-            browser_ids=model.browser_ids,
-            concurrent_exec=bool(model.concurrent_exec),
-            trigger_type=model.trigger_type,
-            trigger_config=model.trigger_config or {},
-            is_public=model.is_public,
-            notify_inbox_on_start=model.notify_inbox_on_start,
-            notify_inbox_on_end=model.notify_inbox_on_end,
-            notify_push_on_start=model.notify_push_on_start,
-            notify_push_on_end=model.notify_push_on_end,
-            log_enabled=model.log_enabled,
-            log_debug=model.log_debug,
-            resume_on_restart=model.resume_on_restart,
-            variables=model.variables or {},
-        )
-    )
+    return success_response(_workflow_to_create_request(model))
 
 
 @router.post(BrowserControlRouterPath.workflows_list, summary="获取工作流列表")
@@ -485,6 +492,7 @@ async def get_workflow_detail(
             notify_on_end=model.notify_on_end,
             log_enabled=model.log_enabled,
             log_debug=model.log_debug,
+            resume_on_restart=model.resume_on_restart,
             variables=model.variables or {},
             created_at=model.created_at,
             updated_at=model.updated_at,
@@ -611,6 +619,7 @@ async def update_workflow(
             notify_on_end=model.notify_on_end,
             log_enabled=model.log_enabled,
             log_debug=model.log_debug,
+            resume_on_restart=model.resume_on_restart,
             variables=model.variables or {},
             created_at=model.created_at,
             updated_at=model.updated_at,
@@ -701,6 +710,10 @@ async def fork_workflow(
     - 如果是自己的工作流：允许无条件 Fork（类似“创建副本”）
     - 如果是别人的工作流：仅允许 Fork 公开的工作流（类似 GitHub）
 
+    实现上复用「导出 → 导入」的字段口径（``_workflow_to_create_request`` +
+    ``_create_workflow_model``）：外壳参数原样复制，仅覆盖名称 / 公开状态 /
+    Fork 来源等归属字段，避免 Fork 漏拷字段。
+
     Args:
         request: {"id": <工作流ID>, "new_name": <新名称（可选）>,
                   "auto_sync_upstream": <是否开启上游自动同步，默认 false>}
@@ -715,16 +728,53 @@ async def fork_workflow(
         return error_response(403, "只能 Fork 公开的工作流或自己的工作流")
 
     try:
-        # 执行 Fork（递归深拷贝 Action 依赖树）
-        model, forked_action_count = await workflow_crud_svr.fork(
-            id=request.id,
-            target_mid=auth.mid,
-            new_name=request.new_name,
+        # 复用「导出 → 导入」的字段口径：外壳参数原样复制，
+        # 仅覆盖归属类字段，避免 Fork 实现与创建 / 导入字段漂移。
+        payload = _workflow_to_create_request(original)
+        payload.name = request.new_name or f"{original.name} (Fork)"
+        payload.is_public = False
+
+        # 依赖动作不属于自己：递归深拷贝整棵依赖树，保证副本自包含
+        # （否则原作者删除 / 私有化动作后，Fork 的工作流无法运行）
+        forked_action_count = 0
+        if payload.custom_action_id:
+            action_model = await action_crud_svr.get_by_action_id(
+                payload.custom_action_id
+            )
+            if not action_model:
+                return error_response(
+                    ResponseCode.BUSINESS_ERROR,
+                    f"工作流关联的动作不存在: {payload.custom_action_id}",
+                )
+            if str(action_model.mid) != str(auth.mid):
+                top_action, all_actions = await action_crud_svr.fork_deep(
+                    action_id=payload.custom_action_id,
+                    target_mid=auth.mid,
+                    auto_sync_upstream=request.auto_sync_upstream,
+                )
+                payload.custom_action_id = top_action.action_id
+                forked_action_count = len(all_actions)
+
+        # 与导入共用同一套校验与落库逻辑
+        # （浏览器 id 不在此时校验，运行时再验）
+        trigger_error = _validate_trigger(
+            payload.trigger_type, payload.trigger_config, payload.browser_id
+        )
+        if trigger_error:
+            return error_response(ResponseCode.INVALID_PARAM, trigger_error)
+        action_error = await _validate_action_reference(
+            auth.mid, payload.custom_action_id
+        )
+        if action_error:
+            return error_response(ResponseCode.BUSINESS_ERROR, action_error)
+
+        model = await _create_workflow_model(
+            payload,
+            auth.mid,
+            forked_from_id=original.id,
+            last_synced_at=original.updated_at,
             auto_sync_upstream=request.auto_sync_upstream,
         )
-
-        if not model:
-            return error_response(500, "Fork 失败")
 
         msg = "Fork 成功"
         if forked_action_count > 0:
@@ -749,7 +799,9 @@ async def fork_workflow(
         from app.models.common.exceptions.base_exception import BaseException as BizBaseException
 
         if isinstance(e, BizBaseException):
-            return error_response(e.code or 400, str(e))
+            # 业务异常优先用 e.msg（如 ActionNotAccessibleException 的中文提示），
+            # str(e) 只是构造参数（动作 id），会把用户可读文案丢掉
+            return error_response(e.code or 400, e.msg or str(e))
         raise
 
 
@@ -815,7 +867,9 @@ async def sync_workflow(
         from app.models.common.exceptions.base_exception import BaseException as BizBaseException
 
         if isinstance(e, BizBaseException):
-            return error_response(e.code or 400, str(e))
+            # 业务异常优先用 e.msg（如 ActionNotAccessibleException 的中文提示），
+            # str(e) 只是构造参数（动作 id），会把用户可读文案丢掉
+            return error_response(e.code or 400, e.msg or str(e))
         raise
 
 

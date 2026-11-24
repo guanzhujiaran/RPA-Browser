@@ -54,13 +54,16 @@ class WorkflowCrudService:
         notify_inbox_on_end: bool = True,
         notify_push_on_start: bool = False,
         notify_push_on_end: bool = True,
-        log_enabled: bool = False,
+        log_enabled: bool | None = False,
         log_debug: bool | None = None,
         resume_on_restart: bool = False,
         auto_sync_upstream: bool = False,
         browser_ids: list[int] | None = None,
         concurrent_exec: bool = False,
         variables: Dict | None = None,
+        forked_from_id: int | None = None,
+        last_synced_at: datetime | None = None,
+        local_steps_modified: bool = False,
     ) -> UserWorkflow:
         async with DatabaseSessionManager.async_session() as session:
             existing = await session.exec(
@@ -107,8 +110,20 @@ class WorkflowCrudService:
                 browser_ids=browser_ids,
                 concurrent_exec=concurrent_exec,
                 variables=variables or {},
+                # Fork 元数据：新建 / 导入传默认值，Fork 由创建方透传（复用同一条落库链路）
+                forked_from_id=forked_from_id,
+                last_synced_at=last_synced_at,
+                local_steps_modified=local_steps_modified,
             )
             session.add(model)
+
+            # Fork 副本计数挂在上游工作流上（与创建同一事务，避免计数漂移）
+            if forked_from_id is not None:
+                await session.exec(
+                    update(UserWorkflow)
+                    .where(UserWorkflow.id == forked_from_id)
+                    .values(forks_count=UserWorkflow.forks_count + 1)
+                )
 
             await session.commit()
             await session.refresh(model)
@@ -395,135 +410,6 @@ class WorkflowCrudService:
             await session.commit()
             await session.refresh(new_model)
             return new_model
-
-    @staticmethod
-    async def fork(
-        id: int,
-        target_mid: int,
-        new_name: str | None = None,
-        auto_sync_upstream: bool = False,
-    ) -> tuple[UserWorkflow | None, int]:
-        """Fork 工作流，并递归深拷贝其引用的 Action 依赖树
-
-        - 顶层 Action 如果属于他人，会通过 fork_deep 复制整棵第三方依赖树
-        - 顶层 Action 如果已属于自己，直接保留引用
-        - 浏览器是私有资源不继承
-
-        Args:
-            id: 上游工作流数据库 ID
-            target_mid: Fork 目标用户 mid
-            new_name: 新工作流名称（可选）
-            auto_sync_upstream: 是否开启上游自动同步（外壳与顶层 Action 同时生效）
-
-        Returns:
-            (新工作流, 连带 Fork 的 Action 数量)；工作流不存在返回 (None, 0)
-        """
-        from app.services.execution.crud_service.action_crud import action_crud_svr
-
-        async with DatabaseSessionManager.async_session() as session:
-            result = await session.exec(
-                select(UserWorkflow).where(UserWorkflow.id == id)
-            )
-            original = result.first()
-            if not original:
-                return None, 0
-
-            if not original.is_public and str(original.mid) != str(target_mid):
-                raise ValueError("只能 Fork 公开的工作流")
-
-            # 提前取出需要的字段（session 关闭后属性会过期）
-            original_custom_action_id = original.custom_action_id
-            original_id = original.id
-            original_name = original.name
-            original_original_mid = original.original_mid
-            original_trigger_type = original.trigger_type
-            original_trigger_config = original.trigger_config
-            original_is_public = original.is_public
-            original_notify_flags = NotifyChannelFlags.from_model(original)
-            original_log_enabled = original.log_enabled
-            original_log_debug = original.log_debug
-            original_updated_at = original.updated_at
-
-        # ── 递归 Fork Action 依赖树 ──
-        forked_action_count = 0
-        new_custom_action_id = original_custom_action_id
-
-        if original_custom_action_id:
-            action_model = await action_crud_svr.get_by_action_id(
-                original_custom_action_id
-            )
-            if not action_model:
-                raise ValueError(
-                    f"工作流关联的动作不存在: {original_custom_action_id}"
-                )
-
-            if str(action_model.mid) != str(target_mid):
-                # 他人的 Action：递归深拷贝整棵依赖树
-                top_action, all_actions = await action_crud_svr.fork_deep(
-                    action_id=original_custom_action_id,
-                    target_mid=target_mid,
-                    auto_sync_upstream=auto_sync_upstream,
-                )
-                new_custom_action_id = top_action.action_id
-                forked_action_count = len(all_actions)
-            # else: 自己的 Action 直接保留引用
-
-        # ── 创建 Fork 的工作流外壳 ──
-        new_workflow_id = await generate_workflow_id()
-        if not new_name:
-            new_name = f"{original_name} (Fork)"
-
-        async with DatabaseSessionManager.async_session() as session:
-            existing = await session.exec(
-                select(UserWorkflow).where(
-                    (UserWorkflow.mid == str(target_mid))
-                    & (UserWorkflow.name == new_name)
-                )
-            )
-            if existing.first():
-                raise NameAlreadyExistsException(name=new_name, name_type="工作流")
-
-            new_model = UserWorkflow(
-                workflow_id=new_workflow_id,
-                name=new_name,
-                description=f"Forked from: {original_name}",
-                mid=target_mid,
-                original_mid=original_original_mid,
-                custom_action_id=new_custom_action_id,
-                # 浏览器是用户私有资源，Fork 后不继承（避免指向他人浏览器）；定时触发需重新选择
-                browser_id=None,
-                trigger_type=original_trigger_type,
-                trigger_config=original_trigger_config,
-                is_public=False,
-                forked_from_id=original_id,
-                # 上游同步快照：记录"此副本同步自上游哪个版本"（docs/fork-上游同步计划书.md）
-                last_synced_at=original_updated_at,
-                auto_sync_upstream=auto_sync_upstream,
-                local_steps_modified=False,
-                notify_inbox_on_start=original_notify_flags.inbox_on_start,
-                notify_inbox_on_end=original_notify_flags.inbox_on_end,
-                notify_push_on_start=original_notify_flags.push_on_start,
-                notify_push_on_end=original_notify_flags.push_on_end,
-                notify_on_start=original_notify_flags.legacy_on_start,
-                notify_on_end=original_notify_flags.legacy_on_end,
-                log_enabled=original_log_enabled,
-                log_debug=original_log_debug,
-                resume_on_restart=bool(original.resume_on_restart),
-                # 变量值是原作者的配置（可能含 token 等敏感值），Fork 给他人不继承，
-                # 由 Fork 方按动作契约自行填写（定义仍从动作读时获取）。
-                variables={},
-            )
-
-            session.add(new_model)
-            await session.exec(
-                update(UserWorkflow)
-                .where(UserWorkflow.id == original_id)
-                .values(forks_count=UserWorkflow.forks_count + 1)
-            )
-
-            await session.commit()
-            await session.refresh(new_model)
-            return new_model, forked_action_count
 
     @staticmethod
     async def list_forks(
