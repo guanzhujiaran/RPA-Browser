@@ -134,6 +134,44 @@ class TestAnonymousCommunityActions:
 
 
 @pytest.mark.anyio
+class TestCommunityIncludesOwnPublicActions:
+    """社区广场不再排除作者本人：登录用户能在 community 中看到自己已公开的动作"""
+
+    async def test_community_list_returns_own_public_action(
+        self, client, created_action, created_public_action
+    ):
+        from app.models.database.workflow.models import BuiltinActionType
+        from app.services.execution.crud_service import action_crud_svr
+        from test.controller.conftest import TEST_MID
+
+        # 直接落库：走接口更新 is_public 需要 publish 审批，这里只验证列表口径
+        own_public = await action_crud_svr.create(
+            mid=TEST_MID,
+            name="own_public_action",
+            action_type=BuiltinActionType.COMPOSITE,
+            steps=[{"action_id": "click", "params": {}}],
+            is_composite=True,
+            is_public=True,
+        )
+
+        response = await client.post(
+            f"{PREFIX}/custom-actions/list",
+            json={"page": 1, "per_page": 20, "filter_type": "community"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == ResponseCode.SUCCESS
+        action_ids = [item["action_id"] for item in data["data"]["items"]]
+        assert own_public.action_id in action_ids
+        # 他人的公开动作同样在社区列表（不因作者身份被排除）
+        assert created_public_action in action_ids
+        # 自己未公开的动作仍不应出现在社区列表
+        assert created_action not in action_ids
+        assert all(item["is_public"] for item in data["data"]["items"])
+
+
+@pytest.mark.anyio
 class TestGetCompositeAction:
     async def test_get_custom_action_after_create(self, client, created_action):
         action_id = created_action

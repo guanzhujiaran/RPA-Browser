@@ -138,7 +138,7 @@ class WorkflowCrudService:
 
         - mid 为 None（未登录的游客）：只允许看到公开内容，private 恒为空；
           community / public / all 一律收敛为 is_public，verified 额外要求已认证；
-        - mid 有值：按原有分支过滤（community 为自己之外的公开内容）。
+        - mid 有值：按原有分支过滤（community 为全部公开内容，含作者本人）。
         """
         if mid is None:
             if filter_type == "private":
@@ -155,9 +155,8 @@ class WorkflowCrudService:
         if filter_type == "public":
             return query.where(UserWorkflow.is_public == true())
         if filter_type == "community":
-            return query.where(
-                (UserWorkflow.mid != str(mid)) & (UserWorkflow.is_public == true())
-            )
+            # 社区广场不排除作者本人：已公开即可见（含自己公开的工作流）
+            return query.where(UserWorkflow.is_public == true())
         if filter_type == "verified":
             return query.where(UserWorkflow.is_verified == true())
         return query.where(

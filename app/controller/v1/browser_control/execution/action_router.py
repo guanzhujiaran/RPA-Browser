@@ -303,7 +303,7 @@ async def list_custom_actions(
 ) -> StandardResponse[BasePaginationResp[CompositeActionListItemResponse]]:
     """获取自定义操作列表（可选登录）
 
-    已登录：按 filter_type 返回「我的 / 公开 / 社区（他人公开）/ 认证 / 全部」；
+    已登录：按 filter_type 返回「我的 / 公开 / 社区（全部公开，含自己）/ 认证 / 全部」；
     未登录（游客）：只返回公开内容，private 恒为空（社区广场匿名浏览）。
     """
     # 计算 skip
