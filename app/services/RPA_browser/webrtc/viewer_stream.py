@@ -51,7 +51,8 @@ from .video_frame_producer import FrameSlot, clone_video_frame
 class ViewerMediaTrack(VideoStreamTrack):
     """观看者媒体轨道。
 
-    从帧源订阅槽取帧，按**本端**档位做缩放与抽帧，再交给 aiortc 编码发送。
+    从帧源订阅槽取帧，按**本端**档位抽帧，再交给 aiortc 编码发送。
+    分辨率恒定（帧源始终按页面真实视口采集），本端档位只影响帧率与编码码率。
 
     帧源按「所有观看者的最高档」采集，因此本端只会**下调**，不会上调；
     当本端档位等于帧源档位时不做任何处理（单人观看即为此情形，零开销）。
@@ -86,7 +87,7 @@ class ViewerMediaTrack(VideoStreamTrack):
     # ── 观看者级状态 ──
 
     def set_level(self, level: StreamQualityLevelEnum) -> None:
-        """更新本端生效档位（缩放 + 抽帧节拍随之改变）。"""
+        """更新本端生效档位（抽帧节拍与编码码率随之改变）。"""
         if self._level == level:
             return
         self._level = level
@@ -145,7 +146,7 @@ class ViewerMediaTrack(VideoStreamTrack):
             break
 
         frame, shared = item
-        frame = self._prepare_frame(frame, shared, params)
+        frame = self._prepare_frame(frame, shared)
 
         now = time.monotonic()
         if self._start_time is None:
@@ -160,28 +161,15 @@ class ViewerMediaTrack(VideoStreamTrack):
         self.sent_frames += 1
         return frame
 
-    def _prepare_frame(self, frame, shared: bool, params):
-        """多观看者共享帧必须克隆；缩放仅作兜底。
+    def _prepare_frame(self, frame, shared: bool):
+        """多观看者共享帧必须克隆。
 
-        帧源广播时已按**槽位档位**分组缩放（见计划书 §10.8），因此这里
-        常规路径只走克隆分支；仅当槽位与轨道档位短暂不同步
-        （切档瞬间槽位尚未更新）时才会真正触发缩放。
+        分辨率与清晰度档位解耦（帧源恒定按页面真实视口采集），这里不做任何缩放；
+        档位差异只体现为编码码率（见 `_apply_encoder_bitrate`）。
 
         克隆的原因见计划书 §2.6：`recv()` 会**就地**改写 `frame.pts`，
         而广播模式下多个观看者拿到的是同一个帧对象。
-        `reformat()` 在尺寸确有变化时必然返回新对象，此时无需再克隆。
         """
-        size = params.size
-        if size is not None:
-            # H264 要求偶数宽高
-            width = max(2, size["width"] - size["width"] % 2)
-            height = max(2, size["height"] - size["height"] % 2)
-            if (frame.width, frame.height) != (width, height):
-                try:
-                    return frame.reformat(width=width, height=height, format="yuv420p")
-                except Exception as e:  # noqa: BLE001 - 缩放失败不应打断整条流
-                    logger.warning(f"帧缩放失败，回退原帧: {e}")
-
         if shared:
             return clone_video_frame(frame)
         return frame

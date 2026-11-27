@@ -153,6 +153,21 @@ class NameAlreadyExistsException(BaseException):
         self.msg = self.msg.format(name=name, name_type=name_type)
 
 
+class FingerprintSeedAlreadyExistsException(BaseException):
+    """指纹种子已被占用（`userbrowserinfo.fingerprint` 有唯一约束）。
+
+    种子唯一是刻意的：同一个种子 = 同一套 canvas / audio 派生值，
+    两个浏览器共用会让站点把它们关联起来。这里用业务码（HTTP 200）承载，
+    前端可以直接展示 msg，而不是让用户看到 1062 Duplicate entry。
+    """
+
+    code = ResponseCode.NAME_ALREADY_EXISTS
+    msg = "指纹种子 {seed} 已被占用，请换一个种子（同一种子会让两个浏览器的指纹互相可关联）"
+
+    def __init__(self, seed: int | str):
+        self.msg = self.msg.format(seed=seed)
+
+
 class ActionNotAccessibleException(BaseException):
     """无权访问自定义操作异常"""
 
@@ -327,6 +342,20 @@ class InvalidSignRewardConfigException(BaseException):
 
     code = ResponseCode.INVALID_PARAM
     msg = "非法的签到奖励配置: {detail}"
+
+    def __init__(self, detail: str):
+        self.msg = self.msg.format(detail=detail)
+
+
+class InvalidParamException(BaseException):
+    """通用请求参数非法（复用 ``ResponseCode.INVALID_PARAM``）。
+
+    仅用于「参数无法解析成有意义的值」这一层，不承载具体业务分支；
+    有明确业务语义的参数错误请继续用各自的专用异常。
+    """
+
+    code = ResponseCode.INVALID_PARAM
+    msg = "{detail}"
 
     def __init__(self, detail: str):
         self.msg = self.msg.format(detail=detail)

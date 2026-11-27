@@ -15,6 +15,10 @@ from app.models.runtime.api import (
     BrowserFingerprintCreateParams,
     BrowserFingerprintRenameParams,
     BrowserFingerprintRenameResp,
+    BrowserExecVersionInfo,
+)
+from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
+    browser_exec_info_helper,
 )
 from app.utils.depends.security_depends import (
     verify_browser_ownership,
@@ -65,6 +69,36 @@ async def gen_rand_fingerprint_router(
     browser_service = BrowserService(temp_token)
     fingerprint = await browser_service.gen_rand_fingerprint(params)
     return success_response(data=fingerprint)
+
+
+@router.post(
+    BrowserFingerprintRouterPath.list_exec_versions,
+    summary="可选浏览器真实版本清单",
+    response_model=StandardResponse[list[BrowserExecVersionInfo]],
+)
+async def list_exec_versions_router():
+    """
+    读取服务端可用的浏览器真实版本清单（数据源：``browser_exec_info.json``）
+
+    前端「真实版本」下拉的唯一数据来源。清单里的 ``full_version`` 与磁盘上的
+    chromium 二进制一一对应；不在清单内的版本无法生成指纹（后端会拒绝落库）。
+
+    Returns:
+        list[BrowserExecVersionInfo]: 每个可选版本及其 UA / AppImage / 是否已安装
+    """
+    exec_infos = await browser_exec_info_helper.list_exec_infos()
+    return success_response(
+        data=[
+            BrowserExecVersionInfo(
+                full_version=info.full_version,
+                major_version=info.major_version,
+                browser_ua=info.browser_ua,
+                exec_name=info.exec_name,
+                is_installed=info.is_installed,
+            )
+            for info in exec_infos
+        ]
+    )
 
 
 @router.post(

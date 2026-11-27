@@ -33,6 +33,20 @@ WINDOW_FRAME_HEIGHT = 131
 MIN_DEVICE_SCALE_FACTOR = 0.5
 MAX_DEVICE_SCALE_FACTOR = 1.75
 
+# `--fingerprint-brand` 认的是文档里的字面量（首字母大写），而库里存的是
+# ENUM 值（chrome / Edge / Opera / Vivaldi）。下发命令行前统一映射一次。
+BROWSER_BRAND_ARG_VALUES: dict[str, str] = {
+    "chrome": "Chrome",
+    "edge": "Edge",
+    "opera": "Opera",
+    "vivaldi": "Vivaldi",
+}
+
+#: `--fingerprint-gpu-vendor` / `--fingerprint-gpu-renderer` 在 Chrome 144 被内核移除
+#: （替代方案是 ``--disable-spoofing=gpu``，不是反方向指定）。因此 144+ 上这两个字段
+#: 只是被记录下来，实际 GPU 由 ``--fingerprint`` 的种子派生，UI 需要标注这一点。
+GPU_OVERRIDE_LAST_SUPPORTED_MAJOR = 143
+
 
 def clamp_device_scale_factor(value: float) -> float:
     """把 DPR 收敛到可接受区间。"""
@@ -153,9 +167,11 @@ class BaseFingerprintBrowserInitParams(SQLModel):
         alias="--fingerprint-platform-version",
         description="Uses default version if not specified",
     )
+    # 上游 fingerprint-chromium 的开关名是 --fingerprint-brand（曾误写成
+    # --fingerprint-browser，Chromium 会静默忽略未知开关，等于品牌从未下发）。
     fingerprint_browser: BrowserEnum | None = Field(
         None,
-        alias="--fingerprint-browser",
+        alias="--fingerprint-brand",
         description="Chrome, Edge, Opera, Vivaldi (default is Chrome)",
     )
     fingerprint_brand_version: str | None = Field(
@@ -169,12 +185,16 @@ class BaseFingerprintBrowserInitParams(SQLModel):
     fingerprint_gpu_vendor: str | None = Field(
         None,
         alias="--fingerprint-gpu-vendor",
-        description="Vendor string (e.g., Intel Inc., NVIDIA Corporation). If not specified, uses fingerprint seed",
+        description=f"Vendor string (e.g., Intel Inc., NVIDIA Corporation). "
+        f"仅 Chrome {GPU_OVERRIDE_LAST_SUPPORTED_MAJOR} 及以下内核生效"
+        f"（{GPU_OVERRIDE_LAST_SUPPORTED_MAJOR + 1} 起该开关已被移除，实际 GPU 由指纹种子决定）",
     )
     fingerprint_gpu_renderer: str | None = Field(
         None,
         alias="--fingerprint-gpu-renderer",
-        description="Renderer string (e.g., Intel Iris OpenGL Engine, NVIDIA GeForce GTX 1060). If not specified, uses fingerprint seed",
+        description=f"Renderer string (e.g., Intel Iris OpenGL Engine, NVIDIA GeForce GTX 1060). "
+        f"仅 Chrome {GPU_OVERRIDE_LAST_SUPPORTED_MAJOR} 及以下内核生效"
+        f"（{GPU_OVERRIDE_LAST_SUPPORTED_MAJOR + 1} 起该开关已被移除，实际 GPU 由指纹种子决定）",
     )
     lang: str | None = Field(
         None, alias="--lang", description="Language code (e.g., en-US)"
@@ -204,6 +224,12 @@ class BaseFingerprintBrowserInitParams(SQLModel):
     patchright_screen_height: int = Field(default=1080)
     patchright_viewport_width: int = Field(default=1920)
     patchright_viewport_height: int = Field(default=1080)
+    fingerprint_real_version: str | None = Field(
+        None,
+        nullable=True,
+        description="真实浏览器版本（来自 browser_exec_info.json，决定实际启动的 chromium 二进制）；"
+        "模拟版本 fingerprint_brand_version 由它派生",
+    )
     patchright_fingerprint_dict: dict | None = Field(
         default=None, sa_column=Column(JSON)
     )
@@ -281,8 +307,29 @@ class BaseFingerprintBrowserInitParams(SQLModel):
     # （driver 会自己拼 --proxy-server/--proxy-bypass-list），这里再拼一份就是重复设置同一个开关。
     # 注意 key 是去掉 "--" 后的字段名（proxy_bypass 没有 alias，所以用下划线形式）。
     NON_CLI_ARG_KEYS: ClassVar[frozenset[str]] = frozenset(
-        {"viewport", "screen", "proxy-server", "proxy_bypass"}
+        {
+            "viewport",
+            "screen",
+            "proxy-server",
+            "proxy_bypass",
+            # 真实版本只用于选二进制，chromium 没有对应命令行开关；
+            # 模拟版本走 --fingerprint-brand-version
+            "fingerprint_real_version",
+        }
     )
+
+    @property
+    def fingerprint_brand_arg_value(self) -> str | None:
+        """`--fingerprint-brand` 的命令行字面量。
+
+        库里 `fingerprint_browser` 存的是 ENUM 值（如 ``chrome``），而内核认的是
+        ``Chrome`` / ``Edge`` / ``Opera`` / ``Vivaldi``，大小写不匹配会被当成默认品牌。
+        """
+        brand = self.fingerprint_browser
+        if brand is None:
+            return None
+        raw = str(getattr(brand, "value", brand)).strip()
+        return BROWSER_BRAND_ARG_VALUES.get(raw.lower(), raw)
 
     def fp_2_args_list(self) -> list[str]:
         """将指纹参数转换为浏览器启动参数列表"""
@@ -295,10 +342,16 @@ class BaseFingerprintBrowserInitParams(SQLModel):
         for k, v in self.model_dump(exclude_none=True, by_alias=True).items():
             # 别名本身已带 "--" 前缀（如 --fingerprint-platform），需先去掉再判断
             normalized_key = k.lstrip("-")
-            if not v or normalized_key.startswith("patchright"):
+            # 用「是否为 None / 空串」判断而不是 `not v`：种子 0 是合法值，
+            # 被当成空值丢掉会让 --fingerprint 不下发（等于内核伪装全关）。
+            if v is None or (isinstance(v, str) and not v):
+                continue
+            if normalized_key.startswith("patchright"):
                 continue
             if normalized_key in self.NON_CLI_ARG_KEYS:
                 continue
+            if normalized_key == "fingerprint-brand":
+                v = self.fingerprint_brand_arg_value or v
             filtered_params[normalized_key] = v
         return [f"--{k.replace('_', '-')}={v}" for k, v in filtered_params.items()]
 
@@ -331,6 +384,7 @@ __all__ = [
     "BrowserEnum",
     "LogPluginLogLevelEnum",
     "Int32",
+    "GPU_OVERRIDE_LAST_SUPPORTED_MAJOR",
     "BaseFingerprintBrowserInitParams",
     "BaseBrowserIdOptional",
     "BaseBrowserId",

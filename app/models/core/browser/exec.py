@@ -25,9 +25,23 @@ class BrowserExecInfoModel(SQLModel):
 
     @computed_field
     @property
+    def major_version(self) -> str:
+        """主版本号（与 ``browser_ua`` 里的 ``Chrome/<major>.0.0.0`` 对齐）"""
+        return self.full_version.split(".", 1)[0]
+
+    @computed_field
+    @property
     def appimage_path(self) -> str:
         """AppImage 本体路径：下载 / 校验 / 安装判断均以此为准"""
         return os.path.join(settings.chromium_executable_dir, self.exec_name)
+
+    @computed_field
+    @property
+    def is_installed(self) -> bool:
+        """二进制是否已落盘（AppImage 本体或解包产物）"""
+        return os.path.isfile(self.appimage_path) or os.path.isfile(
+            self.extracted_exec_path
+        )
 
     @computed_field
     @property

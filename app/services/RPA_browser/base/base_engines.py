@@ -80,8 +80,10 @@ class BaseUndetectedPlaywright:
                 f"，绕过: {fingerprint_params.proxy_bypass or '无'}"
             )
             self.default_args.extend(fingerprint_params.fp_2_args_list())
+        # 真实版本是权威键（决定启动哪个 AppImage）；UA 只用于兼容没回填真实版本的历史行
         browser_exec_info = await browser_exec_info_helper.get_exec_info(
-            ua=fingerprint_params.patchright_browser_ua
+            real_version=fingerprint_params.fingerprint_real_version,
+            ua=fingerprint_params.patchright_browser_ua,
         )
         # 生产容器没有 FUSE，AppImage 无法挂载：首次真正使用时一次性解包，
         # 之后同一版本的所有实例共用一份可执行文件（文件页/page cache 真正共享）。
@@ -96,6 +98,8 @@ class BaseUndetectedPlaywright:
             user_action_layer=False,
             fingerprint=fingerprint_params.browserforge_fingerprint_object,
             execute_path=executable_path,
+            # 让 Playwright 侧报告的版本与真实二进制一致（此前写死 139，装 150 也报 139）
+            browser_version=browser_exec_info.full_version,
         )
         botright_instance.flags.extend(self.default_args)
         browser = await botright_instance.new_browser(

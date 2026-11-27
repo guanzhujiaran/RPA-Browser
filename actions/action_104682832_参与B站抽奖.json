@@ -985,7 +985,9 @@
                       "value": ".bili-dyn-share-publishing__action"
                     },
                     "trigger_timeout": 30000,
-                    "timeout": 30000
+                    "timeout": 8000,
+                    "trigger_retries": 2,
+                    "trigger_retry_interval": 2000
                   },
                   "action_id": "wait_for_response",
                   "action_type": "wait_for_response",
@@ -1703,7 +1705,9 @@
                                         "value": ".bili-dyn-share-publishing__action"
                                       },
                                       "trigger_timeout": 30000,
-                                      "timeout": 30000
+                                      "timeout": 8000,
+                                      "trigger_retries": 2,
+                                      "trigger_retry_interval": 2000
                                     },
                                     "action_id": "wait_for_response",
                                     "action_type": "wait_for_response",
@@ -2458,15 +2462,29 @@
                       },
                       {
                         "params": {
+                          "state": "visible",
+                          "locator": {
+                            "value": "bili-comments #pub button.active"
+                          },
+                          "timeout": 6000
+                        },
+                        "action_id": "wait",
+                        "action_type": "wait",
+                        "on_error": "continue"
+                      },
+                      {
+                        "params": {
                           "url_pattern": "**/x/v2/reply/add**",
                           "pattern_type": "glob",
                           "method": "POST",
                           "include_body": true,
                           "trigger_locator": {
-                            "value": "bili-comments #pub button:visible"
+                            "value": "bili-comment-box:has(.brt-editor:not(:empty)) #pub button"
                           },
                           "trigger_timeout": 30000,
-                          "timeout": 30000
+                          "timeout": 8000,
+                          "trigger_retries": 2,
+                          "trigger_retry_interval": 2000
                         },
                         "action_id": "wait_for_response",
                         "action_type": "wait_for_response",
@@ -2767,7 +2785,9 @@
                                   "value": ".bili-dyn-share-publishing__action"
                                 },
                                 "trigger_timeout": 30000,
-                                "timeout": 30000
+                                "timeout": 8000,
+                                "trigger_retries": 2,
+                                "trigger_retry_interval": 2000
                               },
                               "action_id": "wait_for_response",
                               "action_type": "wait_for_response",

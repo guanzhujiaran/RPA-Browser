@@ -24,11 +24,13 @@ from app.models.base.base_sqlmodel import BasePaginationResp
 from app.services.broswer_fingerprint.fingerprint_gen import (
     gen_from_browserforge_fingerprint,
 )
+from app.services.broswer_fingerprint.exec_version import apply_versions
 from app.utils.snow_flake_gen import generate_browser_id
 from bili_common.models.response_code import ResponseCode
 from app.config import CONF
 from app.models.common.exceptions.base_exception import (
     BrowserFingerprintNotFoundException,
+    FingerprintSeedAlreadyExistsException,
     NameAlreadyExistsException,
 )
 from typing import Union
@@ -45,6 +47,39 @@ def _rmdir_if_empty(path: Path) -> None:
         path.rmdir()
     except OSError:
         pass
+
+
+async def _ensure_seed_not_taken(
+    seed: int | None,
+    session: AsyncSession,
+    *,
+    exclude_browser_id: int | None = None,
+) -> None:
+    """种子全局唯一（`userbrowserinfo.fingerprint` 唯一约束）：提前查一次并给出业务错误。
+
+    不查的话写库会抛 IntegrityError（1062），前端只能看到 500；
+    种子是「同种子 = 同一虚拟设备」的根，重复会让两个浏览器可关联，所以不做自动改写，直接拒绝。
+    """
+    if seed is None:
+        return
+    stmt = select(UserBrowserInfo.browser_id).where(UserBrowserInfo.fingerprint == seed)
+    if exclude_browser_id is not None:
+        stmt = stmt.where(UserBrowserInfo.browser_id != exclude_browser_id)
+    if (await session.exec(stmt)).first() is not None:
+        raise FingerprintSeedAlreadyExistsException(seed)
+
+
+async def _consume_version_fields(
+    browser_info: BaseFingerprintBrowserInitParams, update_data: dict
+) -> None:
+    """从待写入字段里取出两个版本字段，校验后同步到指纹对象。
+
+    版本字段不能直接 setattr：真实版本决定二进制，必须连带 UA / 模拟版本 /
+    UA-CH 一起改写（见 exec_version_service），否则会落出不一致的指纹。
+    """
+    real_version = update_data.pop("fingerprint_real_version", None)
+    brand_version = update_data.pop("fingerprint_brand_version", None)
+    await apply_versions(browser_info, real_version, brand_version)
 
 
 class BrowserFingerprintService:
@@ -71,17 +106,32 @@ class BrowserFingerprintService:
             if browser_info is None:
                 raise BrowserFingerprintNotFoundException()
 
+            # 种子全局唯一：改种子前先确认没被别的浏览器占用（排除自己）
+            await _ensure_seed_not_taken(
+                params.fingerprint_int,
+                session,
+                exclude_browser_id=int(params.browser_id),
+            )
+
             # 只更新提供的字段（exclude_none：空值=未提供，不覆盖原有值）
             update_data = params.model_dump(
                 exclude_unset=True,
                 exclude_none=True,
                 exclude={"browser_id", "browser_id_str"},
             )
+            # 种子入参叫 fingerprint_int，落库字段是 fingerprint：
+            # 不能直接 setattr（UserBrowserInfo 没有 fingerprint_int 字段），
+            # 否则编辑任意字段都会抛 ValueError，这里单独映射
+            seed = update_data.pop("fingerprint_int", None)
+            if seed is not None:
+                browser_info.fingerprint = seed
         else:
-            # 创建新记录
+            # 创建新记录：用户显式给了种子就先校验唯一性（留空由生成器随机，不会冲突）
+            await _ensure_seed_not_taken(params.fingerprint_int, session)
             # 将 UpsertParams 转换为 CreateParams
             create_params = BrowserFingerprintCreateParams(
-                fingerprint_int=params.fingerprint_int
+                fingerprint_int=params.fingerprint_int,
+                fingerprint_real_version=params.fingerprint_real_version,
             )
             user_default_settings = (
                 await BrowserFingerprintService.get_user_default_settings(
@@ -147,7 +197,8 @@ class BrowserFingerprintService:
             if duplicate_browser is not None:
                 raise NameAlreadyExistsException(name=custom_name, name_type="浏览器")
 
-        # 统一处理属性更新
+        # 版本字段单独处理（校验 + UA / UA-CH 同步），其余字段直接覆写
+        await _consume_version_fields(browser_info, update_data)
         for key, value in update_data.items():
             setattr(browser_info, key, value)
 
@@ -165,6 +216,7 @@ class BrowserFingerprintService:
         """
         创建浏览器指纹信息
         """
+        await _ensure_seed_not_taken(params.fingerprint_int, session)
         user_default_settings = (
             await BrowserFingerprintService.get_user_default_settings(
                 mid=mid,
@@ -239,9 +291,18 @@ class BrowserFingerprintService:
         if browser_info is None:
             raise BrowserFingerprintNotFoundException()
 
+        # 种子全局唯一：改种子前先确认没被别的浏览器占用（排除自己）
+        await _ensure_seed_not_taken(
+            params.fingerprint_int,
+            session,
+            exclude_browser_id=int(params.browser_id),
+        )
+
         update_data = params.model_dump(
             exclude_unset=True, exclude_none=True, exclude={"id"}
         )
+        # 版本字段单独处理（校验 + UA / UA-CH 同步），其余字段直接覆写
+        await _consume_version_fields(browser_info, update_data)
         for key, value in update_data.items():
             setattr(browser_info, key, value)
 

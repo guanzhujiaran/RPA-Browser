@@ -17,9 +17,16 @@ from app.models.core.browser.fingerprint import (
     BaseFeedbackInfo,
     PlatformEnum,
     BrowserEnum,
+    GPU_OVERRIDE_LAST_SUPPORTED_MAJOR,
 )
 from app.models.database.browser.info import UserBrowserInfoWithoutPlugin
-from app.utils.http.proxy_utils import normalize_proxy_bypass
+from app.utils.http.proxy_utils import (
+    DIRECT_PROXY_SERVER,
+    POOL_PROXY_SERVER,
+    is_direct_proxy,
+    is_pool_proxy,
+    normalize_proxy_bypass,
+)
 from botright.modules.proxy_manager import SplitError
 
 
@@ -33,6 +40,10 @@ class BrowserFingerprintCreateParams(SQLModel):
 
     fingerprint_int: Int32 | None = None
     is_desktop: bool = True
+    fingerprint_real_version: str | None = Field(
+        None,
+        description="指定真实浏览器版本（须在 browser_exec_info 清单内）；不传则随机挑一条",
+    )
 
 
 def _canonical_enum_value(value, enum_cls, field_name: str):
@@ -71,9 +82,18 @@ class BrowserFingerprintEditableParams(BlankStringToNoneModel):
     fingerprint_platform_version: str | None = None
     fingerprint_browser: str | None = None
     fingerprint_brand_version: str | None = None
+    fingerprint_real_version: str | None = None
     fingerprint_hardware_concurrency: int | None = None
-    fingerprint_gpu_vendor: str | None = None
-    fingerprint_gpu_renderer: str | None = None
+    fingerprint_gpu_vendor: str | None = Field(
+        None,
+        description=f"GPU 厂商；仅 Chrome {GPU_OVERRIDE_LAST_SUPPORTED_MAJOR} 及以下内核生效，"
+        f"更高版本由指纹种子决定实际 GPU",
+    )
+    fingerprint_gpu_renderer: str | None = Field(
+        None,
+        description=f"GPU 渲染器；仅 Chrome {GPU_OVERRIDE_LAST_SUPPORTED_MAJOR} 及以下内核生效，"
+        f"更高版本由指纹种子决定实际 GPU",
+    )
     lang: str | None = None
     accept_lang: str | None = None
     timezone: str | None = None
@@ -117,6 +137,12 @@ class BrowserFingerprintUpsertParams(
     @field_validator("proxy_server", mode="before")
     @classmethod
     def validate_proxy_server(cls, v: str):
+        # 语义值不参与 host:port 校验：
+        # "none" = 显式不使用代理；"pool" = 显式使用服务端默认代理（IPv6 代理池）
+        if is_direct_proxy(v):
+            return DIRECT_PROXY_SERVER
+        if is_pool_proxy(v):
+            return POOL_PROXY_SERVER
         if v is not None and v.strip():
             split_proxy = v.split(":")
             if len(split_proxy) == 2:
@@ -209,6 +235,20 @@ class BrowserFingerprintQueryResp(UserBrowserInfoWithoutPlugin):
     ...
 
 
+class BrowserExecVersionInfo(SQLModel):
+    """可选浏览器真实版本（数据源：browser_exec_info.json）
+
+    前端「真实版本」下拉直接消费该模型；``full_version`` 是唯一可选值，
+    ``major_version`` 供展示，``is_installed`` 用于提示二进制是否已落盘。
+    """
+
+    full_version: str = Field(..., description="真实版本（完整版本号，唯一可选值）")
+    major_version: str = Field(..., description="主版本号")
+    browser_ua: str = Field(..., description="与该版本二进制的 User-Agent")
+    exec_name: str = Field(..., description="AppImage 文件名")
+    is_installed: bool = Field(..., description="二进制是否已落盘")
+
+
 # ========================
 # 浏览器操作相关请求参数
 # ========================
@@ -275,6 +315,7 @@ __all__ = [
     "BrowserFingerprintDeleteResp",
     "BrowserFingerprintRenameResp",
     "BrowserFingerprintQueryResp",
+    "BrowserExecVersionInfo",
     # Operation Params
     "BrowserOperationOpenUrlParams",
     "BrowserOperationScreenshotParams",

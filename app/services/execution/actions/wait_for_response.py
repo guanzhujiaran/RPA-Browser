@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 
@@ -117,74 +118,100 @@ class WaitForResponseAction(BaseAction[WaitForResponseParams]):
         trigger_desc = describe_spec(trigger) if trigger is not None else "<无>"
         # 区分「点击触发失败」与「响应等不到」：两者都是 PlaywrightTimeoutError，
         # 但排障方向完全不同（元素不可点 vs 请求没回来），必须给出不同错误信息。
-        trigger_done = False
+        #
+        # 重试口径：只有「点击已完成、但等不到响应」才重试（说明请求没发出去），
+        # 点击本身失败（元素不可点 / 不可命中）不重试——重试也只会再次失败。
+        max_attempts = params.trigger_retries + 1 if trigger is not None else 1
+        response = None
 
-        try:
-            # 关键点：**先注册监听，再触发**。Playwright 只捕获「注册之后到达」的响应，
-            # 若把点击放在上一个步骤里，click 自身耗时（实测 2~3s）足以吞掉响应，
-            # 本步骤再注册就只会等满 timeout。
-            async with self.page.expect_response(
-                _matches, timeout=params.timeout
-            ) as response_info:
-                if trigger is not None:
-                    try:
-                        target = await resolve_target(
-                            self.page,
-                            trigger,
-                            None,
-                            timeout_ms=params.trigger_timeout,
-                            default_pick=LocatorPickEnum.STRICT,
-                        )
-                    except LocatorNotFoundError as exc:
-                        logger.warning(
-                            f"[WaitForResponseAction] 触发元素未命中: {trigger_desc}"
-                        )
-                        return ActionResult(
-                            success=False,
-                            error=(
-                                f"触发点击失败（{params.trigger_timeout}ms 内没有命中元素）: "
-                                f"定位器={trigger_desc}"
-                            ),
-                            execution_time=time.time() - start_time,
-                            action_id=self.metadata.id,
-                            action_name=self.metadata.name,
-                            logs=[str(exc)],
-                        )
-                    await target.locator.click(timeout=params.trigger_timeout)
-                    trigger_done = True
-            response = await response_info.value
-        except PlaywrightTimeoutError as exc:
-            if trigger is not None and not trigger_done:
+        for attempt in range(1, max_attempts + 1):
+            trigger_done = False
+            try:
+                # 关键点：**先注册监听，再触发**。Playwright 只捕获「注册之后到达」的响应，
+                # 若把点击放在上一个步骤里，click 自身耗时（实测 2~3s）足以吞掉响应，
+                # 本步骤再注册就只会等满 timeout。
+                async with self.page.expect_response(
+                    _matches, timeout=params.timeout
+                ) as response_info:
+                    if trigger is not None:
+                        try:
+                            target = await resolve_target(
+                                self.page,
+                                trigger,
+                                None,
+                                timeout_ms=params.trigger_timeout,
+                                default_pick=LocatorPickEnum.STRICT,
+                            )
+                        except LocatorNotFoundError as exc:
+                            logger.warning(
+                                f"[WaitForResponseAction] 触发元素未命中: {trigger_desc}"
+                            )
+                            return ActionResult(
+                                success=False,
+                                error=(
+                                    f"触发点击失败（{params.trigger_timeout}ms 内没有命中元素）: "
+                                    f"定位器={trigger_desc}"
+                                ),
+                                execution_time=time.time() - start_time,
+                                action_id=self.metadata.id,
+                                action_name=self.metadata.name,
+                                logs=[str(exc)],
+                            )
+                        await target.locator.click(timeout=params.trigger_timeout)
+                        trigger_done = True
+                response = await response_info.value
+                break
+            except PlaywrightTimeoutError as exc:
+                if trigger is not None and not trigger_done:
+                    logger.warning(
+                        f"[WaitForResponseAction] 触发点击超时: 定位器={trigger_desc}"
+                    )
+                    return ActionResult(
+                        success=False,
+                        error=(
+                            f"触发点击失败（{params.trigger_timeout}ms 内元素不可点击）: "
+                            f"定位器={trigger_desc}"
+                        ),
+                        execution_time=time.time() - start_time,
+                        action_id=self.metadata.id,
+                        action_name=self.metadata.name,
+                        logs=[f"{exc}"],
+                    )
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"[WaitForResponseAction] 第 {attempt}/{max_attempts} 次点击后未等到响应，"
+                        f"{params.trigger_retry_interval}ms 后重试: pattern={params.url_pattern} "
+                        f"trigger={trigger_desc}"
+                    )
+                    if params.trigger_retry_interval > 0:
+                        await asyncio.sleep(params.trigger_retry_interval / 1000)
+                    continue
                 logger.warning(
-                    f"[WaitForResponseAction] 触发点击超时: 定位器={trigger_desc}"
+                    f"[WaitForResponseAction] 等待响应超时: pattern={params.url_pattern} "
+                    f"pattern_type={params.pattern_type} method={expected_method} "
+                    f"trigger={trigger_desc} attempts={attempt}"
                 )
                 return ActionResult(
                     success=False,
                     error=(
-                        f"触发点击失败（{params.trigger_timeout}ms 内元素不可点击）: "
-                        f"定位器={trigger_desc}"
+                        f"等待响应超时（{params.timeout}ms 内没有匹配的响应，"
+                        f"已点击 {attempt} 次）: "
+                        f"pattern={params.url_pattern} method={expected_method or 'ANY'} "
+                        f"trigger={trigger_desc}"
                     ),
                     execution_time=time.time() - start_time,
                     action_id=self.metadata.id,
                     action_name=self.metadata.name,
                     logs=[f"{exc}"],
                 )
-            logger.warning(
-                f"[WaitForResponseAction] 等待响应超时: pattern={params.url_pattern} "
-                f"pattern_type={params.pattern_type} method={expected_method} "
-                f"trigger={trigger_desc}"
-            )
+
+        if response is None:  # pragma: no cover - 循环内已覆盖所有失败出口
             return ActionResult(
                 success=False,
-                error=(
-                    f"等待响应超时（{params.timeout}ms 内没有匹配的响应）: "
-                    f"pattern={params.url_pattern} method={expected_method or 'ANY'} "
-                    f"trigger={trigger_desc}"
-                ),
+                error="等待响应未产生结果（内部状态异常）",
                 execution_time=time.time() - start_time,
                 action_id=self.metadata.id,
                 action_name=self.metadata.name,
-                logs=[f"{exc}"],
             )
 
         response_text = ""

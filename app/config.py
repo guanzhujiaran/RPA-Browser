@@ -416,7 +416,9 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     )
     # 同步创建请求（内存已放行）等待浏览器真正落地的最长时间（秒）。
     # 超时直接返回明确错误并强制清理半成品，避免请求线程被卡死的启动流程拖住。
-    browser_launch_settle_timeout: int = 30
+    # 实测冷启动（AppImage 首次 FUSE 挂载 + 指纹注入）会超过 30s：默认放到 60，
+    # 机器更慢或同时启动多个时继续调大（环境变量 BROWSER_LAUNCH_SETTLE_TIMEOUT）。
+    browser_launch_settle_timeout: int = 60
 
     # ── 排队时长估算（ETA）──
     # 用「连续放行间隔」的实测均值 × 前方人数估算等待时长，供前端展示。
@@ -452,12 +454,24 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     # 浏览器页面数量限制配置
     browser_max_pages_per_context: int = 10  # 每个浏览器上下文的最大页面数
 
+    # ── Cookie 批量操作（导入 / 导出 / 清空）单次请求的浏览器数量上限 ──
+    # 三个批量接口都是逐项串行执行，不是免费的分页参数：每项要取会话、读写 cookie、
+    # 刷新页面，批量导入在 launch_if_not_running=true 时还要串行启动浏览器（受启动队列
+    # 约束），几十项就是分钟级请求；批量越大越容易撞反向代理的读超时，出现「前端报
+    # 超时、后端仍在执行（已生效但显示失败）」这类最难排查的不一致。
+    # 导出还额外受响应体大小约束：每个浏览器几百条 cookie 的明文 JSON 可达数 MB。
+    # 超限由请求模型直接拒绝（不静默截断），调用方分批多次请求即可。
+    # 环境变量：COOKIE_BATCH_MAX_BROWSERS（必须 >= 1，否则请求模型的 max_length 非法）
+    cookie_batch_max_browsers: int = Field(50, ge=1)
+
     # 工作流控制流嵌套深度限制
     workflow_max_nesting_depth: int = 10  # 最大嵌套深度（Loop/IfElse）
 
     # WebRTC 视频流配置（清晰度档位见计划书 §5.18）
+    # 档位只调压缩率（JPEG 质量 / 编码码率）与帧率：采集分辨率恒为页面真实视口尺寸，
+    # 切档不会改变画面尺寸 / 布局，因此没有分辨率相关配置项。
     browser_webrtc_idle_timeout: int = 300  # WebRTC 流最大闲置时间（秒），默认5分钟
-    # 原画档：JPEG 质量拉满，且按页面真实视口尺寸采集（不缩放、不降质）
+    # 原画档：JPEG 质量拉满、码率抬到高位近似无损
     browser_stream_original_quality: int = 100  # 原画档 JPEG 质量（0-100）
     browser_stream_original_max_fps: int = 30  # 原画档最大帧率
     # 原画档 WebRTC 编码目标码率（bps）：aiortc 默认上限仅 1.5M(VP8)/3M(H264)，
@@ -465,18 +479,10 @@ class Settings(PushNotifySettingsMixin, BaseSettings):
     browser_stream_original_bitrate: int = 15_000_000
     browser_stream_ultra_quality: int = 90  # 超清档 JPEG 质量（0-100）
     browser_stream_ultra_max_fps: int = 30  # 超清档最大帧率
-    # 超清档在浏览器侧抬高分辨率上限（默认自适应仅 800×800），画质最清晰
-    browser_stream_ultra_frame_max_width: int = 1920
-    browser_stream_ultra_frame_max_height: int = 1080
     browser_stream_medium_quality: int = 65  # 标清档 JPEG 质量（0-100）
     browser_stream_medium_max_fps: int = 15  # 标清档最大帧率
-    browser_stream_medium_frame_max_width: int = 960  # 标清档浏览器侧分辨率上限
-    browser_stream_medium_frame_max_height: int = 540
     browser_stream_degrade_quality: int = 50  # 流畅档（原「降级档」）JPEG 质量（0-100）
     browser_stream_degrade_max_fps: int = 5  # 流畅档最大帧率
-    # 流畅档在浏览器侧降分辨率（screencast size），JPEG 编码/传输/解码同步降载
-    browser_stream_degrade_frame_max_width: int = 640
-    browser_stream_degrade_frame_max_height: int = 360
 
     # Alembic 数据库迁移配置
     # 同浏览器工作流排队：等待执行权的最长时间（秒），超时判失败（见排队计划书）

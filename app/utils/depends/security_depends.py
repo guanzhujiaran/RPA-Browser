@@ -90,6 +90,22 @@ async def verify_browser_ownership(
     return await _verify_browser_ownership_core(browser_id, auth_info, session)
 
 
+async def verify_browser_ownership_for_id(
+    browser_id: int | str,
+    auth_info: AuthInfo,
+    session: AsyncSession,
+) -> BrowserReqAuthInfo:
+    """按**显式传入**的 browser_id 校验归属（批量接口逐项校验用）。
+
+    与 ``verify_browser_ownership`` 同一套逻辑，只是不走 Query 参数：
+    批量接口的目标 id 在请求体里，依赖注入取不到。
+
+    Raises:
+        BrowserIdNotBeloneToUserException: 浏览器不存在或不属于该用户
+    """
+    return await _verify_browser_ownership_core(browser_id, auth_info, session)
+
+
 def _is_browser_monitor_admin(auth_info: AuthInfo) -> bool:
     """是否具备「浏览器监管」身份：root，或持有 RPA_BROWSER 域 VIEW / BAN 位"""
     if auth_info.role == UserRole.ROOT.value:

@@ -127,24 +127,30 @@ class ViewerStreamInfo:
 
 
 class StreamQualityLevelEnum(StrEnumAutoDoc):
-    """WebRTC 流清晰度档位（越靠后越省资源，见计划书 §5.18）"""
+    """WebRTC 流清晰度档位（越靠后越省资源，见计划书 §5.18）
 
-    ORIGINAL = "original"  # 原画：JPEG 100 / 30fps / 页面真实视口分辨率（不缩放、不降质，最清晰但最耗带宽）
-    ULTRA = "ultra"  # 超清：JPEG 90 / 30fps / 1920×1080（抬高浏览器侧上限，突破默认自适应 800×800）
-    HIGH = "high"  # 高清：JPEG 80 / 30fps / 分辨率交给浏览器自适应
-    MEDIUM = "medium"  # 标清：JPEG 65 / 15fps / 960×540
-    LOW = "low"  # 流畅：JPEG 50 / 5fps / 640×360
+    档位只调**压缩率**（JPEG 质量 + WebRTC 编码码率）与帧率：
+    采集分辨率始终是页面真实视口尺寸，切档不会改变画面尺寸 / 布局。
+    """
+
+    ORIGINAL = "original"  # 原画：JPEG 100 / 30fps / 15 Mbps（压缩率最低，最清晰但最耗带宽）
+    ULTRA = "ultra"  # 超清：JPEG 90 / 30fps / 6 Mbps
+    HIGH = "high"  # 高清：JPEG 80 / 30fps / 3 Mbps
+    MEDIUM = "medium"  # 标清：JPEG 65 / 15fps / 1.2 Mbps
+    LOW = "low"  # 流畅：JPEG 50 / 5fps / 0.6 Mbps
 
 
 @dataclass(frozen=True)
 class StreamQualityParams:
-    """单个清晰度档位的 screencast 参数"""
+    """单个清晰度档位的采集参数。
+
+    **不含分辨率**：采集尺寸与档位无关，永远按页面真实视口采集，
+    档位差异只体现在压缩率（`quality` / `bitrate`）与帧率（`max_fps`）。
+    """
 
     level: StreamQualityLevelEnum
     quality: int  # JPEG 质量 (0-100)
     max_fps: int  # 最大帧率
-    size: Optional[ScreencastFrameSize]  # 浏览器侧分辨率上限（None = 交给浏览器自适应）
-    native_size: bool = False  # True = 按页面真实视口尺寸采集（原画：不做任何缩放）
     bitrate: Optional[int] = None  # WebRTC 编码目标码率（bps）；None = 沿用 aiortc 默认
 
     @property
@@ -157,7 +163,7 @@ class VideoFrameProducerStats(SQLModel):
     """视频帧生产者出帧统计快照
 
     丢帧率 = dropped_frames / (dropped_frames + emitted_frames)，
-    用于校验降档（限帧 / 降质 / 降分辨率）是否真正生效。
+    用于校验降档（限帧 / 降质 / 降码率）是否真正生效；分辨率不随档位变化。
     """
 
     emitted_frames: int = Field(0, description="已出帧数（解码成功并交给 WebRTC 的帧）")
@@ -207,36 +213,28 @@ class WebRTCSessionConfig:
     idle_timeout: int = 300  # 闲置超时时间（秒），默认5分钟
     frame_queue_size: int = 3  # 帧队列大小（丢旧保新策略，够缓冲即可）
 
-    # ── 各档位参数 ──
-    # original：原画——JPEG 质量拉满（100）并按页面真实视口尺寸采集，不做任何缩放 / 降质
+    # ── 各档位参数（只差压缩率与帧率，分辨率统一按页面真实视口采集）──
+    # original：原画——JPEG 质量拉满（100）+ 高码率，全程不做任何压缩
     original_quality: int = 100
     original_max_fps: int = 30
     # 原画档 WebRTC 编码目标码率：aiortc 默认上限只有 1.5 Mbps(VP8)/3 Mbps(H264)，
     # 1080p 桌面会被压糊（二维码/小字无法识别），原画档必须抬到高位近似无损
     original_bitrate: int = 15_000_000
-    # ultra：超清——把浏览器侧分辨率上限抬到 1080p（默认自适应仅 800×800），观感最清晰
+    # ultra：超清——只降压缩率（JPEG 90 / 6 Mbps），画面尺寸与原画一致
     ultra_quality: int = 90
     ultra_max_fps: int = 30
-    ultra_frame_max_width: int = 1920
-    ultra_frame_max_height: int = 1080
     ultra_bitrate: int = 6_000_000
-    # high：高清（默认档）——不设分辨率上限，交给浏览器自适应（viewport 等比缩放进 800×800）
+    # high：高清（默认档）——JPEG 80 / 3 Mbps
     high_quality: int = 80
     high_max_fps: int = 30
-    high_frame_max_width: Optional[int] = None
-    high_frame_max_height: Optional[int] = None
     high_bitrate: int = 3_000_000
-    # medium：标清——质量与帧率居中，并在浏览器侧下调分辨率
+    # medium：标清——JPEG 65 / 1.2 Mbps，帧率同步减半
     medium_quality: int = 65
     medium_max_fps: int = 15
-    medium_frame_max_width: int = 960
-    medium_frame_max_height: int = 540
     medium_bitrate: int = 1_200_000
-    # low：流畅——与改造前的「闲置降级档」参数完全一致，保证行为不变
+    # low：流畅——JPEG 50 / 0.6 Mbps，帧率最低（闲置降级档同样用它）
     low_quality: int = 50
     low_max_fps: int = 5
-    low_frame_max_width: int = 640
-    low_frame_max_height: int = 360
     low_bitrate: int = 600_000
 
     def __post_init__(self):
@@ -262,23 +260,14 @@ class WebRTCSessionConfig:
                 raise ValueError(
                     f"{level.value} bitrate must be positive, got {params.bitrate}"
                 )
-            if params.size and (
-                params.size["width"] <= 0 or params.size["height"] <= 0
-            ):
-                raise ValueError(
-                    f"{level.value} frame size must be positive, got {params.size}"
-                )
 
     def params_for(self, level: StreamQualityLevelEnum) -> StreamQualityParams:
-        """返回指定档位的 screencast 参数"""
+        """返回指定档位的采集参数（只含压缩率与帧率，不含分辨率）"""
         if level is StreamQualityLevelEnum.ORIGINAL:
-            # 原画：不设 size 上限，改由采集侧按页面真实视口尺寸启动 screencast
             return StreamQualityParams(
                 level=level,
                 quality=self.original_quality,
                 max_fps=self.original_max_fps,
-                size=None,
-                native_size=True,
                 bitrate=self.original_bitrate,
             )
         if level is StreamQualityLevelEnum.ULTRA:
@@ -286,9 +275,6 @@ class WebRTCSessionConfig:
                 level=level,
                 quality=self.ultra_quality,
                 max_fps=self.ultra_max_fps,
-                size=self._size(
-                    self.ultra_frame_max_width, self.ultra_frame_max_height
-                ),
                 bitrate=self.ultra_bitrate,
             )
         if level is StreamQualityLevelEnum.HIGH:
@@ -296,7 +282,6 @@ class WebRTCSessionConfig:
                 level=level,
                 quality=self.high_quality,
                 max_fps=self.high_max_fps,
-                size=self._size(self.high_frame_max_width, self.high_frame_max_height),
                 bitrate=self.high_bitrate,
             )
         if level is StreamQualityLevelEnum.MEDIUM:
@@ -304,27 +289,14 @@ class WebRTCSessionConfig:
                 level=level,
                 quality=self.medium_quality,
                 max_fps=self.medium_max_fps,
-                size=self._size(
-                    self.medium_frame_max_width, self.medium_frame_max_height
-                ),
                 bitrate=self.medium_bitrate,
             )
         return StreamQualityParams(
             level=level,
             quality=self.low_quality,
             max_fps=self.low_max_fps,
-            size=self._size(self.low_frame_max_width, self.low_frame_max_height),
             bitrate=self.low_bitrate,
         )
-
-    @staticmethod
-    def _size(
-        width: Optional[int], height: Optional[int]
-    ) -> Optional[ScreencastFrameSize]:
-        """宽高齐全才生成 size，否则交给浏览器自适应"""
-        if width and height:
-            return {"width": width, "height": height}
-        return None
 
 
 __all__ = [

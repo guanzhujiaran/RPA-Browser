@@ -22,6 +22,7 @@ class BrowserFingerprintRouterPath(StrEnumAutoDoc):
     """浏览器指纹管理路由路径 - prefix: /browser"""
 
     gen_rand_fingerprint = "/gen_rand_fingerprint"
+    list_exec_versions = "/list_exec_versions"
     upsert_fingerprint = "/upsert_fingerprint"
     read_fingerprint = "/read_fingerprint"
     delete_fingerprint = "/delete_fingerprint"

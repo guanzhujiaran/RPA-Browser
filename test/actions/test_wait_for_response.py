@@ -210,3 +210,90 @@ class TestWaitForResponseAction:
 
         with pytest.raises(ValidationError):
             WaitForResponseParams(url_pattern="**/api/ping", trigger_timeout=100)
+
+    # ── trigger_retries：首次点击被页面吞掉（没发请求）时重新点击 ──
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_trigger_retry_recovers_when_first_click_swallowed(self):
+        """第一次点击不发请求、第二次才发：重试后应命中响应并成功
+
+        站点常见现象：点击时前端状态未就绪，点击被静默吞掉（无请求、无报错），
+        这类偶发失败只能靠「重新注册监听 + 再点一次」恢复。
+        """
+        from app.services.execution.actions.wait_for_response import (
+            WaitForResponseAction,
+        )
+
+        await self._prepare()
+        await self.page.set_content(
+            """
+            <button id="go">提交</button>
+            <script>
+              let n = 0;
+              document.getElementById('go').addEventListener('click', () => {
+                n += 1;
+                // 仅第二次点击才真正发请求，模拟首次点击被吞
+                if (n >= 2) fetch('https://mock.local/api/ping', {method: 'POST'});
+              });
+            </script>
+            """
+        )
+
+        action = WaitForResponseAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={},
+            params=WaitForResponseParams(
+                url_pattern="**/api/ping",
+                method=HttpMethodEnum.POST,
+                trigger_locator=LocatorSpec(value="#go"),
+                trigger_timeout=3000,
+                trigger_retries=1,
+                trigger_retry_interval=100,
+                timeout=1000,
+            ),
+        )
+        result = await action.execute()
+
+        assert result.success
+        assert result.data.response_status == 202
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_trigger_retries_exhausted_reports_attempts(self):
+        """重试用尽仍无请求：失败信息带上实际点击次数，便于区分「点了没用」与「没点」"""
+        from app.services.execution.actions.wait_for_response import (
+            WaitForResponseAction,
+        )
+
+        await self._prepare()
+        await self.page.set_content('<button id="go">提交</button>')
+
+        action = WaitForResponseAction.new_action(
+            mid=1,
+            page=self.page,
+            variables={},
+            params=WaitForResponseParams(
+                url_pattern="**/api/ping",
+                trigger_locator=LocatorSpec(value="#go"),
+                trigger_timeout=3000,
+                trigger_retries=2,
+                trigger_retry_interval=0,
+                timeout=1000,
+            ),
+        )
+        result = await action.execute()
+
+        assert not result.success
+        assert "已点击 3 次" in (result.error or "")
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_trigger_retries_default_off(self):
+        """默认 trigger_retries=0：保持旧行为（只点一次，不重试）"""
+        from pydantic import ValidationError
+
+        params = WaitForResponseParams(url_pattern="**/api/ping")
+        assert params.trigger_retries == 0
+        assert params.trigger_retry_interval == 500
+
+        with pytest.raises(ValidationError):
+            WaitForResponseParams(url_pattern="**/api/ping", trigger_retries=9)

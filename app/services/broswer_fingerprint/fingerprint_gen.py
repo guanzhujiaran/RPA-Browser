@@ -10,6 +10,10 @@ from app.models.core.browser.fingerprint import (
 )
 from app.models.runtime.api import BrowserFingerprintCreateParams
 from app.models.database.browser.info import UserBrowserServerSideDefaultSetting
+from app.services.broswer_fingerprint.exec_version import (
+    resolve_exec_info,
+    sync_ua_ch_data,
+)
 from app.utils.consts.browser_exe_info.browser_exec_info_utils import (
     browser_exec_info_helper,
 )
@@ -19,6 +23,27 @@ from app.utils.http.rand_headers_gen import (
     mobile_fingerprint_generator,
 )
 from browserforge.fingerprints import Fingerprint
+from loguru import logger
+
+
+def _generate_fingerprint(ua: str, *, is_desktop: bool) -> Fingerprint:
+    """按指定 UA 生成指纹；browserforge 数据表滞后时退化为不约束 UA。
+
+    browserforge 的 header / 版本表跟随它的发布节奏，新内核（如 Chrome 150）可能
+    还查不到对应 header 数据，此时 ``generate(user_agent=...)`` 会直接抛 ValueError。
+    退化生成后仍由调用方把 UA / UA-CH / 版本号统一改写为清单值，
+    指纹的其余部分（屏幕、字体、WebGL 等）与 UA 无关，不受影响。
+    """
+    generator = (
+        desktop_fingerprint_generator if is_desktop else mobile_fingerprint_generator
+    )
+    try:
+        return generator.generate(user_agent=[ua])
+    except ValueError:
+        logger.warning(
+            f"browserforge 暂不支持该 UA 的 header 数据，退化为不约束 UA 生成: {ua}"
+        )
+        return generator.generate()
 
 
 def _map_platform_from_fingerprint(rand_fingerprint: Fingerprint) -> PlatformEnum:
@@ -121,12 +146,33 @@ async def gen_from_browserforge_fingerprint(
 ) -> BaseFingerprintBrowserInitParams:
     default_browser_setting = UserBrowserServerSideDefaultSetting(mid=-1)
 
-    ua_list = await browser_exec_info_helper.get_exec_info_ua_list()
-    rand_fingerprint = (
-        desktop_fingerprint_generator.generate(user_agent=ua_list)
-        if params.is_desktop
-        else mobile_fingerprint_generator.generate(user_agent=ua_list)
+    # 先定真实二进制，再用它的 UA 生成指纹：保证「真实版本 / 模拟版本 / UA」同源。
+    # 指定版本必须先在清单里校验，非法直接 400（不允许生成一个没有二进制的版本）。
+    resolved = await resolve_exec_info(params.fingerprint_real_version, None)
+    exec_info = (
+        resolved.exec_info
+        if resolved is not None
+        else await browser_exec_info_helper.pick_random_exec_info()
     )
+    rand_fingerprint = _generate_fingerprint(
+        exec_info.browser_ua, is_desktop=params.is_desktop
+    )
+    # UA 以清单为准（退化路径下 browserforge 给的是别的版本）
+    rand_fingerprint.navigator.userAgent = exec_info.browser_ua
+    # browserforge 的 languages 是从 Accept-Language 头按逗号拆出来的，带前导空格
+    # （['zh-CN', ' zh', ' en', ...]）：不清理会既让 --accept-lang 出现非法语言项，
+    # 也让落库的 fingerprint_dict 与 navigator.languages 不一致。
+    rand_fingerprint.navigator.languages = [
+        language.strip()
+        for language in rand_fingerprint.navigator.languages or []
+        if language.strip()
+    ]
+    # browserforge 的 uaFullVersion 来自它自己的版本表（如 139.0.7258.139），
+    # 与清单二进制的 patch 号不同；这里以清单为准强制覆盖。
+    if isinstance(rand_fingerprint.navigator.userAgentData, dict):
+        rand_fingerprint.navigator.userAgentData = sync_ua_ch_data(
+            rand_fingerprint.navigator.userAgentData, exec_info
+        )
     # DPR 不沿用 browserforge 的离散值：真实浏览器可以缩放，DPR 会落在
     # [0.5, 1.75] 内的任意小数（系统缩放 × 页面缩放）。这里随机取两位小数，
     # 避免所有指纹都集中在 1 / 1.25 / 1.5 这几个固定值上。
@@ -138,7 +184,8 @@ async def gen_from_browserforge_fingerprint(
     platform = _map_platform_from_fingerprint(rand_fingerprint)
     ua_string = rand_fingerprint.navigator.userAgent
     brand = _detect_browser_brand(ua_string)
-    brand_version = rand_fingerprint.navigator.userAgentData.get("uaFullVersion")
+    # 模拟版本恒等于真实版本（清单 full_version），不从 browserforge 的版本表取值
+    brand_version = exec_info.full_version
     platform_version = rand_fingerprint.navigator.userAgentData.get("platformVersion")
 
     # 应用用户设置
@@ -147,11 +194,19 @@ async def gen_from_browserforge_fingerprint(
     )
 
     browser_init_params = BaseFingerprintBrowserInitParams.model_construct(
-        fingerprint=random.randint(-2147483648, 2147483647),
+        # 种子：显式传入就用（用户指定），否则随机。
+        # 种子是内核伪装的根（canvas/audio/clientRects/字体等都从它派生），
+        # 同一种子 = 同一台「虚拟设备」，所以创建时给值必须生效，不能一律随机。
+        fingerprint=(
+            params.fingerprint_int
+            if params.fingerprint_int is not None
+            else random.randint(-2147483648, 2147483647)
+        ),
         fingerprint_platform=platform,
         fingerprint_platform_version=platform_version,
         fingerprint_browser=brand,
         fingerprint_brand_version=brand_version,
+        fingerprint_real_version=exec_info.full_version,
         fingerprint_hardware_concurrency=rand_fingerprint.navigator.hardwareConcurrency,
         fingerprint_gpu_vendor=rand_fingerprint.videoCard.vendor,
         fingerprint_gpu_renderer=rand_fingerprint.videoCard.renderer,

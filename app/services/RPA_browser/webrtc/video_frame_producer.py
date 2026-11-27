@@ -102,7 +102,7 @@ def clone_video_frame(frame: av.VideoFrame) -> av.VideoFrame:
 
     为什么必须拷贝：`ViewerMediaTrack.recv()` 会**就地**设置 `frame.pts`，
     而广播模式下多个观看者拿到的是**同一个帧对象**，会互相覆盖时间戳。
-    仅在「多观看者且本端无需缩放」时调用（缩放本身会通过 `reformat` 产生新对象）。
+    分辨率与档位解耦后，多观看者时恒为共享帧，因此每条轨道都要先克隆。
     详见 docs/rpa-多观看者并发直播计划书.md §2.6。
     """
     clone = av.VideoFrame(frame.width, frame.height, frame.format.name)
@@ -205,8 +205,6 @@ class VideoFrameProducer:
         _params = config.params_for(self._level)
         self._quality = _params.quality  # 当前 screencast JPEG 质量
         self._frame_interval = _params.frame_interval  # 当前最小帧间隔（秒）
-        self._screencast_size = _params.size  # 当前分辨率上限（None = 浏览器自适应）
-        self._native_size = _params.native_size  # 原画：按页面真实视口采集（不缩放）
         self._next_frame_at = 0.0  # 下一帧允许出帧的单调时间戳
         self._frame_size = (640, 480)  # 最近一次成功解码的帧尺寸（绿屏兜底跟随）
         self._decode_failures = 0  # 连续解码失败次数
@@ -216,33 +214,22 @@ class VideoFrameProducer:
         # 置位后停止 screencast（浏览器侧零编码）；恢复时重启并清空各订阅槽，
         # 避免观看者先播一段暂停前的旧画面。
         self._paused = False
-        # 订阅槽 → 该观看者的生效档位（广播时按档位分组缩放，见计划书 §10.8）
-        self._slots: dict[FrameSlot, StreamQualityLevelEnum] = {}
+        # 订阅槽集合：每条 PeerConnection 一个，广播时不区分档位（分辨率已与档位解耦）
+        self._slots: set[FrameSlot] = set()
         self._pump_task: asyncio.Task | None = None
 
     # -- 帧订阅（多观看者广播） --
 
-    def subscribe(
-        self, level: StreamQualityLevelEnum = StreamQualityLevelEnum.HIGH
-    ) -> FrameSlot:
+    def subscribe(self) -> FrameSlot:
         """注册一个观看者订阅槽（一条 PeerConnection 一份）。"""
         slot = FrameSlot()
-        self._slots[slot] = level
+        self._slots.add(slot)
         logger.debug(f"帧订阅者已加入: {len(self._slots)} 个")
         return slot
 
-    def set_slot_level(self, slot: FrameSlot, level: StreamQualityLevelEnum) -> None:
-        """更新某订阅槽的目标档位（观看者切档 / 可见性变化时调用）。
-
-        由 `WebRTCStreamManager._sync_slot_level` 维护，与 `ViewerMediaTrack`
-        的档位保持一致 —— 广播时的分组缩放以此为依据。
-        """
-        if slot in self._slots:
-            self._slots[slot] = level
-
     def unsubscribe(self, slot: FrameSlot) -> None:
         """注销订阅槽（观看者断开时调用）。"""
-        self._slots.pop(slot, None)
+        self._slots.discard(slot)
         slot.close()
         logger.debug(f"帧订阅者已移除: 剩余 {len(self._slots)} 个")
 
@@ -381,8 +368,10 @@ class VideoFrameProducer:
         return self._paused
 
     async def _apply_effective_level(self) -> None:
-        """按生效档位刷新 screencast 参数；运行中且参数确有变化时才重启生效
+        """按生效档位刷新 screencast 的压缩参数；运行中且参数确有变化时才重启生效
 
+        档位只改压缩率（JPEG 质量 / 帧率 / 编码码率），**不改采集分辨率**，
+        因此 restart 仅用于让浏览器换用新的 JPEG 质量。
         参数未变化则跳过重启——例如多个观看者先后切档、最终收敛到同一档位时，
         不该重复重启 screencast（会白白丢帧）。
         """
@@ -391,17 +380,12 @@ class VideoFrameProducer:
         changed = (
             params.quality != self._quality
             or params.frame_interval != self._frame_interval
-            or params.size != self._screencast_size
-            or params.native_size != self._native_size
         )
         self._quality = params.quality
         self._frame_interval = params.frame_interval
-        self._screencast_size = params.size
-        self._native_size = params.native_size
         logger.debug(
             f"VideoFrameProducer 档位生效: level={level.value}, quality={params.quality}, "
-            f"帧间隔={params.frame_interval * 1000:.1f}ms, size={params.size}, "
-            f"原画={params.native_size} "
+            f"帧间隔={params.frame_interval * 1000:.1f}ms, 码率={params.bitrate} "
             f"(采集档位={self._level.value}, 闲置降档={self._degraded}, "
             f"观看者={len(self._slots)})"
         )
@@ -413,20 +397,21 @@ class VideoFrameProducer:
     # -- screencast 会话管理 --
 
     def _resolve_screencast_size(self) -> ScreencastFrameSize | None:
-        """解析本次 screencast 使用的分辨率参数。
+        """解析本次 screencast 使用的分辨率：**与清晰度档位无关**，始终按页面真实视口采集。
 
-        - **原画档**（`native_size`）：按页面真实视口尺寸采集 —— 浏览器侧默认会把
-          画面等比缩放进 800×800，只有显式给出视口尺寸才能拿到未缩放的原始图像；
-        - 其余档位：沿用档位配置的固定上限（None = 交给浏览器自适应）。
+        浏览器侧默认会把画面等比缩放进 800×800，只有显式给出视口尺寸才能拿到
+        未缩放的原始图像；H264 要求偶数宽高，这里向下取偶。
+        档位只降压缩率、不动尺寸，切档不会导致画面尺寸 / 布局跳变。
         """
-        if not self._native_size:
-            return self._screencast_size
         viewport = self.page.viewport_size
         if not viewport:
             # 未配置视口（如最大化窗口）：退回浏览器自适应，避免臆造尺寸
-            logger.debug("原画档未取到页面视口尺寸，退回浏览器自适应")
+            logger.debug("未取到页面视口尺寸，退回浏览器自适应")
             return None
-        return {"width": viewport["width"], "height": viewport["height"]}
+        return {
+            "width": max(2, viewport["width"] - viewport["width"] % 2),
+            "height": max(2, viewport["height"] - viewport["height"] % 2),
+        }
 
     async def _start_screencast(self):
         """启动 screencast 会话（含「已启动」异常恢复）。"""
@@ -455,7 +440,7 @@ class VideoFrameProducer:
         logger.debug(f"Screencast 会话启动成功 (quality={self._quality}, size={size})")
 
     async def _restart_screencast(self):
-        """重启 screencast 以应用新的质量 / 分辨率参数。"""
+        """重启 screencast 以应用新的 JPEG 质量（分辨率恒定，不随档位变化）。"""
         await self._stop_screencast()
         # 丢掉旧质量档位的残留帧，避免切换后仍在播放降级前的画面
         self._drain_queue()
@@ -604,54 +589,20 @@ class VideoFrameProducer:
         except Exception as e:
             logger.error(f"帧广播任务出错: {e}")
 
-    def _scaled(
-        self, frame: av.VideoFrame, level: StreamQualityLevelEnum
-    ) -> av.VideoFrame:
-        """把帧缩放到指定档位的采集尺寸（H264 要求偶数宽高）。
-
-        无需缩放（原画 / high 等无固定尺寸的档位、或尺寸已一致）时返回**原帧对象**，
-        由调用方据此判断是否可以零拷贝。
-        """
-        size = self.config.params_for(level).size
-        if size is None:
-            return frame
-        width = max(2, size["width"] - size["width"] % 2)
-        height = max(2, size["height"] - size["height"] % 2)
-        if (frame.width, frame.height) == (width, height):
-            return frame
-        try:
-            return frame.reformat(width=width, height=height, format="yuv420p")
-        except Exception as e:  # noqa: BLE001 - 缩放失败不应打断整条流
-            logger.warning(f"帧缩放失败，回退原帧: {e}")
-            return frame
-
     def _broadcast(self, frame: av.VideoFrame) -> None:
         """把一帧投递给所有订阅槽。
 
-        **按档位分组缩放**（见计划书 §10.8）：帧源按最高档采集，
-        同档位的多个观看者共享**一次**重采样结果，组内各自持有副本
-        （`shared=True`，消费者克隆后改写 pts）——
-        N 个同档观看者从「N 次缩放」降为「1 次缩放 + N 次内存拷贝」，
-        拷贝远便宜于重采样。
-
-        `shared` 标记告知消费者「该帧对象被多方共享」：共享帧的 `pts`
-        会被多个观看者就地改写，消费者复用前必须克隆（见 §2.6）。
-        单订阅者且无需缩放时保持零拷贝路径（与单观看者场景一致）。
+        分辨率与档位解耦后，所有观看者拿到的都是**同一尺寸**的帧，
+        因此不再需要按档位分组缩放：多订阅者时标记 `shared`，
+        由消费者克隆后再改写 pts（见 §2.6）；单订阅者保持零拷贝路径。
+        压缩率差异由各观看者轨道上的编码码率（`target_bitrate`）体现。
         """
         if not self._slots:
             return
 
-        # 按档位分组（保持插入序，避免换组顺序引起的行为差异）
-        by_level: dict[StreamQualityLevelEnum, list[FrameSlot]] = {}
-        for slot, level in self._slots.items():
-            by_level.setdefault(level, []).append(slot)
-
-        for level, slots in by_level.items():
-            scaled = self._scaled(frame, level)
-            # 缩放产物是新建对象（组内共享）；未缩放的源帧只有组内单订阅者才可独占
-            shared = len(slots) > 1 or scaled is not frame
-            for slot in slots:
-                slot.offer(scaled, shared)
+        shared = len(self._slots) > 1
+        for slot in self._slots:
+            slot.offer(frame, shared)
 
     def _coalesce_pending(self, jpeg_data: bytes) -> tuple[bytes | None, int]:
         """把已取出的帧推进到队列中最新的那一帧。

@@ -29,6 +29,29 @@ _PROXY_SCHEMES: tuple[str, ...] = (
 # ``--proxy-bypass-list`` 用分号，用户还可能从浏览器参数里直接粘贴过来。
 _BYPASS_SEPARATORS: tuple[str, ...] = (";", "\n", "\t", " ")
 
+#: 显式「不使用代理」的标记值。
+#:
+#: 必须和空值区分开：空值语义是「未配置 → 回退服务端默认代理（IPv6 代理池）」，
+#: 用户明确选「不使用代理」时不能静默回退，否则页面显示直连、实际仍走代理。
+DIRECT_PROXY_SERVER = "none"
+
+#: 显式「使用服务端默认代理（IPv6 代理池）」的标记值。
+#:
+#: 不能复用空串：入参层会把空串归一成 ``None``，更新接口再按「未提供」跳过，
+#: 用户从自定义代理切回池时旧代理清不掉（页面显示池、实际仍走旧代理）。
+#: 用显式标记后，``pool`` 与空值在解析阶段等价（都回退默认代理）。
+POOL_PROXY_SERVER = "pool"
+
+
+def is_direct_proxy(proxy_server: str | None) -> bool:
+    """判断代理配置是否是显式直连标记（``none``，忽略大小写与空白）。"""
+    return bool(proxy_server) and proxy_server.strip().lower() == DIRECT_PROXY_SERVER
+
+
+def is_pool_proxy(proxy_server: str | None) -> bool:
+    """判断代理配置是否是显式「IPv6 代理池」标记（``pool``）。"""
+    return bool(proxy_server) and proxy_server.strip().lower() == POOL_PROXY_SERVER
+
 
 def normalize_proxy_server(proxy_server: str | None) -> str | None:
     """把代理配置归一化成 botright 可解析的形式。
@@ -106,8 +129,17 @@ def resolve_browser_proxy_server(proxy_server: str | None) -> str | None:
         proxy_server: 浏览器实例上保存的代理配置。
 
     Returns:
-        归一化后的代理串；未配置代理时返回 ``None``。
+        归一化后的代理串；显式直连或未配置代理时返回 ``None``。
+
+    Note:
+        - ``"none"``（``DIRECT_PROXY_SERVER``）是**显式直连**，不能回退到默认代理 ——
+          否则「不使用代理」会被静默改成走池，用户看到的配置与实际行为不一致；
+        - ``"pool"``（``POOL_PROXY_SERVER``）与空值同义：回退服务端默认代理。
     """
+    if is_direct_proxy(proxy_server):
+        return None
+    if is_pool_proxy(proxy_server):
+        return normalize_proxy_server(settings.default_proxy_server)
     return normalize_proxy_server(proxy_server) or normalize_proxy_server(
         settings.default_proxy_server
     )
@@ -132,6 +164,10 @@ def resolve_browser_proxy_bypass(proxy_bypass: str | None) -> str | None:
 
 
 __all__ = [
+    "DIRECT_PROXY_SERVER",
+    "POOL_PROXY_SERVER",
+    "is_direct_proxy",
+    "is_pool_proxy",
     "normalize_proxy_bypass",
     "normalize_proxy_server",
     "resolve_browser_proxy_bypass",

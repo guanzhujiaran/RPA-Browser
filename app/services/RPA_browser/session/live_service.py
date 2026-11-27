@@ -5,6 +5,7 @@ LiveService - 核心业务逻辑服务
 """
 
 from botright.playwright_mock.page import Page
+from playwright._impl._errors import TargetClosedError
 from app.services.RPA_browser.browser_session_pool.playwright_pool import (
     PlaywrightSessionPool,
 )
@@ -493,6 +494,34 @@ class LiveService:
         if entry := self._browser_sessions.get(session_key):
             return entry
         raise BrowserNotStartedException()
+
+    @staticmethod
+    async def is_session_alive(entry: BrowserSessionEntry) -> bool:
+        """探测会话是否真的可用（不只是「entry 还在表里」）。
+
+        ⚠️ 不能只看 ``entry.browser_running``：它内部等价于
+        ``pages[0].is_closed()``，浏览器**正常运行但所有页面都被关掉**时
+        ``pages`` 为空，会被误判成「已关闭」，进而把活着的会话回收掉。
+        也不能把任意异常都当成「已关闭」：临时协议错误 / 超时误杀会话的代价
+        比多一次失败操作大得多。
+
+        这里只用 context 级 API 做探测（不依赖页面），并只在明确的
+        「已关闭 / 已断开」信号下判死：
+        - ``TargetClosedError`` → 已关闭；
+        - 其它异常：消息含 closed / disconnected 才判死，否则保留会话并告警，
+          让真实操作去暴露问题。
+        """
+        try:
+            await entry.browser_session.browser_context.cookies()
+            return True
+        except TargetClosedError:
+            return False
+        except Exception as e:
+            detail = str(e).lower()
+            if "closed" in detail or "disconnected" in detail:
+                return False
+            logger.warning(f"会话存活探测异常（不判定为已关闭）: {e}")
+            return True
 
     def find_session_entry_by_browser_id(
         self, browser_id: int | str

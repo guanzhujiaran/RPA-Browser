@@ -19,6 +19,9 @@ from botright.playwright_mock import browser
 from .modules import Faker, ProxyManager
 from .playwright_mock import BrowserContext
 
+#: 未显式传入 ``browser_version`` 时的兜底版本（历史行为，勿用于新代码）
+DEFAULT_CHROMIUM_VERSION = "139.0.7258.154"
+
 
 class Botright(AsyncObject):
     def __init__(
@@ -33,6 +36,7 @@ class Botright(AsyncObject):
         use_undetected_playwright: Optional[bool] = False,
         fingerprint: Optional[Fingerprint] = None,
         execute_path: Optional[str] = None,
+        browser_version: Optional[str] = None,
     ) -> None:
         """
         Initialize a Botright instance with specified configurations.
@@ -62,6 +66,7 @@ class Botright(AsyncObject):
         use_undetected_playwright: Optional[bool] = False,
         fingerprint: Optional[Fingerprint] = None,
         execute_path: Optional[str] = None,
+        browser_version: Optional[str] = None,
     ) -> None:
         """
         Initialize a Botright instance with specified configurations.
@@ -84,7 +89,9 @@ class Botright(AsyncObject):
             self.playwright = await async_playwright().start()
 
         # Getting Chromium based browser engine and deleting botright temp dirs
-        self.browser = self.get_browser_engine(execute_path=execute_path)
+        self.browser = self.get_browser_engine(
+            execute_path=execute_path, version=browser_version
+        )
         self.delete_botright_temp_dirs()
 
         # Setting Values
@@ -149,11 +156,13 @@ class Botright(AsyncObject):
         self.stoppable: List[Any] = []
         self.temp_dirs: List[TemporaryDirectory] = []  # type: ignore
 
+        # canvas 只留一个写入源：chromium 分支由内核的 --fingerprint 种子做 canvas 伪装
+        # （同一 seed 输出稳定）。再叠一个 --fingerprinting-canvas-image-data-noise 会让
+        # 同一会话内 getImageData 每次读数都不同，属于「canvas 噪音」特征（CreepJS 直接判异常），
+        # 因此这里不再追加该开关。spoof_canvas 仅对非 chromium 引擎生效。
         if spoof_canvas and self.mask_fingerprint:
             if self.browser["browser_type"] != "chromium":
                 self.flags.append("--disable-reading-from-canvas")
-            else:
-                self.flags.append("--fingerprinting-canvas-image-data-noise")
         self.fingerprint = fingerprint
         self.fingerprint_generator = desktop_fingerprint_generator
 
@@ -220,10 +229,17 @@ class Botright(AsyncObject):
                     temp_dir.cleanup()
 
     @staticmethod
-    def get_browser_engine(execute_path: Optional[str] = None) -> browsers.Browser:
+    def get_browser_engine(
+        execute_path: Optional[str] = None,
+        version: Optional[str] = None,
+    ) -> browsers.Browser:
         """
         Get the browser engine based on Chromium to use for Playwright based on system availability.
         If available, prefers Ungoogled Chromium for stealthier browsing.
+
+        Args:
+            execute_path: 自定义可执行文件路径（AppImage 或解包产物）。
+            version: 该可执行文件的真实版本；不传则退回历史常量。
 
         Returns:
             browsers.Browser: The selected browser engine.
@@ -235,7 +251,7 @@ class Botright(AsyncObject):
                 browser_type="chromium",
                 path=execute_path,
                 display_name="chromium",
-                version="139.0.7258.154",
+                version=version or DEFAULT_CHROMIUM_VERSION,
             )
         # Ungoogled Chromium preferred (most stealthy)
         if chromium := browsers.get("chromium"):

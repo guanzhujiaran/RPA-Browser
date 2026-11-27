@@ -64,13 +64,15 @@ class WebRTCStreamManager:
         # 会话级闲置降档：作用于所有帧源（见 §5.15）
         self._degraded: bool = False
 
-        # 档位 / 分辨率参数只与页面有关，全会话共用一份
+        # 档位（压缩率 / 帧率）参数只与页面有关，全会话共用一份
         self._config = self._build_config()
 
     @staticmethod
     def _build_config() -> WebRTCSessionConfig:
         """从系统配置构建会话参数
         （original / ultra / medium / low 走系统配置，high 走代码默认）
+
+        档位只配压缩率与帧率：采集分辨率恒为页面真实视口，不提供尺寸开关。
         """
         return WebRTCSessionConfig(
             idle_timeout=settings.browser_webrtc_idle_timeout,
@@ -79,16 +81,10 @@ class WebRTCStreamManager:
             original_bitrate=settings.browser_stream_original_bitrate,
             ultra_quality=settings.browser_stream_ultra_quality,
             ultra_max_fps=settings.browser_stream_ultra_max_fps,
-            ultra_frame_max_width=settings.browser_stream_ultra_frame_max_width,
-            ultra_frame_max_height=settings.browser_stream_ultra_frame_max_height,
             medium_quality=settings.browser_stream_medium_quality,
             medium_max_fps=settings.browser_stream_medium_max_fps,
-            medium_frame_max_width=settings.browser_stream_medium_frame_max_width,
-            medium_frame_max_height=settings.browser_stream_medium_frame_max_height,
             low_quality=settings.browser_stream_degrade_quality,
             low_max_fps=settings.browser_stream_degrade_max_fps,
-            low_frame_max_width=settings.browser_stream_degrade_frame_max_width,
-            low_frame_max_height=settings.browser_stream_degrade_frame_max_height,
         )
 
     # ── session 访问（弱引用解引用） ──
@@ -252,7 +248,6 @@ class WebRTCStreamManager:
         """设置**该观看者**的清晰度档位（可能连带升高帧源采集档位）。"""
         viewer = self._require_viewer(viewer_id)
         viewer.set_level(level)
-        self._sync_slot_level(viewer)
         await self._reconcile_page(viewer.page_index)
         return self.quality_snapshot(viewer_id)
 
@@ -269,7 +264,6 @@ class WebRTCStreamManager:
         """上报**该观看者**的页面可见性（不可见时本端降档）。"""
         viewer = self._require_viewer(viewer_id)
         viewer.set_visibility(visible)
-        self._sync_slot_level(viewer)
         await self._reconcile_page(viewer.page_index)
         return self.quality_snapshot(viewer_id)
 
@@ -480,16 +474,6 @@ class WebRTCStreamManager:
         if viewer is None:
             raise KeyError(f"观看者不存在或已回收: {viewer_id}")
         return viewer
-
-    def _sync_slot_level(self, viewer: ViewerStream) -> None:
-        """把观看者的生效档位同步到帧源订阅槽。
-
-        广播按槽位档位分组缩放（见计划书 §10.8）；与 `ViewerMediaTrack` 的档位
-        由同一处（`viewer.effective_level`）驱动，两条路径不会漂移。
-        """
-        source = self._sources.get(viewer.page_index)
-        if source is not None:
-            source.producer.set_slot_level(viewer.slot, viewer.effective_level)
 
     async def _reconcile_page(self, page_index: int) -> None:
         """重算某页帧源的状态；无观看者时停采并回收帧源。"""

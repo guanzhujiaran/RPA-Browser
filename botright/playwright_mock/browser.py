@@ -96,7 +96,9 @@ async def new_browser(
     if botright.mask_fingerprint:
         fingerprint = faker.fingerprint
         parsed_launch_arguments = {
-            "locale": "en-US",
+            # locale 必须跟随指纹（此前写死 en-US，会经 CDP 覆盖掉
+            # 指纹参数里的 --lang / --accept-lang，页面读到的语言与库里记录不一致）
+            "locale": fingerprint.navigator.language or "en-US",
             "user_agent": fingerprint.navigator.userAgent,
             "timezone_id": proxy.timezone,
             "geolocation": {

@@ -633,6 +633,23 @@ class WaitForResponseParams(BaseActionParams):
         le=300000,
         description="trigger_locator 点击操作的超时时间（毫秒），仅在提供定位器时生效",
     )
+    trigger_retries: int = Field(
+        default=0,
+        ge=0,
+        le=5,
+        description=(
+            "触发点击后等不到匹配响应时的重试次数（默认 0=不重试）。"
+            "每次重试都会**重新注册监听并再次点击** trigger_locator，"
+            "用于覆盖「首次点击被页面吞掉 / 前端状态竞态导致没发请求」的偶发情况。"
+            "注意：若站点允许重复提交同一操作，重试可能产生重复副作用，需由动作 JSON 显式开启"
+        ),
+    )
+    trigger_retry_interval: float = Field(
+        default=500,
+        ge=0,
+        le=30000,
+        description="两次触发重试之间的等待（毫秒），仅 trigger_retries>0 时生效",
+    )
     timeout: float = Field(
         default=30000, ge=1000, le=300000, description="等待响应的超时时间（毫秒）"
     )

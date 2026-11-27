@@ -200,11 +200,23 @@ class Page(PlaywrightPage):
                 "mobile": False,
             }
 
+            # Accept-Language 同样以指纹为准：CDP 的 acceptLanguage 会覆盖
+            # navigator.languages 与请求头，写死 en-US 会与 --lang/--accept-lang 打架。
+            # 历史指纹里的 languages 可能带前导空格（browserforge 拆分未 trim），这里兜底清理。
+            accept_language = (
+                ",".join(
+                    language.strip()
+                    for language in self.fingerprint.navigator.languages or []
+                    if language.strip()
+                )
+                or "en-US"
+            )
+
             await self.cdp.send(
                 "Emulation.setUserAgentOverride",
                 {
                     "userAgent": self.fingerprint.navigator.userAgent,
-                    "acceptLanguage": "en-US",
+                    "acceptLanguage": accept_language,
                     "platform": nav_hints_platforms.get(
                         self.fingerprint.navigator.platform,
                         self.fingerprint.navigator.platform,
@@ -217,7 +229,7 @@ class Page(PlaywrightPage):
                 "Network.setUserAgentOverride",
                 {
                     "userAgent": self.fingerprint.navigator.userAgent,
-                    "acceptLanguage": "en-US",
+                    "acceptLanguage": accept_language,
                     "platform": nav_hints_platforms.get(
                         self.fingerprint.navigator.platform,
                         self.fingerprint.navigator.platform,

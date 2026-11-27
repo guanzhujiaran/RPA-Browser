@@ -64,7 +64,7 @@ async def create_browser_session(
 
     if session_key in LiveService._browser_sessions:
         entry = LiveService._browser_sessions[session_key]
-        if getattr(entry, "browser_running", False):
+        if await LiveService.is_session_alive(entry):
             # 会话已存在且浏览器在跑，返回现有会话信息
             created_at = getattr(entry, "created_at", entry.last_activity)
             expires_at = getattr(entry, "expires_at", None)
