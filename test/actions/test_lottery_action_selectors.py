@@ -47,6 +47,10 @@ STALE_SELECTORS = (
 #: 空间页昵称节点（当前 B 站 fresh-space 页面实际结构）
 SPACE_NICKNAME_SELECTOR = ".upinfo-detail__top .nickname"
 
+#: 评论「发布」按钮：评论区在 open shadow DOM 内，`:has(.brt-editor:not(:empty))`
+#: 保证只在编辑器已有内容时才命中（否则会点到空内容按钮，点了也不发请求）
+COMMENT_PUB_SELECTOR = "bili-comment-box:has(.brt-editor:not(:empty)) #pub button"
+
 
 def _flatten_steps(branch):
     """展开步骤（含嵌套 TrueBranch / FalseBranch 与步骤级 on_error_branch）。"""
@@ -62,11 +66,15 @@ def _flatten_steps(branch):
 
 
 def _others_exec_branch(action_data: dict) -> list:
-    """第三方评论抽奖循环的「单条执行流程」。
+    """第三方评论抽奖循环的「单条评论执行流程」。
 
-    结构说明：`loopBranch[3]` 是 page_ok 闸门，它的 FalseBranch 就是完整执行流程。
-    2026-10-24 起删除了「已点赞即已参与」的跳过分支（`already_liked` → skipped），
-    所以这里不再有 `FalseBranch[1].params.FalseBranch` 这一层嵌套。
+    结构说明：`loopBranch[3]` 是 page_ok 闸门，它的 FalseBranch 里最后一步是
+    `comment_disabled == true` 闸门（评论区关闭判定），该闸门的 FalseBranch
+    才是真正的评论执行流程（评论生成 → 输入 → 发布 → 可见性校验 → 资源记录）。
+
+    2026-10-24 起删除了「已点赞即已参与」的跳过分支（`already_liked` → skipped）；
+    2026-11-27 起在「发布 + 读取 editor_after」后插入本轮提交重试块（同一表达式
+    的 if_else 出现两级），因此按表达式定位时需注意最先命中的是外层重试块。
     """
     loop = [
         step
@@ -74,7 +82,14 @@ def _others_exec_branch(action_data: dict) -> list:
         if step.get("action_id") == "loop"
         and "others" in str((step.get("params") or {}).get("loop_items_var", ""))
     ][0]
-    return loop["params"]["loopBranch"][3]["params"]["FalseBranch"]
+    branch = loop["params"]["loopBranch"][3]["params"]["FalseBranch"]
+    for step in branch:
+        if (
+            step.get("action_id") == "if_else"
+            and (step.get("params") or {}).get("expression") == "comment_disabled == true"
+        ):
+            return (step.get("params") or {}).get("FalseBranch") or []
+    return branch
 
 
 def _exec_branches(action_data: dict) -> list[list]:
@@ -507,21 +522,126 @@ class TestSelectorsStatic:
         assert "print" in [s.get("action_id") for s in recheck["params"].get("FalseBranch") or []]
 
         # 发布按钮必须在核对之后才点（点击已并入 wait_for_response 的触发定位器，
-        # 用于消除「监听注册晚于响应」的竞态，因此两种承载方式都算「点发布」）
+        # 用于消除「监听注册晚于响应」的竞态，因此两种承载方式都算「点发布」）。
+        # 选择器带 `:has(.brt-editor:not(:empty))`：评论框在 shadow DOM 内，
+        # 只有编辑器已有内容时才允许点「发布」，避免点到空内容按钮（点击无效）。
         pub_index = [
             i
             for i, s in enumerate(exec_branch)
             if (
                 s.get("action_id") == "click"
-                and _locator_value(s) == "bili-comments #pub button:visible"
+                and _locator_value(s) == COMMENT_PUB_SELECTOR
             )
             or (
                 s.get("action_id") == "wait_for_response"
-                and _locator_value(s, "trigger_locator")
-                == "bili-comments #pub button:visible"
+                and _locator_value(s, "trigger_locator") == COMMENT_PUB_SELECTOR
             )
         ][0]
         assert pub_index > input_index + 3
+
+    def test_comment_publish_retried_in_same_run(self, action_data):
+        """发布后没拿到响应/输入框仍有内容 → 必须在本轮内重试提交
+
+        2026-11-27 run 789cfbf7：12 条资源记「评论未提交成功(发布后输入框
+        仍有内容)，下一轮重试」——点击发布 3 次都没发出 `/x/v2/reply/add`。
+        现在发布与读取 `editor_after` 之后加两级本轮重试：
+          1) 重新聚焦编辑器 → Ctrl+A / Delete 清空 → 键盘真实键入 → 再点发布；
+          2) 仍无响应则刷新动态页、重新填入评论再点发布。
+        不允许「本轮直接记 failed，等下一轮」。
+        """
+        exec_branch = _others_exec_branch(action_data)
+        retries = [
+            s
+            for s in exec_branch
+            if s.get("action_id") == "if_else"
+            and (s.get("params") or {}).get("expression")
+            == "reply_ok == false and editor_after != ''"
+        ]
+        assert retries, "缺少「本轮重试提交」闸门（发布无响应时必须在本次运行内重试）"
+        retry_steps = retries[0]["params"].get("TrueBranch") or []
+        ids = [s.get("action_id") for s in retry_steps]
+
+        # 第 1 级：清空 + 键盘真实键入（fill 之外的输入路径）+ 再次点发布
+        keys = {
+            (s.get("params") or {}).get("key")
+            for s in retry_steps
+            if s.get("action_id") == "press"
+        }
+        assert {"Control+A", "Delete"} <= keys, "重试前必须全选删除旧内容"
+        typed = [s for s in retry_steps if s.get("action_id") == "input"]
+        assert typed, "重试必须重新键入评论"
+        assert _locator_value(typed[0]) is None, "重试要用键盘键入（无 locator = page.keyboard.type）"
+        assert (typed[0].get("params") or {}).get("value") == "{{comment_text}}"
+        assert (typed[0].get("params") or {}).get("trim") is True
+        assert any(
+            s.get("action_id") == "wait_for_response"
+            and _locator_value(s, "trigger_locator") == COMMENT_PUB_SELECTOR
+            for s in retry_steps
+        ), "重试必须再次点击发布并等待评论接口响应"
+
+        # 第 2 级：刷新页面后重填再发布
+        nested = [
+            s
+            for s in retry_steps
+            if s.get("action_id") == "if_else"
+            and (s.get("params") or {}).get("expression")
+            == "reply_ok == false and editor_after != ''"
+        ]
+        assert nested, "缺少第 2 级重试（刷新页面后重新提交）"
+        nested_ids = [
+            s.get("action_id") for s in (nested[0]["params"].get("TrueBranch") or [])
+        ]
+        assert "navigate" in nested_ids, "第 2 级重试必须刷新动态页"
+        assert "wait_for_response" in nested_ids, "第 2 级重试必须再次点发布"
+        assert ids.count("print") >= 2, "两级重试都要留日志"
+
+    def test_comment_success_accepts_api_code_zero(self, action_data):
+        """评论接口返回 code=0 时不得因输入框残留而判失败
+
+        B 站发布成功后编辑器清空存在延迟；原判据只看 `editor_after`，会把
+        「已提交但还没清空」误判成未提交（跨轮重复评论）。现在终态判据是
+        `editor_after != '' and '"code":0' not in reply_body`：
+        只要响应体含成功码就记成功。
+        """
+        exec_branch = _others_exec_branch(action_data)
+
+        def walk(steps):
+            for s in steps or []:
+                yield s
+                p = s.get("params") or {}
+                for key in ("TrueBranch", "FalseBranch", "loopBranch"):
+                    if isinstance(p.get(key), list):
+                        yield from walk(p[key])
+                if isinstance(s.get("on_error_branch"), list):
+                    yield from walk(s["on_error_branch"])
+
+        gate = next(
+            (
+                s
+                for s in walk(exec_branch)
+                if s.get("action_id") == "if_else"
+                and (s.get("params") or {}).get("expression")
+                == "editor_after != '' and '\"code\":0' not in reply_body"
+            ),
+            None,
+        )
+        assert gate, "终态判据必须同时看输入框与接口响应体"
+
+        # 发布步骤要预置兜底变量：wait_for_response 超时不会写 output_vars，
+        # 不预置 reply_body 会让判据 NameError（条件按 False 处理 → 误判成功）
+        publish = next(
+            (
+                s
+                for s in walk(exec_branch)
+                if s.get("action_id") == "wait_for_response"
+                and (s.get("params") or {}).get("url_pattern") == "**/x/v2/reply/add**"
+            ),
+            None,
+        )
+        assert publish, "缺少评论发布步骤"
+        input_vars = publish.get("input_vars") or {}
+        assert "reply_body" in input_vars, "发布步骤必须预置 reply_body 兜底"
+        assert "editor_after" in input_vars, "发布步骤必须预置 editor_after 兜底"
 
     def test_participation_action_order(self, action_data):
         """参与动作执行顺序：关注 → 评论 → 转发 → 点赞

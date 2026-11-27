@@ -92,6 +92,8 @@ def _build_scope(items_count: int = 4) -> Scope:
         "llm_reply_role": "",
         "llm_reply_model": "",
         "editor_text": "",
+        # 发布后重新读取的编辑器文本（本轮重试块的日志里引用）
+        "editor_after": "",
         "latest_comment_users_text": "",
         "captcha_shown": "false",
         "share_closed": "true",
